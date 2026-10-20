@@ -42,7 +42,10 @@ public:
         options.osxLibrarySubFolder = "Application Support";
         properties.setStorageParameters (options);
 
-        formatManager.addDefaultFormats();
+        formatManager.addFormat (std::make_unique<VST3PluginFormat>());
+       #if JUCE_MAC
+        formatManager.addFormat (std::make_unique<AudioUnitPluginFormat>());
+       #endif
 
         addAndMakeVisible (loadButton);
         addAndMakeVisible (showButton);
