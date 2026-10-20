@@ -48,7 +48,7 @@ namespace hobby
 // Σύμβολα που ζωγραφίζονται με διανύσματα. Πρόσθεσε νέα στο τέλος του enum και στο switch του drawSymbol.
 enum class Symbol { PadRecord, PadOverdub, Play, Stop, Cancel, Undo,
                     StartQ, LengthQ, Snap, Loop, Sync, Tempo, Thru,
-                    Block, Learn, Vst, Window, Hold, Arp };
+                    Block, Learn, Vst, Window, Hold, Arp, Folder };
 
 void drawSymbol (juce::Graphics&, Symbol, juce::Point<float> centre, float size, juce::Colour);
 
@@ -74,6 +74,7 @@ public:
     void setIconColour (juce::Colour c) { if (! hasOverride || c != iconOverride) { iconOverride = c; hasOverride = true; repaint(); } }
     void setRound (bool r) { round = r; repaint(); }
     void setSymbol (Symbol s) { if (s != symbol) { symbol = s; repaint(); } }
+    void setDots (int n) { if (n != dots) { dots = n; repaint(); } }   // τελείες κάτω από το εικονίδιο (π.χ. 1 = Mono, 2 = Poly)
     std::function<void()> onRightClick;   // δεξί κλικ / ctrl-κλικ
     void mouseDown (const juce::MouseEvent& e) override
     {
@@ -92,4 +93,5 @@ private:
     bool hasOverride = false;
     juce::Colour iconOverride;
     int index = 0;
+    int dots = 0;
 };

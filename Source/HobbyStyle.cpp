@@ -276,6 +276,14 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (p, 1.7f);
             break;
         }
+        case Symbol::Folder:
+        {
+            juce::Path p;
+            p.startNewSubPath (-9.0f, -6.0f); p.lineTo (-2.0f, -6.0f); p.lineTo (1.0f, -3.0f); p.lineTo (9.0f, -3.0f);
+            p.lineTo (9.0f, 7.0f); p.lineTo (-9.0f, 7.0f); p.closeSubPath();
+            stroke (p, 1.7f);
+            break;
+        }
         case Symbol::Thru:
         {
             juce::Path p;
@@ -347,13 +355,18 @@ void ValueTile::paintButton (juce::Graphics& g, bool, bool isDown)
     juce::Colour iconColour = hobby::kIconGrey;
     if (isOnOff) iconColour = index == 1 ? hobby::kOn : hobby::kOff;
     if (hasOverride) iconColour = iconOverride;
-    drawSymbol (g, symbol, { r.getCentreX(), 17.0f + dy }, 22.0f, iconColour);
+    const float cy = dots > 0 ? 19.0f : 25.5f;
+    drawSymbol (g, symbol, { r.getCentreX(), cy + dy }, 22.0f, iconColour);
 
-    const juce::Font f (typeface != nullptr ? juce::FontOptions (typeface).withHeight (14.0f)
-                                            : juce::FontOptions (14.0f, juce::Font::bold));
-    g.setFont (f);
-    g.setColour (juce::Colour (0xffeceef2));
-    g.drawFittedText (labels[juce::jlimit (0, juce::jmax (0, labels.size() - 1), index)],
-                      juce::Rectangle<int> (1, 32 + (int) dy, getWidth() - 2, 14), juce::Justification::centred, 1, 0.7f);
+    if (dots > 0)
+    {
+        const float total = (float) dots * 5.0f + (float) (dots - 1) * 4.0f;
+        float x = r.getCentreX() - total * 0.5f;
+        g.setColour (juce::Colour (0xffeceef2));
+        for (int i = 0; i < dots; ++i)
+        {
+            g.fillEllipse (x, 38.0f + dy, 5.0f, 5.0f);
+            x += 9.0f;
+        }
+    }
 }
-

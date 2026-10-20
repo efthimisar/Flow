@@ -1,8 +1,9 @@
 #pragma once
-// Flow engine: 16 blocks, each with its own plugin, key range, hold, arpeggiator and MIDI loop.
+// Flow engine: up to 16 blocks (one per loaded plugin), each with its own key zone, hold, volume and MIDI loop.
 // Everything musical runs inside the audio callback, so timing follows the audio clock.
 
 #include <juce_audio_utils/juce_audio_utils.h>
+#include "RecorderEngine.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -21,18 +22,34 @@ namespace flow
 
     enum LoopState { loopOff = 0, loopRec = 1, loopPlay = 2, loopOver = 3 };
     constexpr int maxLayers = 4;
-    constexpr int numControls = 9;   // κουμπιά που μπορούν να ανατεθούν σε πετάλι
+    // κουμπιά που ανατίθενται σε πετάλι (MIDI learn)
+    enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, numControls };
 
-    // equal split of the 88 keys: the first blocks get one key more when it does not divide evenly
-    inline void defaultRange (int block, int& lo, int& hi)
+    // καμπύλες έντασης: 0 διαγώνια, 1 βαθιά (αργή αρχή), 2 ανάποδη βαθιά (γρήγορη αρχή), 3 διαγώνια προς τα κάτω
+    constexpr int numCurves = 4;
+    inline float curveGain (int curve, float x)
     {
-        const int total = highestNote - lowestNote + 1;
-        const int base = total / numBlocks, rem = total % numBlocks;
-        int start = lowestNote;
-        for (int b = 0; b < block; ++b)
-            start += base + (b < rem ? 1 : 0);
-        lo = start;
-        hi = start + base + (block < rem ? 1 : 0) - 1;
+        x = juce::jlimit (0.0f, 1.0f, x);
+        switch (curve)
+        {
+            case 1:  return x * x;
+            case 2:  return 1.0f - (1.0f - x) * (1.0f - x);
+            case 3:  return 1.0f - x;
+            default: return x;
+        }
+    }
+
+    // αντίστροφη καμπύλη: ποια θέση πετάλιού δίνει ένταση g (για σύρσιμο με το ποντίκι)
+    inline float curveInverse (int curve, float g)
+    {
+        g = juce::jlimit (0.0f, 1.0f, g);
+        switch (curve)
+        {
+            case 1:  return std::sqrt (g);
+            case 2:  return 1.0f - std::sqrt (1.0f - g);
+            case 3:  return 1.0f - g;
+            default: return g;
+        }
     }
 
     class Engine : public juce::AudioIODeviceCallback
@@ -42,12 +59,13 @@ namespace flow
         {
             for (int b = 0; b < numBlocks; ++b)
             {
-                int l = 0, h = 0;
-                defaultRange (b, l, h);
-                lo[b] = l;
-                hi[b] = h;
+                active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
+                lo[b] = lowestNote; hi[b] = lowestNote;
                 holdMode[b] = 0;
                 arpMode[b] = 0;
+                curveMode[b] = 0;
+                volPos[b] = 1.0f; gainOut[b] = 1.0f;
+                volMap[b] = 0;
                 loopStateOut[b] = loopOff;
                 loopBarsOut[b] = 0;
                 recStartOut[b] = 0;
@@ -56,20 +74,25 @@ namespace flow
                 loopTapsOut[b] = 0;
                 cmdMain[b] = 0; cmdUndo[b] = 0; cmdStop[b] = 0;
             }
-            for (int i = 0; i < numControls; ++i) { mapCode[i] = 0; mapHits[i] = 0; }
+            for (int i = 0; i < numControls; ++i) mapCode[i] = 0;
             owner.fill (-1);
             incoming.reset (44100.0);
         }
 
         //==================== controls and read-outs (message thread) ====================
-        std::array<std::atomic<int>, numBlocks> lo, hi, holdMode, arpMode, loopStateOut, loopBarsOut,
-                                                loopLayersOut, loopMuteOut, loopTapsOut, cmdMain, cmdUndo, cmdStop;
-        std::array<std::atomic<int>, numControls> mapCode, mapHits;   // MIDI learn πεταλιών
+        std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode,
+                                                volMap, loopStateOut, loopBarsOut, loopLayersOut, loopMuteOut, loopTapsOut,
+                                                cmdMain, cmdUndo, cmdStop;
+        std::array<std::atomic<float>, numBlocks> volPos, gainOut;
+        std::array<std::atomic<int>, numControls> mapCode;   // MIDI learn πεταλιών
         std::atomic<int> mapLearnTarget { -1 }, learnedCount { 0 }, learnedTarget { -1 }, learnedCode { 0 };
+        std::atomic<int> volLearn { -1 }, volLearnedCount { 0 }, volLearnedBlock { -1 }, volLearnedCode { 0 };
+        std::atomic<int> selectedBlock { 0 };   // το block στο οποίο δρουν Hold και looper
+        std::atomic<int> changeCount { 0 };     // ανεβαίνει όταν αλλάζει κάτι που πρέπει να αποθηκευτεί (πετάλια: hold, ένταση)
         std::array<std::atomic<int64_t>, numBlocks> recStartOut;
         std::atomic<int64_t> globalSamples { 0 };
-        std::atomic<int> learnBlock { -1 };
-        std::atomic<int> learnStage { 0 };    // 0 = off, 1 = waiting for the low key, 2 = waiting for the high key
+
+        RecorderEngine recorder;   // ηχογραφεί το τελικό ήχο (Tape Recorder)
 
         juce::MidiMessageCollector incoming;  // register this as the MIDI input callback
 
@@ -78,8 +101,40 @@ namespace flow
         void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
         void pressStop (int b) { ++cmdStop[(size_t) b]; }
 
-        void startLearn (int block) { mapLearnTarget = -1; learnBlock = block; learnStage = 1; }
-        void cancelLearn()          { learnBlock = -1;   learnStage = 0; }
+        // ζώνη block: το επόμενο ζευγάρι πλήκτρων που θα πατηθούν την ορίζει
+        void startZone (int b)          { zoneFirst[b] = 0; zoneState[b] = 1; }
+        void setZone (int b, int l, int h, int seq = -1)
+        {
+            lo[b] = juce::jmin (l, h);
+            hi[b] = juce::jmax (l, h);
+            zoneSeq[b] = seq >= 0 ? seq : ++seqCounter;
+            seqCounter = juce::jmax (seqCounter.load(), zoneSeq[b].load());
+            zoneState[b] = 0;
+        }
+        int pendingBlock() const { return captureTarget(); }   // block που περιμένει ζώνη (-1 = κανένα)
+        bool capturing() const
+        {
+            for (int b = 0; b < numBlocks; ++b)
+                if (active[b].load() != 0 && zoneState[b].load() != 0) return true;
+            return false;
+        }
+
+        // ποιο block παίζει το πλήκτρο n (-1 = κανένα). Αν επικαλύπτονται ζώνες, κερδίζει η πιο πρόσφατη.
+        int blockForNote (int n) const
+        {
+            int best = -1, bestSeq = -1;
+            for (int b = 0; b < numBlocks; ++b)
+                if (active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
+                    && zoneSeq[b].load() > bestSeq)
+                {
+                    best = b;
+                    bestSeq = zoneSeq[b].load();
+                }
+            return best;
+        }
+
+        void startVolumeLearn (int b) { mapLearnTarget = -1; volLearn = b; }
+        void cancelLearns()           { mapLearnTarget = -1; volLearn = -1; }
 
         double getSampleRate() const { return sampleRate.load(); }
         int64_t barSamples() const   { return (int64_t) std::llround (sampleRate.load() * 60.0 / tempoBpm * 4.0); }
@@ -88,7 +143,7 @@ namespace flow
         juce::AudioPluginInstance* getPlugin (int b) { return blocks[(size_t) b].plugin.get(); }
 
         // Puts a new plugin (or nullptr) into a block and returns the old one.
-        std::unique_ptr<juce::AudioPluginInstance> swapPlugin (int b, std::unique_ptr<juce::AudioPluginInstance> fresh)
+        std::unique_ptr<juce::AudioPluginInstance> swapPlugin (int b, std::unique_ptr<juce::AudioPluginInstance> fresh, bool captureZone = false)
         {
             if (fresh != nullptr)
                 prepare (*fresh);
@@ -106,6 +161,10 @@ namespace flow
                                        juce::jmax (blockSize, 4096));
                 for (auto& o : owner)
                     if (o == b) o = -1;
+                active[b] = B.plugin != nullptr ? 1 : 0;
+                zoneFirst[b] = 0;
+                zoneState[b] = (B.plugin != nullptr && captureZone) ? 1 : 0;
+                B.prevGain = -1.0f;
                 B.seenMain = cmdMain[(size_t) b].load();
                 B.seenUndo = cmdUndo[(size_t) b].load();
                 B.seenStop = cmdStop[(size_t) b].load();
@@ -124,6 +183,7 @@ namespace flow
             sampleRate = device->getCurrentSampleRate();
             blockSize  = device->getCurrentBufferSizeSamples();
             incoming.reset (sampleRate.load());
+            recorder.prepare (sampleRate.load());
 
             const juce::ScopedLock sl (lock);
             for (auto& B : blocks)
@@ -143,6 +203,7 @@ namespace flow
             for (auto& B : blocks)
                 if (B.plugin != nullptr)
                     B.plugin->releaseResources();
+            recorder.release();
         }
 
         void audioDeviceIOCallbackWithContext (const float* const*, int, float* const* outputChannelData,
@@ -181,10 +242,23 @@ namespace flow
                 juce::AudioBuffer<float> view (B.scratch.getArrayOfWritePointers(), B.scratch.getNumChannels(), numSamples);
                 B.plugin->processBlock (view, B.out);
 
+                const float gain = curveGain (curveMode[(size_t) b].load(), volPos[(size_t) b].load());
+                gainOut[(size_t) b] = gain;
+                if (B.prevGain < 0.0f) B.prevGain = gain;
+                if (B.prevGain != gain || gain != 1.0f)
+                    view.applyGainRamp (0, numSamples, B.prevGain, gain);
+                B.prevGain = gain;
+
                 const int chans = view.getNumChannels();
                 for (int c = 0; c < numOutputChannels; ++c)
                     juce::FloatVectorOperations::add (outputChannelData[c],
                                                        view.getReadPointer (juce::jmin (c, chans - 1)), numSamples);
+            }
+
+            if (numOutputChannels > 0)
+            {
+                juce::AudioBuffer<float> master (outputChannelData, numOutputChannels, numSamples);
+                recorder.process (master);
             }
 
             globalPos += numSamples;
@@ -220,6 +294,7 @@ namespace flow
             int seenMain = 0, seenUndo = 0, seenStop = 0, taps = 0;
             int64_t lastTap = 0;
             std::array<uint8_t, 128> vel {};
+            float prevGain = -1.0f;
             int lastLatched = -1;
             int prevHold = 0, prevArp = 0;
             int arpIndex = 0;
@@ -247,7 +322,7 @@ namespace flow
         std::array<std::vector<juce::MidiMessage>, numBlocks> inRaw;
         std::vector<Action> actions;
         juce::MidiBuffer midiIn;
-        int learnFirst = 0;
+        std::atomic<int> seqCounter { 0 };
         int64_t globalPos = 0;
         std::atomic<double> sampleRate { 44100.0 };
         int blockSize = 512;
@@ -282,10 +357,14 @@ namespace flow
         }
 
         //==================== incoming MIDI -> blocks ====================
-        int findBlock (int note) const
+        // το block που περιμένει ζώνη: το επιλεγμένο αν περιμένει, αλλιώς το πρώτο που περιμένει
+        int captureTarget() const
         {
+            const int sel = selectedBlock.load();
+            if (sel >= 0 && sel < numBlocks && active[(size_t) sel].load() != 0 && zoneState[(size_t) sel].load() != 0)
+                return sel;
             for (int b = 0; b < numBlocks; ++b)
-                if (blocks[(size_t) b].plugin != nullptr && note >= lo[b].load() && note <= hi[b].load())
+                if (active[(size_t) b].load() != 0 && zoneState[(size_t) b].load() != 0)
                     return b;
             return -1;
         }
@@ -312,26 +391,24 @@ namespace flow
                 if (msg.isNoteOn())
                 {
                     const int n = msg.getNoteNumber();
-                    const int lb = learnBlock.load();
+                    const int cb = captureTarget();
 
-                    if (lb >= 0)
+                    if (cb >= 0)    // ορισμός ζώνης: το πρώτο και το δεύτερο πλήκτρο (ίδιο πλήκτρο δύο φορές = ζώνη μίας νότας)
                     {
-                        if (learnStage.load() == 1)
+                        if (zoneState[(size_t) cb].load() == 1)
                         {
-                            learnFirst = n;
-                            learnStage = 2;
+                            zoneFirst[(size_t) cb] = n;
+                            zoneState[(size_t) cb] = 2;
                         }
                         else
                         {
-                            lo[lb] = std::min (learnFirst, n);
-                            hi[lb] = std::max (learnFirst, n);
-                            learnBlock = -1;
-                            learnStage = 0;
+                            setZone (cb, zoneFirst[(size_t) cb].load(), n);
+                            ++changeCount;
                         }
                         continue;
                     }
 
-                    const int b = findBlock (n);
+                    const int b = blockForNote (n);
                     if (b >= 0)
                     {
                         owner[(size_t) n] = b;
@@ -360,7 +437,7 @@ namespace flow
                 else if (msg.isController() || msg.isPitchWheel() || msg.isChannelPressure())
                 {
                     for (int b = 0; b < numBlocks; ++b)
-                        if (blocks[(size_t) b].plugin != nullptr)
+                        if (active[(size_t) b].load() != 0)
                             pushRaw (b, pos, msg);
                 }
             }
@@ -380,28 +457,79 @@ namespace flow
             if (kind == 0) return false;
 
             const int code = (kind << 16) | (msg.getChannel() << 8) | num;
-            const int target = mapLearnTarget.load();
 
+            // MIDI learn πεταλιού έντασης: η πρώτη κίνηση ενός CC το αναθέτει στο block
+            const int vl = volLearn.load();
+            if (vl >= 0 && kind == 2)
+            {
+                volMap[(size_t) vl] = code;
+                for (int i = 0; i < numControls; ++i)
+                    if (mapCode[(size_t) i].load() == code) mapCode[(size_t) i] = 0;
+                volLearnedBlock = vl;
+                volLearnedCode = code;
+                ++volLearnedCount;
+                volLearn = -1;
+                ++changeCount;
+                return true;
+            }
+
+            // MIDI learn κουμπιού
+            const int target = mapLearnTarget.load();
             if (target >= 0 && press)
             {
                 for (int i = 0; i < numControls; ++i)
-                    if (mapCode[i].load() == code) mapCode[i] = 0;
+                    if (mapCode[(size_t) i].load() == code) mapCode[(size_t) i] = 0;
+                for (int b = 0; b < numBlocks; ++b)
+                    if (volMap[(size_t) b].load() == code) volMap[(size_t) b] = 0;
 
-                mapCode[target] = code;
+                mapCode[(size_t) target] = code;
                 learnedTarget = target;
                 learnedCode = code;
                 ++learnedCount;
                 mapLearnTarget = -1;
+                ++changeCount;
                 return true;
             }
 
-            for (int i = 0; i < numControls; ++i)
+            // πετάλι έντασης: ένα πετάλι μπορεί να ελέγχει πολλά blocks
+            if (kind == 2)
             {
-                if (mapCode[i].load() == code)
+                bool hit = false;
+                const float v = (float) msg.getControllerValue() / 127.0f;
+                for (int b = 0; b < numBlocks; ++b)
+                    if (active[(size_t) b].load() != 0 && volMap[(size_t) b].load() == code)
+                    {
+                        volPos[(size_t) b] = v;
+                        hit = true;
+                    }
+                if (hit)
                 {
-                    if (press) ++mapHits[i];
+                    ++changeCount;
                     return true;
                 }
+            }
+
+            // πετάλι κουμπιού: δρα στο επιλεγμένο block
+            for (int i = 0; i < numControls; ++i)
+            {
+                if (mapCode[(size_t) i].load() != code) continue;
+
+                if (press)
+                {
+                    const int sel = selectedBlock.load();
+                    const bool ok = sel >= 0 && sel < numBlocks && active[(size_t) sel].load() != 0;
+
+                    switch (i)
+                    {
+                        case ctlHold: if (ok) { holdMode[(size_t) sel] = (holdMode[(size_t) sel].load() + 1) % 3; ++changeCount; } break;
+                        case ctlRec:  if (ok) ++cmdMain[(size_t) sel]; break;
+                        case ctlUndo: if (ok) ++cmdUndo[(size_t) sel]; break;
+                        case ctlStop: if (ok) ++cmdStop[(size_t) sel]; break;
+                        case ctlTape: recorder.pressButton(); break;
+                        default: break;
+                    }
+                }
+                return true;
             }
 
             return false;
@@ -758,12 +886,14 @@ namespace flow
                     case Kind::Live:
                         if (a.on)
                         {
+                            const bool firstFinger = B.pressed.none();
                             B.pressed.set ((size_t) a.note);
                             B.vel[(size_t) a.note] = (uint8_t) a.vel;
 
-                            if (hold == 2)
+                            if (hold == 2)   // LP: κρατιέται όποια συγχορδία παίξεις, νέα συγχορδία ξεπατάει την προηγούμενη
                             {
-                                B.latched.flip ((size_t) a.note);
+                                if (firstFinger) B.latched.reset();
+                                B.latched.set ((size_t) a.note);
                                 B.lastLatched = a.note;
                             }
                             else if (hold == 1)
