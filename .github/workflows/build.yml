@@ -1,0 +1,30 @@
+name: Build macOS app
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j 4
+
+      - name: Package
+        run: |
+          APP=$(find build -maxdepth 4 -name "*.app" -type d | head -1)
+          echo "App: $APP"
+          codesign --force --deep --sign - "$APP"
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$APP" dist/SimpleHost-macOS.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimpleHost-macOS
+          path: dist/SimpleHost-macOS.zip
