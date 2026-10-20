@@ -78,7 +78,7 @@ namespace flow
         void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
         void pressStop (int b) { ++cmdStop[(size_t) b]; }
 
-        void startLearn (int block) { learnBlock = block; learnStage = 1; }
+        void startLearn (int block) { mapLearnTarget = -1; learnBlock = block; learnStage = 1; }
         void cancelLearn()          { learnBlock = -1;   learnStage = 0; }
 
         double getSampleRate() const { return sampleRate.load(); }
