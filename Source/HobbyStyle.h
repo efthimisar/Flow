@@ -72,6 +72,14 @@ public:
     void setIndex (int i) { if (i != index) { index = i; repaint(); } }
     // προαιρετικό χρώμα συμβόλου (π.χ. πράσινο όταν η λειτουργία είναι ενεργή)
     void setIconColour (juce::Colour c) { if (! hasOverride || c != iconOverride) { iconOverride = c; hasOverride = true; repaint(); } }
+    void setRound (bool r) { round = r; repaint(); }
+    void setSymbol (Symbol s) { if (s != symbol) { symbol = s; repaint(); } }
+    std::function<void()> onRightClick;   // δεξί κλικ / ctrl-κλικ
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) { if (onRightClick) onRightClick(); return; }
+        juce::Button::mouseDown (e);
+    }
     int getIndex() const { return index; }
     int getNumValues() const { return labels.size(); }
     void paintButton (juce::Graphics&, bool isHighlighted, bool isDown) override;
@@ -80,6 +88,7 @@ private:
     juce::Typeface::Ptr typeface;
     juce::StringArray labels;
     bool isOnOff = false;
+    bool round = false;
     bool hasOverride = false;
     juce::Colour iconOverride;
     int index = 0;

@@ -44,13 +44,20 @@ public:
         const int64_t now = engine.globalSamples.load();
 
         int recording = -1;
+        bool overdubbing = false;
         for (int b = 0; b < flow::numBlocks; ++b)
-            if (engine.loopStateOut[(size_t) b].load() == flow::loopRec) { recording = b; break; }
+        {
+            const int st = engine.loopStateOut[(size_t) b].load();
+            if (st == flow::loopRec || st == flow::loopOver) { recording = b; overdubbing = st == flow::loopOver; break; }
+        }
 
         g.setFont (hobby::makeFont (typeface, 19.0f));
         g.setColour (hobby::kText);
-        String head = recording >= 0 ? "REC " + String (recording + 1) : String ((int) flow::tempoBpm) + " BPM";
+        String head = recording >= 0 ? String (overdubbing ? "OVERDUB " : "REC ") + String (recording + 1)
+                                     : String ((int) flow::tempoBpm) + " BPM";
         head << "  |  loop " << flow::axisBars << " bars";
+        if (const int taps = engine.loopTapsOut[(size_t) selected].load(); taps > 0)
+            head << "  |  STOP x" << taps;
         g.drawText (head, 14, 12, w - 28, 28, Justification::centredLeft, false);
         if (message.isNotEmpty())
         {
@@ -82,15 +89,26 @@ public:
             const float y = (float) (top + b * step);
             const int state = engine.loopStateOut[(size_t) b].load();
 
-            if (state == flow::loopPlay)
+            if (state == flow::loopPlay || state == flow::loopOver)
             {
                 const int bars = jmax (1, engine.loopBarsOut[(size_t) b].load());
                 const int n = jmax (1, flow::axisBars / bars);
                 const float len = laneW / (float) n;
-                g.setColour (blockLight (b));
+                const int layers = engine.loopLayersOut[(size_t) b].load();
+                const unsigned allMask = layers > 0 ? ((1u << layers) - 1u) : 0u;
+                const bool allMuted = layers > 0 && ((unsigned) engine.loopMuteOut[(size_t) b].load() & allMask) == allMask;
+
                 for (int i = 0; i < n; ++i)
-                    g.fillRoundedRectangle (laneX + (float) i * len + 0.002f * laneW, y,
-                                            len - 0.004f * laneW, (float) laneH, 4.0f);
+                {
+                    const Rectangle<float> seg (laneX + (float) i * len + 0.002f * laneW, y, len - 0.004f * laneW, (float) laneH);
+                    g.setColour (allMuted ? Colour (0xff3a3d46) : blockLight (b));
+                    g.fillRoundedRectangle (seg, 4.0f);
+                    if (state == flow::loopOver)
+                    {
+                        g.setColour (hobby::kPeach);
+                        g.drawRoundedRectangle (seg.expanded (1.0f), 5.0f, 1.5f);
+                    }
+                }
             }
             else if (state == flow::loopRec)
             {
@@ -267,7 +285,9 @@ public:
           windowTile (Symbol::Window, typeface),
           holdTile (Symbol::Hold, typeface),
           arpTile (Symbol::Arp, typeface),
-          loopTile (Symbol::Loop, typeface)
+          recTile (Symbol::PadRecord, typeface),
+          undoTile (Symbol::Undo, typeface),
+          stopTile (Symbol::Stop, typeface)
     {
         PropertiesFile::Options options;
         options.applicationName     = "Flow";
@@ -288,7 +308,11 @@ public:
         windowTile.setValues ({ "Window" }, false);
         holdTile.setValues ({ "Off", "Mono", "Poly" }, false);
         arpTile.setValues ({ "Off", "Mono", "Poly" }, false);
-        loopTile.setValues ({ "Off", "Rec", "Play" }, false);
+        recTile.setValues ({ "Rec" }, false);
+        undoTile.setValues ({ "Undo" }, false);
+        stopTile.setValues ({ "Stop" }, false);
+        for (auto* t : { &recTile, &undoTile, &stopTile })
+            t->setRound (true);
 
         for (auto* t : tiles())
             addAndMakeVisible (t);
@@ -333,11 +357,14 @@ public:
             refreshAll();
         };
 
-        loopTile.onClick = [this]
-        {
-            engine.loopWanted[(size_t) selected] = (engine.loopWanted[(size_t) selected].load() + 1) % 3;
-            refreshAll();
-        };
+        recTile.onClick  = [this] { engine.pressMain (selected); };
+        undoTile.onClick = [this] { engine.pressUndo (selected); };
+        stopTile.onClick = [this] { engine.pressStop (selected); };
+
+        // δεξί κλικ: ανάθεση σε πετάλι (όλα εκτός από το VST)
+        for (int i = 0; i < flow::numControls; ++i)
+            if (i != 2)
+                tileAt (i)->onRightClick = [this, i] { showPedalMenu (i); };
 
         auto* settings = properties.getUserSettings();
 
@@ -353,6 +380,8 @@ public:
             engine.holdMode[(size_t) b] = jlimit (0, 2, settings->getIntValue ("hold" + String (b), 0));
             engine.arpMode[(size_t) b]  = jlimit (0, 2, settings->getIntValue ("arp" + String (b), 0));
         }
+        for (int i = 0; i < flow::numControls; ++i)
+            engine.mapCode[(size_t) i] = settings->getIntValue ("pmap" + String (i), 0);
 
         std::unique_ptr<XmlElement> savedAudio (settings->getXmlValue ("audioDeviceState"));
         deviceManager.initialise (0, 2, savedAudio.get(), true);
@@ -392,8 +421,20 @@ public:
         hobby::drawBezel (g, stripBezel.toFloat(), stripBezel.reduced (5).toFloat(), hobby::kStripScreen, 15.0f);
         hobby::drawBezel (g, keysBezel.toFloat(), keysBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
 
-        for (auto* t : tiles())
-            hobby::drawTileShadow (g, t->getBounds().toFloat());
+        for (int i = 0; i < flow::numControls; ++i)
+        {
+            auto r = tileAt (i)->getBounds().toFloat();
+            if (i < 6)
+            {
+                hobby::drawTileShadow (g, r);
+            }
+            else
+            {
+                Path p;
+                p.addEllipse (r);
+                DropShadow (Colours::black.withAlpha (0.55f), 4, { 0, 3 }).drawForPath (g, p);
+            }
+        }
     }
 
     void resized() override { placeChildren(); }
@@ -407,7 +448,8 @@ public:
 
 private:
     //==========================================================================
-    std::array<ValueTile*, 7> tiles() { return { &blockTile, &learnTile, &vstTile, &windowTile, &holdTile, &arpTile, &loopTile }; }
+    std::array<ValueTile*, 9> tiles() { return { &blockTile, &learnTile, &vstTile, &windowTile, &holdTile, &arpTile, &recTile, &undoTile, &stopTile }; }
+    ValueTile* tileAt (int i) { return tiles()[(size_t) i]; }
 
     // γεωμετρία παραθύρου
     void computeLayout()
@@ -457,12 +499,14 @@ private:
         keyboardView.setBounds (keysBezel.reduced (5));
 
         const auto strip = stripBezel.reduced (5);
-        const int total = 7 * 52 + 6 * 8;
+        const int total = 9 * 52 + 8 * 8 + 22;
         int x = strip.getCentreX() - total / 2;
+        int index = 0;
         for (auto* t : tiles())
         {
             t->setBounds (x, strip.getY() + 5, 52, 52);
-            x += 60;
+            x += 60 + (index == 5 ? 22 : 0);
+            ++index;
         }
 
         if (editor != nullptr)
@@ -717,6 +761,9 @@ private:
             }
         }
 
+        for (int i = 0; i < flow::numControls; ++i)
+            settings->setValue ("pmap" + String (i), engine.mapCode[(size_t) i].load());
+
         properties.saveIfNeeded();
     }
 
@@ -752,6 +799,45 @@ private:
     }
 
     //==========================================================================
+    static const char* controlName (int i)
+    {
+        static const char* const names[flow::numControls] = { "Block", "Learn", "VST", "Window", "Hold", "Arp", "Rec / Play / Overdub", "Undo", "Stop" };
+        return names[i];
+    }
+
+    static String pedalCodeText (int code)
+    {
+        const int kind = code >> 16, ch = (code >> 8) & 0xff, num = code & 0xff;
+        const String type = kind == 1 ? "Note" : kind == 2 ? "CC" : "Program";
+        return type + " " + String (num) + " (ch " + String (ch) + ")";
+    }
+
+    void showPedalMenu (int i)
+    {
+        const int code = engine.mapCode[(size_t) i].load();
+
+        PopupMenu menu;
+        menu.addItem (1, gr ("Ανάθεση πεταλιού (MIDI learn)"));
+        menu.addItem (2, gr ("Αφαίρεση ανάθεσης"), code != 0);
+        if (code != 0)
+            menu.addItem (3, gr ("Τώρα: ") + pedalCodeText (code), false);
+
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (tileAt (i)),
+                            [safe = SafePointer<MainComponent> (this), i] (int result)
+        {
+            if (safe == nullptr) return;
+            if (result == 1) safe->startPedalLearn (i);
+            if (result == 2) safe->engine.mapCode[(size_t) i] = 0;
+        });
+    }
+
+    void startPedalLearn (int i)
+    {
+        engine.cancelLearn();
+        engine.mapLearnTarget = i;
+        setMessage (gr ("Πάτησε το πετάλι για: ") + controlName (i));
+    }
+
     void setMessage (const String& m) { message = m; messageTicks = 300; }
 
     void refreshAll()
@@ -782,9 +868,29 @@ private:
         arpTile.setIconColour (arp == 0 ? hobby::kIconGrey : hobby::kOn);
 
         const int loop = engine.loopStateOut[(size_t) sel].load();
-        loopTile.setIndex (loop);
-        loopTile.setIconColour (loop == flow::loopRec ? hobby::kCoral
-                                : loop == flow::loopPlay ? hobby::kOn : hobby::kIconGrey);
+        const int layers = engine.loopLayersOut[(size_t) sel].load();
+        const int mute = engine.loopMuteOut[(size_t) sel].load();
+        const int taps = engine.loopTapsOut[(size_t) sel].load();
+        const double t = Time::getMillisecondCounterHiRes() * 0.001;
+
+        String recLabel = "Rec";
+        Symbol recSymbol = Symbol::PadRecord;
+        Colour recColour = hobby::kIconGrey;
+        if (loop == flow::loopRec)       { recSymbol = Symbol::Play;       recColour = hobby::mix (hobby::kIconGrey, hobby::kRed,   hobby::pulse (t * 1.5)); }
+        else if (loop == flow::loopPlay) { recSymbol = Symbol::PadOverdub; recColour = hobby::kOn; recLabel = "Over"; }
+        else if (loop == flow::loopOver) { recSymbol = Symbol::Play;       recColour = hobby::mix (hobby::kIconGrey, hobby::kPeach, hobby::pulse (t * 1.5)); recLabel = "Over"; }
+        recTile.setSymbol (recSymbol);
+        recTile.setIconColour (recColour);
+        if (recLabel != lastRecLabel) { lastRecLabel = recLabel; recTile.setValues ({ recLabel }, false); }
+
+        undoTile.setIconColour (loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
+
+        const String stopLabel = taps > 0 ? "x" + String (taps) : String ("Stop");
+        if (stopLabel != lastStopLabel) { lastStopLabel = stopLabel; stopTile.setValues ({ stopLabel }, false); }
+        stopTile.setIconColour (taps > 0 ? hobby::kLilac
+                                         : mute != 0 ? hobby::mix (hobby::kIconGrey, hobby::kLilac, 0.4f + 0.6f * hobby::pulse (t * 0.5))
+                                                     : hobby::kIconGrey);
+        juce::ignoreUnused (layers);
 
         loopsView.repaint();
         keyboardView.repaint();
@@ -792,7 +898,32 @@ private:
 
     void timerCallback() override
     {
-        if (messageTicks > 0 && --messageTicks == 0) message.clear();
+        if (messageTicks > 0 && --messageTicks == 0)
+        {
+            message.clear();
+            engine.mapLearnTarget = -1;
+        }
+
+        // πετάλια: κάθε πάτημα κάνει ό,τι και το αντίστοιχο κουμπί
+        for (int i = 0; i < flow::numControls; ++i)
+        {
+            const int hits = engine.mapHits[(size_t) i].load();
+            while (lastHits[(size_t) i] != hits)
+            {
+                ++lastHits[(size_t) i];
+                if (auto* tile = tileAt (i); tile->onClick) tile->onClick();
+            }
+        }
+
+        const int learned = engine.learnedCount.load();
+        if (learned != lastLearned)
+        {
+            lastLearned = learned;
+            const int target = engine.learnedTarget.load();
+            if (target >= 0 && target < flow::numControls)
+                setMessage (String (controlName (target)) + " " + String::fromUTF8 ("\xe2\x86\x90") + " " + pedalCodeText (engine.learnedCode.load()));
+        }
+
         refreshAll();
 
         // αν το block με το ανοιχτό plugin άλλαξε plugin από αλλού
@@ -813,7 +944,9 @@ private:
     int winW = 992, winH = 700;
     float editorScale = 1.0f;
     Rectangle<int> loopsBezel, pluginBezel, stripBezel, keysBezel;
-    String message, lastVstName;
+    String message, lastVstName, lastRecLabel, lastStopLabel;
+    std::array<int, flow::numControls> lastHits {};
+    int lastLearned = 0;
     int messageTicks = 0;
 
     std::array<PluginDescription, flow::numBlocks> descriptions;
@@ -823,7 +956,7 @@ private:
 
     LoopsView loopsView;
     KeyboardView keyboardView;
-    ValueTile blockTile, learnTile, vstTile, windowTile, holdTile, arpTile, loopTile;
+    ValueTile blockTile, learnTile, vstTile, windowTile, holdTile, arpTile, recTile, undoTile, stopTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

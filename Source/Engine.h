@@ -19,7 +19,9 @@ namespace flow
     constexpr double tempoBpm = 120.0;  // fixed tempo for arp and loops
     constexpr int axisBars    = 4;      // loops screen shows 4 bars
 
-    enum LoopState { loopOff = 0, loopRec = 1, loopPlay = 2 };
+    enum LoopState { loopOff = 0, loopRec = 1, loopPlay = 2, loopOver = 3 };
+    constexpr int maxLayers = 4;
+    constexpr int numControls = 9;   // κουμπιά που μπορούν να ανατεθούν σε πετάλι
 
     // equal split of the 88 keys: the first blocks get one key more when it does not divide evenly
     inline void defaultRange (int block, int& lo, int& hi)
@@ -46,23 +48,35 @@ namespace flow
                 hi[b] = h;
                 holdMode[b] = 0;
                 arpMode[b] = 0;
-                loopWanted[b] = loopOff;
                 loopStateOut[b] = loopOff;
                 loopBarsOut[b] = 0;
                 recStartOut[b] = 0;
+                loopLayersOut[b] = 0;
+                loopMuteOut[b] = 0;
+                loopTapsOut[b] = 0;
+                cmdMain[b] = 0; cmdUndo[b] = 0; cmdStop[b] = 0;
             }
+            for (int i = 0; i < numControls; ++i) { mapCode[i] = 0; mapHits[i] = 0; }
             owner.fill (-1);
             incoming.reset (44100.0);
         }
 
         //==================== controls and read-outs (message thread) ====================
-        std::array<std::atomic<int>, numBlocks> lo, hi, holdMode, arpMode, loopWanted, loopStateOut, loopBarsOut;
+        std::array<std::atomic<int>, numBlocks> lo, hi, holdMode, arpMode, loopStateOut, loopBarsOut,
+                                                loopLayersOut, loopMuteOut, loopTapsOut, cmdMain, cmdUndo, cmdStop;
+        std::array<std::atomic<int>, numControls> mapCode, mapHits;   // MIDI learn πεταλιών
+        std::atomic<int> mapLearnTarget { -1 }, learnedCount { 0 }, learnedTarget { -1 }, learnedCode { 0 };
         std::array<std::atomic<int64_t>, numBlocks> recStartOut;
         std::atomic<int64_t> globalSamples { 0 };
         std::atomic<int> learnBlock { -1 };
         std::atomic<int> learnStage { 0 };    // 0 = off, 1 = waiting for the low key, 2 = waiting for the high key
 
         juce::MidiMessageCollector incoming;  // register this as the MIDI input callback
+
+        // εντολές looper για ένα block (από κουμπί ή πετάλι)
+        void pressMain (int b) { ++cmdMain[(size_t) b]; }
+        void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
+        void pressStop (int b) { ++cmdStop[(size_t) b]; }
 
         void startLearn (int block) { learnBlock = block; learnStage = 1; }
         void cancelLearn()          { learnBlock = -1;   learnStage = 0; }
@@ -92,9 +106,14 @@ namespace flow
                                        juce::jmax (blockSize, 4096));
                 for (auto& o : owner)
                     if (o == b) o = -1;
-                loopWanted[b] = loopOff;
+                B.seenMain = cmdMain[(size_t) b].load();
+                B.seenUndo = cmdUndo[(size_t) b].load();
+                B.seenStop = cmdStop[(size_t) b].load();
                 loopStateOut[b] = loopOff;
                 loopBarsOut[b] = 0;
+                loopLayersOut[b] = 0;
+                loopMuteOut[b] = 0;
+                loopTapsOut[b] = 0;
             }
             return old;
         }
@@ -145,7 +164,13 @@ namespace flow
             for (int b = 0; b < numBlocks; ++b)
             {
                 auto& B = blocks[(size_t) b];
-                if (B.plugin == nullptr) continue;
+                if (B.plugin == nullptr)
+                {
+                    B.seenMain = cmdMain[(size_t) b].load();
+                    B.seenUndo = cmdUndo[(size_t) b].load();
+                    B.seenStop = cmdStop[(size_t) b].load();
+                    continue;
+                }
 
                 runBlock (b, gs, numSamples, sr);
 
@@ -189,13 +214,18 @@ namespace flow
             juce::AudioBuffer<float> scratch;
             juce::MidiBuffer out;
             std::bitset<128> pressed, latched, sounding, loopSounding, recOpen;
+            std::array<std::vector<LoopEvent>, maxLayers> layerEv;
+            int nLayers = 0;
+            unsigned muteMask = 0;
+            int seenMain = 0, seenUndo = 0, seenStop = 0, taps = 0;
+            int64_t lastTap = 0;
             std::array<uint8_t, 128> vel {};
             int lastLatched = -1;
             int prevHold = 0, prevArp = 0;
             int arpIndex = 0;
             int loopState = loopOff;
             int64_t recStart = 0, loopLen = 0;
-            std::vector<LoopEvent> rec, loop;
+            std::vector<LoopEvent> rec;
 
             void resetState()
             {
@@ -203,7 +233,9 @@ namespace flow
                 vel.fill (0);
                 lastLatched = -1; prevHold = 0; prevArp = 0; arpIndex = 0;
                 loopState = loopOff; recStart = 0; loopLen = 0;
-                rec.clear(); loop.clear();
+                rec.clear();
+                for (auto& l : layerEv) l.clear();
+                nLayers = 0; muteMask = 0; taps = 0; lastTap = 0;
                 out.clear();
             }
         };
@@ -274,6 +306,9 @@ namespace flow
                 const auto msg = metadata.getMessage();
                 const int pos = juce::jlimit (0, numSamples - 1, metadata.samplePosition);
 
+                if (handlePedal (msg))
+                    continue;
+
                 if (msg.isNoteOn())
                 {
                     const int n = msg.getNoteNumber();
@@ -331,6 +366,47 @@ namespace flow
             }
         }
 
+        // πετάλια: επιστρέφει true αν το μήνυμα το κατανάλωσε η ανάθεση (δεν πάει στα plugins)
+        bool handlePedal (const juce::MidiMessage& msg)
+        {
+            int kind = 0, num = 0;
+            bool press = false;
+
+            if (msg.isNoteOn())             { kind = 1; num = msg.getNoteNumber(); press = true; }
+            else if (msg.isNoteOff())       { kind = 1; num = msg.getNoteNumber(); }
+            else if (msg.isController())    { kind = 2; num = msg.getControllerNumber(); press = msg.getControllerValue() >= 64; }
+            else if (msg.isProgramChange()) { kind = 3; num = msg.getProgramChangeNumber(); press = true; }
+
+            if (kind == 0) return false;
+
+            const int code = (kind << 16) | (msg.getChannel() << 8) | num;
+            const int target = mapLearnTarget.load();
+
+            if (target >= 0 && press)
+            {
+                for (int i = 0; i < numControls; ++i)
+                    if (mapCode[i].load() == code) mapCode[i] = 0;
+
+                mapCode[target] = code;
+                learnedTarget = target;
+                learnedCode = code;
+                ++learnedCount;
+                mapLearnTarget = -1;
+                return true;
+            }
+
+            for (int i = 0; i < numControls; ++i)
+            {
+                if (mapCode[i].load() == code)
+                {
+                    if (press) ++mapHits[i];
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         void pushRaw (int b, int pos, const juce::MidiMessage& msg)
         {
             Action a;
@@ -354,7 +430,7 @@ namespace flow
                                : juce::MidiMessage::noteOff (1, note), pos);
             B.sounding.set ((size_t) note, on);
 
-            if (B.loopState == loopRec)
+            if (B.loopState == loopRec || B.loopState == loopOver)
             {
                 B.rec.push_back ({ gs + pos - B.recStart, on, note, vel });
                 B.recOpen.set ((size_t) note, on);
@@ -421,50 +497,115 @@ namespace flow
             }
         }
 
-        void stopLoop (Block& B)
+        void cutLoopNotes (Block& B)
         {
             for (int n = 0; n < 128; ++n)
                 if (B.loopSounding[(size_t) n])
                     B.out.addEvent (juce::MidiMessage::noteOff (1, n), 0);
 
             B.loopSounding.reset();
+        }
+
+        void stopLoop (Block& B)
+        {
+            cutLoopNotes (B);
             B.recOpen.reset();
             B.rec.clear();
-            B.loop.clear();
+            for (auto& l : B.layerEv) l.clear();
+            B.nLayers = 0;
+            B.muteMask = 0;
+            B.taps = 0;
             B.loopLen = 0;
             B.loopState = loopOff;
         }
 
-        void finishRecording (Block& B, int b, int64_t gs, int64_t barLen)
+        // κλείνει το layer που ηχογραφείται (rec) και το προσθέτει στο loop. Επιστρέφει true αν είχε νότες.
+        bool commitLayer (Block& B, int64_t gs)
+        {
+            const int64_t elapsed = std::max<int64_t> (1, std::min (B.loopLen, gs - B.recStart));
+
+            for (int n = 0; n < 128; ++n)    // νότες που κρατιούνται όταν τελειώνει η ηχογράφηση σταματούν στο τέλος
+                if (B.recOpen[(size_t) n])
+                    B.rec.push_back ({ elapsed - 1, false, n, 0 });
+
+            auto& dst = B.layerEv[(size_t) B.nLayers];
+            dst.clear();
+            for (auto e : B.rec)
+            {
+                if (e.phase < 0 || e.phase >= B.loopLen) continue;
+                e.phase = (B.recStart + e.phase) % B.loopLen;
+                dst.push_back (e);
+            }
+
+            B.rec.clear();
+            B.recOpen.reset();
+
+            if (dst.empty()) return false;
+            ++B.nLayers;
+            return true;
+        }
+
+        void finishRecording (Block& B, int64_t gs, int64_t barLen)
         {
             const int64_t elapsed = std::max<int64_t> (1, gs - B.recStart);
             const int64_t barsUsed = (elapsed + barLen - 1) / barLen;
             const int bars = barsUsed <= 1 ? 1 : (barsUsed <= 2 ? 2 : 4);
             B.loopLen = (int64_t) bars * barLen;
 
-            for (int n = 0; n < 128; ++n)    // notes still held when recording ends stop at the loop end
-                if (B.recOpen[(size_t) n])
-                    B.rec.push_back ({ B.loopLen - 1, false, n, 0 });
+            if (commitLayer (B, gs)) B.loopState = loopPlay;
+            else                     stopLoop (B);
+        }
 
-            B.loop.clear();
-            for (auto e : B.rec)
+        void finishOverdub (Block& B, int64_t gs)
+        {
+            commitLayer (B, gs);
+            B.loopState = loopPlay;
+        }
+
+        void loopMain (Block& B, int64_t gs, int64_t barLen)
+        {
+            switch (B.loopState)
             {
-                if (e.phase < 0 || e.phase >= B.loopLen) continue;
-                e.phase = (B.recStart + e.phase) % B.loopLen;
-                B.loop.push_back (e);
+                case loopOff:
+                    B.recStart = (gs / barLen) * barLen;
+                    B.rec.clear();
+                    B.recOpen.reset();
+                    B.loopState = loopRec;
+                    break;
+                case loopRec:  finishRecording (B, gs, barLen); break;
+                case loopPlay:
+                    if (B.nLayers < maxLayers)
+                    {
+                        B.recStart = gs;
+                        B.rec.clear();
+                        B.recOpen.reset();
+                        B.loopState = loopOver;
+                    }
+                    break;
+                case loopOver: finishOverdub (B, gs); break;
+                default: break;
             }
+        }
 
-            B.rec.clear();
-            B.recOpen.reset();
-
-            if (B.loop.empty())
+        void loopUndo (Block& B)
+        {
+            if (B.loopState == loopRec)
             {
                 stopLoop (B);
-                loopWanted[b] = loopOff;
             }
-            else
+            else if (B.loopState == loopOver)
             {
+                B.rec.clear();
+                B.recOpen.reset();
                 B.loopState = loopPlay;
+            }
+            else if (B.loopState == loopPlay && B.nLayers > 0)
+            {
+                --B.nLayers;
+                B.layerEv[(size_t) B.nLayers].clear();
+                B.muteMask &= ~(1u << B.nLayers);
+                cutLoopNotes (B);
+                if (B.nLayers == 0) stopLoop (B);
             }
         }
 
@@ -518,37 +659,45 @@ namespace flow
             B.prevArp = arp;
             if (changed) updateOutput (B, 0, gs, hold, arp);
 
-            // ---- loop state changes
-            int wanted = loopWanted[b].load();
+            // ---- loop: εντολές (κουμπιά ή πετάλια)
+            const int64_t tapWindow = (int64_t) (sr * 0.7);
+
+            for (int cm = cmdMain[(size_t) b].load(); B.seenMain != cm; )
+            {
+                ++B.seenMain;
+                loopMain (B, gs, barLen);
+            }
+
+            for (int cu = cmdUndo[(size_t) b].load(); B.seenUndo != cu; )
+            {
+                ++B.seenUndo;
+                loopUndo (B);
+            }
+
+            for (int cs = cmdStop[(size_t) b].load(); B.seenStop != cs; )
+            {
+                ++B.seenStop;
+                if (gs - B.lastTap > tapWindow) B.taps = 0;
+                ++B.taps;
+                B.lastTap = gs;
+            }
+
+            if (B.taps > 0 && gs - B.lastTap > tapWindow)
+            {
+                // N πατήματα STOP = σίγαση / επαναφορά του layer N
+                const int layer = B.taps - 1;
+                if (B.loopState == loopPlay && layer < B.nLayers)
+                {
+                    B.muteMask ^= (1u << layer);
+                    cutLoopNotes (B);
+                }
+                B.taps = 0;
+            }
 
             if (B.loopState == loopRec && (gs - B.recStart) >= (int64_t) axisBars * barLen)
-            {
-                wanted = loopPlay;
-                loopWanted[b] = loopPlay;
-            }
-
-            if (wanted != B.loopState)
-            {
-                if (wanted == loopRec && B.loopState == loopOff)
-                {
-                    B.recStart = (gs / barLen) * barLen;
-                    B.rec.clear();
-                    B.recOpen.reset();
-                    B.loopState = loopRec;
-                }
-                else if (wanted == loopPlay && B.loopState == loopRec)
-                {
-                    finishRecording (B, b, gs, barLen);
-                }
-                else if (wanted == loopOff)
-                {
-                    stopLoop (B);
-                }
-                else
-                {
-                    loopWanted[b] = B.loopState;
-                }
-            }
+                finishRecording (B, gs, barLen);
+            else if (B.loopState == loopOver && (gs - B.recStart) >= B.loopLen)
+                finishOverdub (B, gs);
 
             // ---- collect everything that happens in this block
             actions.clear();
@@ -575,18 +724,23 @@ namespace flow
                 }
             }
 
-            if (B.loopState == loopPlay && B.loopLen > 0)
+            if ((B.loopState == loopPlay || B.loopState == loopOver) && B.loopLen > 0)
             {
-                for (const auto& e : B.loop)
+                for (int layer = 0; layer < B.nLayers; ++layer)
                 {
-                    for (int64_t m = gs / B.loopLen; m <= (ge - 1) / B.loopLen; ++m)
+                    if ((B.muteMask >> layer) & 1u) continue;
+
+                    for (const auto& e : B.layerEv[(size_t) layer])
                     {
-                        const int64_t p = m * B.loopLen + e.phase;
-                        if (p < gs || p >= ge) continue;
-                        Action a;
-                        a.pos = (int) (p - gs); a.order = 3; a.kind = Kind::LoopEvt;
-                        a.note = e.note; a.vel = e.vel; a.on = e.on;
-                        actions.push_back (a);
+                        for (int64_t m = gs / B.loopLen; m <= (ge - 1) / B.loopLen; ++m)
+                        {
+                            const int64_t p = m * B.loopLen + e.phase;
+                            if (p < gs || p >= ge) continue;
+                            Action a;
+                            a.pos = (int) (p - gs); a.order = 3; a.kind = Kind::LoopEvt;
+                            a.note = e.note; a.vel = e.vel; a.on = e.on;
+                            actions.push_back (a);
+                        }
                     }
                 }
             }
@@ -648,7 +802,10 @@ namespace flow
             }
 
             loopStateOut[b] = B.loopState;
-            loopBarsOut[b]  = B.loopState == loopPlay ? (int) (B.loopLen / barLen) : 0;
+            loopBarsOut[b]  = (B.loopState == loopPlay || B.loopState == loopOver) ? (int) (B.loopLen / barLen) : 0;
+            loopLayersOut[b] = B.nLayers;
+            loopMuteOut[b]   = (int) B.muteMask;
+            loopTapsOut[b]   = B.taps;
             recStartOut[b]  = B.recStart;
         }
 

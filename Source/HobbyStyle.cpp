@@ -337,11 +337,12 @@ void ValueTile::paintButton (juce::Graphics& g, bool, bool isDown)
 
     g.setGradientFill (juce::ColourGradient (juce::Colour (isDown ? 0xff3d3733 : 0xff46403b), 0.0f, r.getY(),
                                              juce::Colour (isDown ? 0xff24211f : 0xff2a2623), 0.0f, r.getBottom(), false));
-    g.fillRoundedRectangle (r, 9.0f);
+    const float corner = round ? r.getWidth() * 0.5f : 9.0f;
+    g.fillRoundedRectangle (r, corner);
     g.setColour (juce::Colour (0xff1c1917));
-    g.drawRoundedRectangle (r, 9.0f, 1.0f);
+    g.drawRoundedRectangle (r, corner, 1.0f);
     g.setColour (juce::Colours::white.withAlpha (isDown ? 0.08f : 0.18f));
-    g.drawLine (r.getX() + 7.0f, r.getY() + 1.5f, r.getRight() - 7.0f, r.getY() + 1.5f, 1.0f);
+    g.drawLine (r.getX() + (round ? 14.0f : 7.0f), r.getY() + 1.5f, r.getRight() - (round ? 14.0f : 7.0f), r.getY() + 1.5f, 1.0f);
 
     juce::Colour iconColour = hobby::kIconGrey;
     if (isOnOff) iconColour = index == 1 ? hobby::kOn : hobby::kOff;
