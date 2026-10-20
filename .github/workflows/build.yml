@@ -17,7 +17,7 @@ jobs:
         run: |
           set -o pipefail
           if ! cmake --build build --config Release -j 4 2>&1 | tee build.log; then
-            grep -E "error|Error|fatal" build.log | head -8 | while IFS= read -r line; do
+            grep -E "error|Error|fatal" build.log | head -10 | while IFS= read -r line; do
               echo "::error::${line:0:400}"
             done
             exit 1
@@ -29,9 +29,9 @@ jobs:
           echo "App: $APP"
           codesign --force --deep --sign - "$APP"
           mkdir -p dist
-          ditto -c -k --sequesterRsrc --keepParent "$APP" dist/SimpleHost-macOS.zip
+          ditto -c -k --sequesterRsrc --keepParent "$APP" dist/Flow-macOS.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleHost-macOS
-          path: dist/SimpleHost-macOS.zip
+          name: Flow-macOS
+          path: dist/Flow-macOS.zip
