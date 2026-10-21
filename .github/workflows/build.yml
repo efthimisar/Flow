@@ -47,3 +47,12 @@ jobs:
           gh release create "build-${{ github.run_number }}" dist/Flow-macOS.zip \
             --title "Flow build ${{ github.run_number }}" \
             --notes "Apple Silicon (arm64). Unsigned app: right-click, Open the first time. Commit ${{ github.sha }}"
+
+      - name: Keep only the latest 3 releases
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 100 --json tagName --jq '.[].tagName' | tail -n +4 | while read -r tag; do
+            gh release delete "$tag" --yes --cleanup-tag
+          done
