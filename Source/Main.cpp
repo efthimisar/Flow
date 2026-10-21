@@ -121,10 +121,11 @@ public:
 
         header.onCircle = [this] (int i)
         {
+            const bool same = (panelMode == panelFx || panelMode == panelMaster) && panelIndex == i;
             if (panelMode != panelMaster) panelMode = panelFx;
             panelIndex = i;
             updateEditor();
-            refreshAll();
+            toggleWindowForPanel (same);
         };
         header.onCircleMenu = [this] (int i) { showCircleMenu (i); };
         header.onReplace = [this]
@@ -142,9 +143,11 @@ public:
         header.onPlus = [this] { addFxTo (panelMode == panelMaster ? -1 : selected); };
         header.onMaster = [this]
         {
-            panelMode = panelMode == panelMaster ? panelInstrument : panelMaster;
+            const bool toMaster = panelMode != panelMaster;
+            panelMode = toMaster ? panelMaster : panelInstrument;
             panelIndex = 0;
             updateEditor();
+            if (toMaster) toggleWindowForPanel (false);
             refreshAll();
         };
 
@@ -204,37 +207,9 @@ public:
         hobby::drawBrandMark (g, typeface, getWidth());
 
         hobby::drawBezel (g, loopsBezel.toFloat(), loopsBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
-        hobby::drawBezel (g, pluginBezel.toFloat(), pluginBezel.reduced (5).toFloat(), hobby::kScreen, 1.0f);
+        hobby::drawBezel (g, pluginBezel.toFloat(), pluginBezel.reduced (5).toFloat(), hobby::kScreen, 14.0f);
         hobby::drawBezel (g, stripBezel.toFloat(), stripBezel.reduced (5).toFloat(), hobby::kStripScreen, 15.0f);
         hobby::drawBezel (g, keysBezel.toFloat(), keysBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
-
-        if (editor == nullptr)
-        {
-            const auto inner = pluginBezel.reduced (5);
-            const auto area = inner.withTrimmedTop (headerH + 4);
-            if (! isActive (selected) && panelMode != panelMaster)
-            {
-                // κανένα plugin ακόμα: χαραγμένο "flow" στο χρώμα της οθόνης, με ανάγλυφο από το φως
-                const auto word = area.withSizeKeepingCentre (area.getWidth(), 120).translated (0, -14);
-                g.setFont (hobby::makeFont (typeface, 110.0f));
-                g.setColour (Colours::black.withAlpha (0.65f));
-                g.drawText ("flow", word.translated (-2, -2), Justification::centred, false);
-                g.setColour (Colours::white.withAlpha (0.10f));
-                g.drawText ("flow", word.translated (2, 2), Justification::centred, false);
-                g.setColour (hobby::kScreen);
-                g.drawText ("flow", word, Justification::centred, false);
-
-                g.setFont (hobby::makeFont (typeface, 15.0f));
-                g.setColour (Colours::white.withAlpha (0.22f));
-                g.drawText ("P R I S M A   A U D I O", area.withTrimmedTop (area.getHeight() / 2 + 52), Justification::centredTop, false);
-            }
-            else
-            {
-                g.setColour (hobby::kIconGrey.withAlpha (0.6f));
-                g.setFont (hobby::makeFont (typeface, 15.0f));
-                g.drawText (emptyPanelText(), area, Justification::centred, false);
-            }
-        }
 
         for (auto* t : tiles())
         {
@@ -255,8 +230,6 @@ public:
     void resized() override
     {
         if (getWidth() <= 0 || getHeight() <= 0) return;
-        if (! inRefresh)   // ο χρήστης τράβηξε το παράθυρο: ένας editor που δέχεται resize γεμίζει το panel
-            setEditorSizeKeepingRatio (getWidth() - sideW() - panelPadW, getHeight() - vertChrome() - panelPadH);
         layoutFor (getWidth(), getHeight());
         placeChildren();
     }
@@ -484,72 +457,25 @@ private:
     }
 
     //==========================================================================
-    // γεωμετρία παραθύρου
-    // Διάταξη: αριστερά μία στήλη με όλα τα χειριστήρια του Flow (loops, κουμπιά, πλήκτρα), δεξιά το plugin σε όλο το ύψος.
-    // Το plugin δίνει το μέγεθος του παραθύρου και η αριστερή στήλη προσαρμόζεται (μόνο η οθόνη loops μεγαλώνει ή μικραίνει).
-    static constexpr int leftW = 724, topH = 36, botH = 14, gapPx = 8;
-    static constexpr int minLoopsH = 160, stripH = 72, keysH = 152;
-    static constexpr int panelPadW = 10, panelPadH = 10 + 34 + 4;       // πλαίσιο + κεφαλίδα γύρω από τον editor
-    static constexpr int minPanelW = 560, emptyPanelH = 440;
+    // γεωμετρία παραθύρου: μία στήλη (κεφαλίδα, οθόνη loops, κουμπιά, πλήκτρα). Τα plugin ανοίγουν σε δικά τους παράθυρα.
+    static constexpr int topH = 36, botH = 14, gapPx = 8, sideM = 11, headerBarH = 44;
+    static constexpr int minLoopsH = 160, stripH = 72, keysH = 152, minContentW = 724, defaultLoopsH = 250;
     static constexpr int minContentH() { return minLoopsH + gapPx + stripH + gapPx + keysH; }
-    static constexpr int sideW() { return 11 + leftW + gapPx + 11; }     // πλάτος εκτός του πλαισίου του plugin
-    static constexpr int vertChrome() { return topH + botH; }
+    static constexpr int chromeH() { return topH + headerBarH + gapPx + botH; }
+    static constexpr int minWinW() { return minContentW + 2 * sideM; }
+    static constexpr int minWinH() { return chromeH() + minContentH(); }
+    static constexpr int defaultWinH() { return chromeH() + defaultLoopsH + gapPx + stripH + gapPx + keysH; }
 
-    // διαθέσιμος χώρος στην οθόνη όπου βρίσκεται το παράθυρο
-    void getAvailable (int& availW, int& availH)
-    {
-        availH = 100000; availW = 100000;
-        const auto& displays = Desktop::getInstance().getDisplays();
-        const Displays::Display* d = nullptr;
-        if (auto* w = findParentComponentOfClass<DocumentWindow>())
-            d = displays.getDisplayForRect (w->getScreenBounds());
-        if (d == nullptr) d = displays.getPrimaryDisplay();
-        if (d != nullptr)
-        {
-            availH = d->userArea.getHeight() - 30;
-            availW = d->userArea.getWidth() - 8;
-        }
-    }
-
-    // Οι editors των plugins είναι native views: δεν μικραίνουν με transform. Μικραίνουν μόνο αν το ίδιο το plugin δέχεται resize.
-    void setEditorSizeKeepingRatio (int maxW, int maxH)
-    {
-        if (editor == nullptr || ! editor->isResizable()) return;
-        const int ew = editor->getWidth(), eh = editor->getHeight();
-        if (ew <= 0 || eh <= 0) return;
-        const float s = jmin ((float) jmax (200, maxW) / (float) ew, (float) jmax (100, maxH) / (float) eh);
-        const int nw = (int) std::floor ((float) ew * s), nh = (int) std::floor ((float) eh * s);
-        if (std::abs (nw - ew) > 1 || std::abs (nh - eh) > 1)
-        {
-            layouting = true;
-            editor->setSize (nw, nh);
-            layouting = false;
-        }
-    }
-
-    // προτιμώμενο μέγεθος παραθύρου: ό,τι χρειάζεται το plugin
-    void computePreferred()
-    {
-        const bool shown = editor != nullptr;
-        const int ew = shown ? editor->getWidth()  : 0;
-        const int eh = shown ? editor->getHeight() : 0;
-        const int panelW = shown ? jmax (minPanelW, ew + panelPadW) : minPanelW;
-        const int panelH = shown ? eh + panelPadH : emptyPanelH;
-
-        winW = sideW() + panelW;
-        winH = vertChrome() + jmax (minContentH(), panelH);
-    }
-
-    // γεωμετρία για το τωρινό μέγεθος του παραθύρου (το επιλέγει είτε το plugin είτε ο χρήστης τραβώντας τις άκρες)
     void layoutFor (int W, int H)
     {
-        const int contentH = jmax (minContentH(), H - vertChrome());
-        const int panelW = jmax (200, W - sideW());
+        const int cw = jmax (minContentW, W - 2 * sideM);
+        const int contentH = jmax (minContentH(), H - chromeH());
+        const int y0 = topH + headerBarH + gapPx;
 
-        loopsBezel  = { 11, topH, leftW, contentH - (stripH + keysH + 2 * gapPx) };
-        stripBezel  = { 11, topH + contentH - keysH - gapPx - stripH, leftW, stripH };
-        keysBezel   = { 11, topH + contentH - keysH, leftW, keysH };
-        pluginBezel = { 11 + leftW + gapPx, topH, panelW, contentH };
+        pluginBezel = { sideM, topH, cw, headerBarH };   // η κεφαλίδα
+        loopsBezel  = { sideM, y0, cw, contentH - (stripH + keysH + 2 * gapPx) };
+        stripBezel  = { sideM, y0 + contentH - keysH - gapPx - stripH, cw, stripH };
+        keysBezel   = { sideM, y0 + contentH - keysH, cw, keysH };
     }
 
     void placeChildren()
@@ -560,14 +486,14 @@ private:
         const auto panel = pluginBezel.reduced (5);
         header.setBounds (panel.getX(), panel.getY(), panel.getWidth(), headerH);
 
-        // τρεις ομάδες: αριστερά VST, MIDI FX, FX, Hold. Στη μέση (κεντραρισμένα στο παράθυρο) τα 4 στρογγυλά. Δεξιά metronome και φάκελος.
+        // τρεις ομάδες: αριστερά VST, MIDI FX, FX, Hold, Chord. Στη μέση τα 4 στρογγυλά. Δεξιά metronome και φάκελος.
         const auto strip = stripBezel.reduced (5);
         const int ty = strip.getY() + 5;
         const int leftX = strip.getX() + 14;
         const int midW = 4 * 52 + 3 * 8;
         const int rightX = strip.getRight() - 14 - 52;
         const int leftEnd = leftX + 5 * 60 - 8, rightStart = rightX - 60;
-        const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);   // η μεσαία ομάδα ανάμεσα στην αριστερή και τη δεξιά
+        const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);
 
         int x = leftX;
         for (auto* t : { &vstTile, &mfxTile, &fxTile, &holdTile, &chordTile })
@@ -583,110 +509,142 @@ private:
         }
         metroTile.setBounds (rightX - 60, ty, 52, 52);
         folderTile.setBounds (rightX, ty, 52, 52);
-
-        if (editor != nullptr)
-        {
-            const int ew = editor->getWidth(), eh = editor->getHeight();
-            const int roomH = panel.getHeight() - headerH - 4;
-            const int x0 = panel.getCentreX() - ew / 2;
-            const int y0 = panel.getY() + headerH + 4 + jmax (0, (roomH - eh) / 2);
-            layouting = true;
-            editor->setTransform ({});
-            editor->setTopLeftPosition (x0, y0);
-            layouting = false;
-        }
     }
 
     void refreshSize()
     {
-        inRefresh = true;
-        computePreferred();
+        if (getWidth() <= 0 || getHeight() <= 0)
+            setSize (minWinW(), defaultWinH());
 
-        // το μέγεθος αλλάζει από μόνο του μόνο όταν αλλάζει αυτό που χρειάζεται το plugin. Αλλιώς μένει όπως το έβαλε ο χρήστης.
-        const bool prefChanged = winW != lastPrefW || winH != lastPrefH;
-        lastPrefW = winW; lastPrefH = winH;
-
-        if (prefChanged)
-        {
-            if (auto* w = findParentComponentOfClass<DocumentWindow>())
-            {
-                if (w->getContentComponent() == this)
-                {
-                    if (getWidth() != winW || getHeight() != winH)
-                        w->setContentComponentSize (winW, winH);
-                }
-            }
-            else if (getWidth() != winW || getHeight() != winH)
-            {
-                setSize (winW, winH);
-            }
-        }
-
-        // κάτω όριο: αν το plugin δεν μικραίνει, το παράθυρο δεν γίνεται μικρότερο από τον editor του
         if (auto* w = findParentComponentOfClass<DocumentWindow>())
-        {
-            const bool fixedEditor = editor != nullptr && ! editor->isResizable();
-            w->setResizeLimits (sideW() + (fixedEditor ? jmax (minPanelW, editor->getWidth() + panelPadW) : minPanelW),
-                                vertChrome() + 28 + (fixedEditor ? jmax (minContentH(), editor->getHeight() + panelPadH) : minContentH()),
-                                4000, 3000);
-        }
+            w->setResizeLimits (minWinW(), minWinH() + 28, 4000, 3000);
 
         layoutFor (getWidth(), getHeight());
         placeChildren();
         repaint();
-        inRefresh = false;
     }
 
     void parentHierarchyChanged() override { refreshSize(); }
 
     //==========================================================================
-    // plugin editor μέσα στο παράθυρο
+    // κάθε plugin (instrument, MIDI FX, FX, master FX) ανοίγει σε δικό του ελεύθερο παράθυρο, στο δικό του μέγεθος
+    struct PluginWindow : public DocumentWindow
+    {
+        PluginWindow (MainComponent& o, AudioPluginInstance* p, const String& title, AudioProcessorEditor* e, const String& key)
+            : DocumentWindow (title, hobby::kBodyBottom, DocumentWindow::closeButton | DocumentWindow::minimiseButton),
+              owner (o), plugin (p), posKey (key)
+        {
+            setUsingNativeTitleBar (true);
+            const bool canResize = e->isResizable();
+            setContentOwned (e, true);
+            setResizable (canResize, false);
+        }
+
+        void closeButtonPressed() override { owner.closePluginWindowAsync (plugin); }
+
+        MainComponent& owner;
+        AudioPluginInstance* plugin;
+        String posKey;
+    };
+
+    String windowTitle (AudioPluginInstance* p) const
+    {
+        const String name = p->getName();
+        if (panelMode == panelMaster) return "MASTER FX " + String (panelIndex + 1) + String::fromUTF8 (" \xc2\xb7 ") + name;
+        const String blk = "BLOCK " + String (selected + 1) + String::fromUTF8 (" \xc2\xb7 ");
+        if (panelMode == panelMidiFx) return blk + String::fromUTF8 ("MIDI FX \xc2\xb7 ") + name;
+        if (panelMode == panelFx)     return blk + "FX " + String (panelIndex + 1) + String::fromUTF8 (" \xc2\xb7 ") + name;
+        return blk + name;
+    }
+
+    bool hasWindow (AudioPluginInstance* p) const { return p != nullptr && pluginWindows.count (p) > 0; }
+
+    void rememberWindowPos (PluginWindow& w)
+    {
+        properties.getUserSettings()->setValue (w.posKey, String (w.getX()) + " " + String (w.getY()));
+    }
+
+    void openWindowFor (AudioPluginInstance* p)
+    {
+        AudioProcessorEditor* e = p->hasEditor() ? p->createEditorIfNeeded() : nullptr;
+        if (e == nullptr)
+            e = new GenericAudioProcessorEditor (*p);
+
+        const String key = "pwpos_" + p->getName();
+        auto w = std::make_unique<PluginWindow> (*this, p, windowTitle (p), e, key);
+
+        Point<int> at;
+        const String saved = properties.getUserSettings()->getValue (key);
+        if (saved.containsChar (' '))
+        {
+            at = { saved.upToFirstOccurrenceOf (" ", false, false).getIntValue(),
+                   saved.fromFirstOccurrenceOf (" ", false, false).getIntValue() };
+        }
+        else
+        {
+            const int n = (int) pluginWindows.size();
+            if (auto* top = getTopLevelComponent())
+                at = { top->getRight() + 12 + 28 * n, top->getY() + 28 * n };
+            else
+                at = { 40 + 28 * n, 60 + 28 * n };
+        }
+
+        const auto total = Desktop::getInstance().getDisplays().getTotalBounds (true);
+        at.x = jlimit (total.getX(), jmax (total.getX(), total.getRight() - w->getWidth()), at.x);
+        at.y = jlimit (total.getY(), jmax (total.getY(), total.getBottom() - w->getHeight()), at.y);
+        w->setTopLeftPosition (at);
+        w->setVisible (true);
+        w->toFront (true);
+        pluginWindows[p] = std::move (w);
+    }
+
+    // κουμπί: ανοίγει το παράθυρο του plugin που δείχνει το πάνελ. Αν είναι ήδη ανοιχτό: το κλείνει (closeIfOpen) ή το φέρνει μπροστά.
+    void toggleWindowForPanel (bool closeIfOpen)
+    {
+        if (auto* p = panelPlugin())
+        {
+            auto it = pluginWindows.find (p);
+            if (it == pluginWindows.end())
+            {
+                openWindowFor (p);
+            }
+            else if (closeIfOpen)
+            {
+                rememberWindowPos (*it->second);
+                pluginWindows.erase (it);
+            }
+            else
+            {
+                it->second->toFront (true);
+            }
+        }
+        refreshAll();
+    }
+
+    void closePluginWindowAsync (AudioPluginInstance* p)
+    {
+        MessageManager::callAsync ([safe = SafePointer<MainComponent> (this), p]
+        {
+            if (safe == nullptr) return;
+            auto it = safe->pluginWindows.find (p);
+            if (it != safe->pluginWindows.end())
+            {
+                safe->rememberWindowPos (*it->second);
+                safe->pluginWindows.erase (it);
+            }
+            safe->refreshAll();
+        });
+    }
+
+    // καλείται πριν αφαιρεθεί ή αντικατασταθεί οποιοδήποτε plugin: κλείνει όλα τα παράθυρα plugin
     void closeEditor()
     {
-        if (editor != nullptr)
-        {
-            editor->removeComponentListener (this);
-            removeChildComponent (editor.get());
-            editor.reset();
-        }
-        editorPlugin = nullptr;
+        for (auto& kv : pluginWindows)
+            rememberWindowPos (*kv.second);
+        pluginWindows.clear();
     }
 
-    void updateEditor()
-    {
-        normalisePanel();
-        auto* plugin = panelPlugin();
-
-        if (plugin == nullptr)
-        {
-            closeEditor();
-        }
-        else if (editor == nullptr || editorPlugin != plugin)
-        {
-            closeEditor();
-
-            AudioProcessorEditor* e = plugin->hasEditor() ? plugin->createEditorIfNeeded() : nullptr;
-            if (e == nullptr)
-                e = new GenericAudioProcessorEditor (*plugin);
-
-            editor.reset (e);
-            editorPlugin = plugin;
-            addAndMakeVisible (editor.get());
-            editor->addComponentListener (this);
-
-            int aw = 100000, ah = 100000;
-            getAvailable (aw, ah);
-            setEditorSizeKeepingRatio (aw - sideW() - panelPadW, ah - vertChrome() - panelPadH);   // πολύ μεγάλος editor: μικραίνει μόνο αν το plugin το δέχεται
-        }
-
-        refreshSize();
-    }
-
-    void componentMovedOrResized (Component& c, bool, bool wasResized) override
-    {
-        if (&c == editor.get() && wasResized && ! layouting)
-            refreshSize();
-    }
+    void updateEditor() { normalisePanel(); }
 
     //==========================================================================
     // κουμπιά VST / MIDI FX / FX
@@ -697,10 +655,11 @@ private:
             chooseAndLoadPlugin();
             return;
         }
+        const bool same = panelMode == panelInstrument;
         if (panelMode == panelMaster) header.onMaster();   // επιστροφή από το master
         panelMode = panelInstrument;
         updateEditor();
-        refreshAll();
+        toggleWindowForPanel (same);
     }
 
     void onMidiFxClick()
@@ -708,9 +667,10 @@ private:
         if (! isActive (selected)) { setMessage (gr ("Φόρτωσε πρώτα ένα instrument (VST)")); return; }
         if (engine.getMidiFx (selected) != nullptr)
         {
+            const bool same = panelMode == panelMidiFx;
             panelMode = panelMidiFx;
             updateEditor();
-            refreshAll();
+            toggleWindowForPanel (same);
         }
         else
         {
@@ -723,10 +683,11 @@ private:
         if (! isActive (selected)) { setMessage (gr ("Φόρτωσε πρώτα ένα instrument (VST)")); return; }
         if (engine.numFx (selected) > 0)
         {
+            const bool same = panelMode == panelFx;
             panelMode = panelFx;
             panelIndex = jlimit (0, engine.numFx (selected) - 1, panelIndex);
             updateEditor();
-            refreshAll();
+            toggleWindowForPanel (same);
         }
         else
         {
@@ -942,6 +903,7 @@ private:
         if (after) after();
 
         updateEditor();
+        if (userLoad) toggleWindowForPanel (false);
         refreshAll();
         saveNow (true);
     }
@@ -987,6 +949,7 @@ private:
                 engine.selectedBlock = block;
                 panelMode = panelMidiFx;
                 updateEditor();
+                toggleWindowForPanel (false);
                 refreshAll();
                 saveNow (true);
             });
@@ -1022,6 +985,7 @@ private:
                 else { panelMode = panelFx; selected = target; engine.selectedBlock = target; }
                 panelIndex = engine.numFx (target) - 1;
                 updateEditor();
+                toggleWindowForPanel (false);
                 refreshAll();
                 saveNow (true);
             });
@@ -1836,10 +1800,12 @@ private:
         // κουμπιά plugin: πράσινο = αυτό που δείχνει τώρα ο editor. Τελείες: υπάρχει plugin / πόσα FX
         const bool hasMfx = valid && engine.getMidiFx (sel) != nullptr;
         const int nfx = valid ? engine.numFx (sel) : 0;
-        vstTile.setIconColour (valid && panelMode == panelInstrument ? hobby::kOn : hobby::kIconGrey);
-        mfxTile.setIconColour (hasMfx && panelMode == panelMidiFx ? hobby::kOn : hobby::kIconGrey);
+        vstTile.setIconColour (valid && hasWindow (engine.getPlugin (sel)) ? hobby::kOn : hobby::kIconGrey);
+        mfxTile.setIconColour (hasMfx && hasWindow (engine.getMidiFx (sel)) ? hobby::kOn : hobby::kIconGrey);
         mfxTile.setDots (hasMfx ? 1 : 0);
-        fxTile.setIconColour (nfx > 0 && panelMode == panelFx ? hobby::kOn : hobby::kIconGrey);
+        bool anyFxOpen = false;
+        for (int i = 0; i < nfx; ++i) anyFxOpen = anyFxOpen || hasWindow (engine.getFx (sel, i));
+        fxTile.setIconColour (anyFxOpen ? hobby::kOn : hobby::kIconGrey);
         fxTile.setDots (jmin (nfx, 3));
 
         const int cm = valid ? engine.chordMode[(size_t) sel].load() : 0;
@@ -1949,9 +1915,6 @@ private:
         }
 
         refreshAll();
-
-        if (editor == nullptr && panelPlugin() != nullptr)
-            updateEditor();
     }
 
     //==========================================================================
@@ -1983,8 +1946,7 @@ private:
     String metroSamplePath;
     std::map<const AudioPluginInstance*, String> stateCache;
 
-    std::unique_ptr<AudioProcessorEditor> editor;
-    AudioPluginInstance* editorPlugin = nullptr;
+    std::map<AudioPluginInstance*, std::unique_ptr<PluginWindow>> pluginWindows;
     std::unique_ptr<FileChooser> chooser;
 
     LoopsView loopsView;
@@ -2000,7 +1962,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.9.0"; }
+    const String getApplicationVersion() override { return "0.10.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
@@ -2021,7 +1983,7 @@ public:
             setUsingNativeTitleBar (true);
             setContentOwned (new MainComponent(), true);
             setResizable (true, false);
-            setResizeLimits (1314, 478, 4000, 3000);
+            setResizeLimits (746, 620, 4000, 3000);
             centreWithSize (getWidth(), getHeight());
             setVisible (true);
         }
