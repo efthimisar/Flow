@@ -777,7 +777,7 @@ public:
     int64 armedUntilMs = 0;            // το κουμπί αφαίρεσης περιμένει δεύτερο πάτημα μέχρι αυτή τη στιγμή
 
     std::function<void (int)> onCircle, onCircleMenu;
-    std::function<void()> onPlus, onMaster, onReplace, onRemove;
+    std::function<void()> onPlus, onMaster, onReplace, onRemove, onNewBlock;
 
     void paint (Graphics& g) override
     {
@@ -787,7 +787,16 @@ public:
         g.drawText (title, 12, 0, getWidth() / 2 - 150, getHeight(), Justification::centredLeft, false);
 
         // αριστερά, μετά τον τίτλο: αλλαγή (δύο βέλη) και αφαίρεση (Χ, με δεύτερο πάτημα για επιβεβαίωση)
-        replaceRect = removeRect = {};
+        replaceRect = removeRect = newBlockRect = {};
+        {
+            constexpr float AD = 22.0f;
+            const float nx = 12.0f + textWidthOf (g.getCurrentFont(), title) + 16.0f + (showActions ? 2.0f * (AD + 6.0f) : 0.0f);
+            newBlockRect = { nx, (h - AD) * 0.5f, AD, AD };
+            g.setColour (hobby::kIconGrey);
+            g.drawEllipse (newBlockRect.reduced (0.75f), 1.5f);
+            g.fillRect (newBlockRect.getCentreX() - 5.0f, newBlockRect.getCentreY() - 0.75f, 10.0f, 1.5f);
+            g.fillRect (newBlockRect.getCentreX() - 0.75f, newBlockRect.getCentreY() - 5.0f, 1.5f, 10.0f);
+        }
         if (showActions)
         {
             constexpr float AD = 22.0f;
@@ -885,6 +894,7 @@ public:
     void mouseDown (const MouseEvent& e) override
     {
         const auto p = e.position;
+        if (newBlockRect.expanded (3.0f).contains (p)) { if (onNewBlock) onNewBlock(); return; }
         if (showActions && replaceRect.expanded (3.0f).contains (p)) { if (onReplace) onReplace(); return; }
         if (showActions && removeRect.expanded (3.0f).contains (p))
         {
@@ -907,5 +917,5 @@ public:
 private:
     Typeface::Ptr typeface;
     std::vector<Rectangle<float>> circles;
-    Rectangle<float> plusRect, masterRect, replaceRect, removeRect;
+    Rectangle<float> plusRect, masterRect, replaceRect, removeRect, newBlockRect;
 };

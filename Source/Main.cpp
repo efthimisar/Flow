@@ -140,6 +140,7 @@ public:
             if (panelMode == panelMidiFx) removeMidiFx (selected);
             else                          removeBlock (selected);
         };
+        header.onNewBlock = [this] { chooseAndLoadPlugin(); };
         header.onPlus = [this] { addFxTo (panelMode == panelMaster ? -1 : selected); };
         header.onMaster = [this]
         {
@@ -1962,7 +1963,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.10.0"; }
+    const String getApplicationVersion() override { return "0.10.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
