@@ -127,6 +127,18 @@ public:
             refreshAll();
         };
         header.onCircleMenu = [this] (int i) { showCircleMenu (i); };
+        header.onReplace = [this]
+        {
+            if (! isActive (selected)) return;
+            if (panelMode == panelMidiFx) loadMidiFxInto (selected);
+            else                          replaceInstrument();
+        };
+        header.onRemove = [this]
+        {
+            if (! isActive (selected)) return;
+            if (panelMode == panelMidiFx) removeMidiFx (selected);
+            else                          removeBlock (selected);
+        };
         header.onPlus = [this] { addFxTo (panelMode == panelMaster ? -1 : selected); };
         header.onMaster = [this]
         {
@@ -240,7 +252,12 @@ public:
         }
     }
 
-    void resized() override { placeChildren(); }
+    void resized() override
+    {
+        if (getWidth() <= 0 || getHeight() <= 0) return;
+        layoutFor (getWidth(), getHeight());
+        placeChildren();
+    }
 
     void mouseDown (const MouseEvent&) override { grabKeyboardFocus(); }
 
@@ -466,45 +483,65 @@ private:
 
     //==========================================================================
     // γεωμετρία παραθύρου
-    void computeLayout()
+    static constexpr int panelOverheadPx() { return 10 + 34 + 4; }
+
+    // προτιμώμενο μέγεθος παραθύρου: ό,τι χρειάζεται το plugin, μέσα στα όρια της οθόνης στην οποία βρίσκεται το παράθυρο
+    void computePreferred()
     {
         const bool shown = editor != nullptr;
         const int ew = shown ? editor->getWidth()  : 0;
         const int eh = shown ? editor->getHeight() : 0;
 
-        const int panelOverhead = 10 + headerH + 4;
-        const int fixedH = 36 + 246 + 8 + panelOverhead + 8 + 72 + 8 + 152 + 14;
-        int avail = 100000, availW = 100000;
-        if (auto* d = Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        const int fixedH = 36 + 246 + 8 + panelOverheadPx() + 8 + 72 + 8 + 152 + 14;
+        int availH = 100000, availW = 100000;
+        const auto& displays = Desktop::getInstance().getDisplays();
+        const Displays::Display* d = nullptr;
+        if (auto* w = findParentComponentOfClass<DocumentWindow>())
+            d = displays.getDisplayForRect (w->getScreenBounds());
+        if (d == nullptr) d = displays.getPrimaryDisplay();
+        if (d != nullptr)
         {
-            avail  = d->userArea.getHeight() - 30;
+            availH = d->userArea.getHeight() - 30;
             availW = d->userArea.getWidth() - 8;
         }
 
-        editorScale = 1.0f;
-        if (shown && eh > 0)
-        {
-            const int room = avail - fixedH;
-            if (eh > room) editorScale = jlimit (0.4f, 1.0f, (float) jmax (1, room) / (float) eh);
-        }
+        float s = 1.0f;
+        if (shown && eh > 0 && eh > availH - fixedH)
+            s = jmax (0.25f, (float) jmax (1, availH - fixedH) / (float) eh);
         if (shown && ew > 0 && ew + 32 > availW)
-            editorScale = jmin (editorScale, jlimit (0.4f, 1.0f, (float) jmax (1, availW - 32) / (float) ew));
+            s = jmin (s, jmax (0.25f, (float) jmax (1, availW - 32) / (float) ew));
 
-        const int seh = shown ? (int) std::ceil ((float) eh * editorScale) : 0;
-        const int sew = shown ? (int) std::ceil ((float) ew * editorScale) : 0;
+        const int seh = shown ? (int) std::ceil ((float) eh * s) : 0;
+        const int sew = shown ? (int) std::ceil ((float) ew * s) : 0;
         const int body = shown ? seh : ((! isActive (selected) && panelMode != panelMaster) ? 300 : 46);
 
-        winW = jmax (992, sew + 32);
-        winH = fixedH + body;
+        winW = jmin (jmax (992, sew + 32), jmax (992, availW));
+        winH = jmin (fixedH + body, jmax (fixedH + 46, availH));
+    }
+
+    // γεωμετρία για το τωρινό μέγεθος του παραθύρου (το επιλέγει είτε το plugin είτε ο χρήστης τραβώντας τις άκρες)
+    void layoutFor (int W, int H)
+    {
+        const int panelOverhead = panelOverheadPx();
+        const int fixedH = 36 + 246 + 8 + panelOverhead + 8 + 72 + 8 + 152 + 14;
+        const int body = jmax (46, H - fixedH);
+
+        editorScale = 1.0f;
+        if (editor != nullptr && editor->getWidth() > 0 && editor->getHeight() > 0)
+        {
+            editorScale = jmin (1.0f, (float) body / (float) editor->getHeight(),
+                                (float) jmax (1, W - 32) / (float) editor->getWidth());
+            editorScale = jmax (0.1f, editorScale);
+        }
 
         int y = 36;
-        loopsBezel = { 11, y, winW - 22, 246 };
+        loopsBezel = { 11, y, W - 22, 246 };
         y += 246 + 8;
-        pluginBezel = { 11, y, winW - 22, panelOverhead + body };
+        pluginBezel = { 11, y, W - 22, panelOverhead + body };
         y += panelOverhead + body + 8;
-        stripBezel = { 11, y, winW - 22, 72 };
+        stripBezel = { 11, y, W - 22, 72 };
         y += 72 + 8;
-        keysBezel = { 11, y, winW - 22, 152 };
+        keysBezel = { 11, y, W - 22, 152 };
     }
 
     void placeChildren()
@@ -540,31 +577,44 @@ private:
 
         if (editor != nullptr)
         {
+            // το transform εφαρμόζεται γύρω από την αρχή του γονέα, γι' αυτό η μετακίνηση μπαίνει μέσα στο transform και η θέση μένει (0,0)
             const int sew = (int) std::ceil ((float) editor->getWidth() * editorScale);
+            const int seh = (int) std::ceil ((float) editor->getHeight() * editorScale);
+            const int roomH = panel.getHeight() - headerH - 4;
+            const float x0 = (float) (panel.getCentreX() - sew / 2);
+            const float y0 = (float) (panel.getY() + headerH + 4 + jmax (0, (roomH - seh) / 2));
             layouting = true;
-            editor->setTransform (AffineTransform::scale (editorScale));
-            editor->setTopLeftPosition (panel.getCentreX() - sew / 2, panel.getY() + headerH + 4);
+            editor->setTransform (AffineTransform::scale (editorScale).translated (x0, y0));
+            editor->setTopLeftPosition (0, 0);
             layouting = false;
         }
     }
 
     void refreshSize()
     {
-        computeLayout();
+        computePreferred();
 
-        if (auto* w = findParentComponentOfClass<DocumentWindow>())
+        // το μέγεθος αλλάζει από μόνο του μόνο όταν αλλάζει αυτό που χρειάζεται το plugin. Αλλιώς μένει όπως το έβαλε ο χρήστης.
+        const bool prefChanged = winW != lastPrefW || winH != lastPrefH;
+        lastPrefW = winW; lastPrefH = winH;
+
+        if (prefChanged)
         {
-            if (w->getContentComponent() == this)
+            if (auto* w = findParentComponentOfClass<DocumentWindow>())
             {
-                if (getWidth() != winW || getHeight() != winH)
-                    w->setContentComponentSize (winW, winH);
+                if (w->getContentComponent() == this)
+                {
+                    if (getWidth() != winW || getHeight() != winH)
+                        w->setContentComponentSize (winW, winH);
+                }
+            }
+            else if (getWidth() != winW || getHeight() != winH)
+            {
+                setSize (winW, winH);
             }
         }
-        else if (getWidth() != winW || getHeight() != winH)
-        {
-            setSize (winW, winH);
-        }
 
+        layoutFor (getWidth(), getHeight());
         placeChildren();
         repaint();
     }
@@ -1802,6 +1852,7 @@ private:
         else if (panelMode == panelFx)     title = "BLOCK " + String (sel + 1) + " / FX";
         else                               title = "BLOCK " + String (sel + 1) + " / VST";
         header.title = title;
+        header.showActions = valid && ! master && panelMode != panelFx;
         header.accent = valid ? blockLight (sel) : hobby::kIconGrey;
         header.masterMode = master;
         header.numCircles = master ? engine.numFx (-1) : (valid ? engine.numFx (sel) : 0);
@@ -1876,7 +1927,7 @@ private:
     int panelMode = panelInstrument, panelIndex = 0;
     bool layouting = false;
     static constexpr int headerH = 34;
-    int winW = 992, winH = 700;
+    int winW = 992, winH = 700, lastPrefW = 0, lastPrefH = 0;
     float editorScale = 1.0f;
     Rectangle<int> loopsBezel, pluginBezel, stripBezel, keysBezel;
     String message;
@@ -1909,7 +1960,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.6.0"; }
+    const String getApplicationVersion() override { return "0.7.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
@@ -1929,7 +1980,8 @@ public:
         {
             setUsingNativeTitleBar (true);
             setContentOwned (new MainComponent(), true);
-            setResizable (false, false);
+            setResizable (true, false);
+            setResizeLimits (992, 640, 4000, 3000);
             centreWithSize (getWidth(), getHeight());
             setVisible (true);
         }

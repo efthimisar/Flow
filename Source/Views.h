@@ -8,6 +8,13 @@ using namespace juce;
 
 static inline String gr (const char* utf8Text) { return String::fromUTF8 (utf8Text); }
 
+static inline float textWidthOf (const Font& f, const String& t)
+{
+    GlyphArrangement ga;
+    ga.addLineOfText (f, t, 0.0f, 0.0f);
+    return ga.getBoundingBox (0, -1, true).getWidth();
+}
+
 // Χρώματα των blocks: ανοιχτό για τα λευκά πλήκτρα, πιο βαθύ για τα μαύρα.
 static inline Colour blockLight (int b)
 {
@@ -765,9 +772,11 @@ public:
     bool masterMode = false;
     bool canAdd = true;
     float cpu = 0.0f;
+    bool showActions = false;          // κουμπιά αλλαγής / αφαίρεσης του plugin που φαίνεται
+    int64 armedUntilMs = 0;            // το κουμπί αφαίρεσης περιμένει δεύτερο πάτημα μέχρι αυτή τη στιγμή
 
     std::function<void (int)> onCircle, onCircleMenu;
-    std::function<void()> onPlus, onMaster;
+    std::function<void()> onPlus, onMaster, onReplace, onRemove;
 
     void paint (Graphics& g) override
     {
@@ -775,6 +784,42 @@ public:
         g.setFont (hobby::makeFont (typeface, 18.0f));
         g.setColour (hobby::kText);
         g.drawText (title, 12, 0, getWidth() / 2 - 150, getHeight(), Justification::centredLeft, false);
+
+        // αριστερά, μετά τον τίτλο: αλλαγή (δύο βέλη) και αφαίρεση (Χ, με δεύτερο πάτημα για επιβεβαίωση)
+        replaceRect = removeRect = {};
+        if (showActions)
+        {
+            constexpr float AD = 22.0f;
+            const float ax = 12.0f + textWidthOf (g.getCurrentFont(), title) + 16.0f;
+            const float ay = (h - AD) * 0.5f;
+            replaceRect = { ax, ay, AD, AD };
+            removeRect = { ax + AD + 6.0f, ay, AD, AD };
+            const bool armed = Time::getMillisecondCounter() < (uint32) armedUntilMs;
+
+            g.setColour (hobby::kIconGrey);
+            g.drawEllipse (replaceRect.reduced (0.75f), 1.5f);
+            {
+                const auto c = replaceRect.getCentre();
+                Path p;
+                p.startNewSubPath (c.x - 5.0f, c.y - 2.5f); p.lineTo (c.x + 5.0f, c.y - 2.5f);
+                p.startNewSubPath (c.x + 2.5f, c.y - 5.0f); p.lineTo (c.x + 5.0f, c.y - 2.5f); p.lineTo (c.x + 2.5f, c.y);
+                p.startNewSubPath (c.x + 5.0f, c.y + 2.5f); p.lineTo (c.x - 5.0f, c.y + 2.5f);
+                p.startNewSubPath (c.x - 2.5f, c.y); p.lineTo (c.x - 5.0f, c.y + 2.5f); p.lineTo (c.x - 2.5f, c.y + 5.0f);
+                g.strokePath (p, PathStrokeType (1.4f, PathStrokeType::curved, PathStrokeType::rounded));
+            }
+
+            const Colour rc = armed ? hobby::kRed : hobby::kIconGrey;
+            if (armed) { g.setColour (rc.withAlpha (0.25f)); g.fillEllipse (removeRect); }
+            g.setColour (rc);
+            g.drawEllipse (removeRect.reduced (0.75f), 1.5f);
+            {
+                const auto c = removeRect.getCentre();
+                Path p;
+                p.startNewSubPath (c.x - 4.0f, c.y - 4.0f); p.lineTo (c.x + 4.0f, c.y + 4.0f);
+                p.startNewSubPath (c.x + 4.0f, c.y - 4.0f); p.lineTo (c.x - 4.0f, c.y + 4.0f);
+                g.strokePath (p, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
+            }
+        }
 
         // CPU μικρό, στη μέση
         const float cx = (float) getWidth() * 0.5f;
@@ -839,6 +884,14 @@ public:
     void mouseDown (const MouseEvent& e) override
     {
         const auto p = e.position;
+        if (showActions && replaceRect.expanded (3.0f).contains (p)) { if (onReplace) onReplace(); return; }
+        if (showActions && removeRect.expanded (3.0f).contains (p))
+        {
+            if (Time::getMillisecondCounter() < (uint32) armedUntilMs) { armedUntilMs = 0; if (onRemove) onRemove(); }
+            else armedUntilMs = (int64) Time::getMillisecondCounter() + 3000;
+            repaint();
+            return;
+        }
         if (masterRect.expanded (3.0f).contains (p)) { if (onMaster) onMaster(); return; }
         if (plusRect.expanded (3.0f).contains (p)) { if (onPlus) onPlus(); return; }
         for (size_t i = 0; i < circles.size(); ++i)
@@ -853,5 +906,5 @@ public:
 private:
     Typeface::Ptr typeface;
     std::vector<Rectangle<float>> circles;
-    Rectangle<float> plusRect, masterRect;
+    Rectangle<float> plusRect, masterRect, replaceRect, removeRect;
 };
