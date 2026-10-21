@@ -256,7 +256,7 @@ public:
     {
         if (getWidth() <= 0 || getHeight() <= 0) return;
         if (! inRefresh)   // ο χρήστης τράβηξε το παράθυρο: ένας editor που δέχεται resize γεμίζει το panel
-            setEditorSizeKeepingRatio (getWidth() - 32, getHeight() - fixedChromeH());
+            setEditorSizeKeepingRatio (getWidth() - sideW() - panelPadW, getHeight() - vertChrome() - panelPadH);
         layoutFor (getWidth(), getHeight());
         placeChildren();
     }
@@ -485,9 +485,15 @@ private:
 
     //==========================================================================
     // γεωμετρία παραθύρου
-    static constexpr int panelOverheadPx() { return 10 + 34 + 4; }
-
-    static constexpr int fixedChromeH() { return 36 + 246 + 8 + panelOverheadPx() + 8 + 72 + 8 + 152 + 14; }
+    // Διάταξη: αριστερά μία στήλη με όλα τα χειριστήρια του Flow (loops, κουμπιά, πλήκτρα), δεξιά το plugin σε όλο το ύψος.
+    // Το plugin δίνει το μέγεθος του παραθύρου και η αριστερή στήλη προσαρμόζεται (μόνο η οθόνη loops μεγαλώνει ή μικραίνει).
+    static constexpr int leftW = 724, topH = 36, botH = 14, gapPx = 8;
+    static constexpr int minLoopsH = 160, stripH = 72, keysH = 152;
+    static constexpr int panelPadW = 10, panelPadH = 10 + 34 + 4;       // πλαίσιο + κεφαλίδα γύρω από τον editor
+    static constexpr int minPanelW = 560, emptyPanelH = 440;
+    static constexpr int minContentH() { return minLoopsH + gapPx + stripH + gapPx + keysH; }
+    static constexpr int sideW() { return 11 + leftW + gapPx + 11; }     // πλάτος εκτός του πλαισίου του plugin
+    static constexpr int vertChrome() { return topH + botH; }
 
     // διαθέσιμος χώρος στην οθόνη όπου βρίσκεται το παράθυρο
     void getAvailable (int& availW, int& availH)
@@ -527,26 +533,23 @@ private:
         const bool shown = editor != nullptr;
         const int ew = shown ? editor->getWidth()  : 0;
         const int eh = shown ? editor->getHeight() : 0;
-        const int body = shown ? eh : ((! isActive (selected) && panelMode != panelMaster) ? 300 : 46);
+        const int panelW = shown ? jmax (minPanelW, ew + panelPadW) : minPanelW;
+        const int panelH = shown ? eh + panelPadH : emptyPanelH;
 
-        winW = jmax (992, ew + 32);
-        winH = fixedChromeH() + body;
+        winW = sideW() + panelW;
+        winH = vertChrome() + jmax (minContentH(), panelH);
     }
 
     // γεωμετρία για το τωρινό μέγεθος του παραθύρου (το επιλέγει είτε το plugin είτε ο χρήστης τραβώντας τις άκρες)
     void layoutFor (int W, int H)
     {
-        const int panelOverhead = panelOverheadPx();
-        const int body = jmax (46, H - fixedChromeH());
+        const int contentH = jmax (minContentH(), H - vertChrome());
+        const int panelW = jmax (200, W - sideW());
 
-        int y = 36;
-        loopsBezel = { 11, y, W - 22, 246 };
-        y += 246 + 8;
-        pluginBezel = { 11, y, W - 22, panelOverhead + body };
-        y += panelOverhead + body + 8;
-        stripBezel = { 11, y, W - 22, 72 };
-        y += 72 + 8;
-        keysBezel = { 11, y, W - 22, 152 };
+        loopsBezel  = { 11, topH, leftW, contentH - (stripH + keysH + 2 * gapPx) };
+        stripBezel  = { 11, topH + contentH - keysH - gapPx - stripH, leftW, stripH };
+        keysBezel   = { 11, topH + contentH - keysH, leftW, keysH };
+        pluginBezel = { 11 + leftW + gapPx, topH, panelW, contentH };
     }
 
     void placeChildren()
@@ -562,8 +565,9 @@ private:
         const int ty = strip.getY() + 5;
         const int leftX = strip.getX() + 14;
         const int midW = 4 * 52 + 3 * 8;
-        const int midX = strip.getCentreX() - midW / 2;
         const int rightX = strip.getRight() - 14 - 52;
+        const int leftEnd = leftX + 5 * 60 - 8, rightStart = rightX - 60;
+        const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);   // η μεσαία ομάδα ανάμεσα στην αριστερή και τη δεξιά
 
         int x = leftX;
         for (auto* t : { &vstTile, &mfxTile, &fxTile, &holdTile, &chordTile })
@@ -622,8 +626,9 @@ private:
         if (auto* w = findParentComponentOfClass<DocumentWindow>())
         {
             const bool fixedEditor = editor != nullptr && ! editor->isResizable();
-            w->setResizeLimits (fixedEditor ? jmax (992, editor->getWidth() + 32) : 992,
-                                fixedEditor ? fixedChromeH() + editor->getHeight() + 28 : fixedChromeH() + 46 + 28, 4000, 3000);
+            w->setResizeLimits (sideW() + (fixedEditor ? jmax (minPanelW, editor->getWidth() + panelPadW) : minPanelW),
+                                vertChrome() + 28 + (fixedEditor ? jmax (minContentH(), editor->getHeight() + panelPadH) : minContentH()),
+                                4000, 3000);
         }
 
         layoutFor (getWidth(), getHeight());
@@ -671,7 +676,7 @@ private:
 
             int aw = 100000, ah = 100000;
             getAvailable (aw, ah);
-            setEditorSizeKeepingRatio (aw - 32, ah - fixedChromeH());   // πολύ μεγάλος editor: μικραίνει μόνο αν το plugin το δέχεται
+            setEditorSizeKeepingRatio (aw - sideW() - panelPadW, ah - vertChrome() - panelPadH);   // πολύ μεγάλος editor: μικραίνει μόνο αν το plugin το δέχεται
         }
 
         refreshSize();
@@ -1995,7 +2000,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.8.1"; }
+    const String getApplicationVersion() override { return "0.9.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
@@ -2016,7 +2021,7 @@ public:
             setUsingNativeTitleBar (true);
             setContentOwned (new MainComponent(), true);
             setResizable (true, false);
-            setResizeLimits (992, 640, 4000, 3000);
+            setResizeLimits (1314, 478, 4000, 3000);
             centreWithSize (getWidth(), getHeight());
             setVisible (true);
         }

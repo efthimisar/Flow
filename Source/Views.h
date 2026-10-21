@@ -254,7 +254,8 @@ public:
         const auto list = activeBlocks (engine);
         const int count = list.size();
         const int top = 48;
-        const int step = count > 0 ? jmin (44, 176 / count) : 44;
+        const int room = jmax (40, getHeight() - top - 12);   // το ύψος της οθόνης loops αλλάζει με το plugin
+        const int step = count > 0 ? jmin (44, room / count) : 44;
         const int laneH = jmax (6, step - 6);
         const float laneX = 42.0f, laneW = (float) (w - 14) - laneX;
 
