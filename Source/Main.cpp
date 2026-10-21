@@ -26,6 +26,7 @@ public:
           mfxTile (Symbol::Thru, typeface),
           fxTile (Symbol::Fx, typeface),
           holdTile (Symbol::Hold, typeface),
+          chordTile (Symbol::Chord, typeface),
           recTile (Symbol::PadRecord, typeface),
           undoTile (Symbol::Undo, typeface),
           stopTile (Symbol::Stop, typeface),
@@ -73,6 +74,7 @@ public:
         fxTile.onRightClick = [this] { showFxMenu(); };
 
         holdTile.onClick = [this] { cycleHold (selected); };
+        chordTile.onClick = [this] { cycleChordMode (selected); };
         recTile.onClick  = [this] { if (isActive (selected)) engine.pressMain (selected); };
         undoTile.onClick = [this] { if (isActive (selected)) engine.pressUndo (selected); };
         stopTile.onClick = [this] { if (isActive (selected)) engine.pressStop (selected); };
@@ -93,6 +95,7 @@ public:
         keyboardView.onSelect = [this] (int b) { selectBlock (b); };
         keyboardView.onRedoZone = [this] (int b) { showZoneMenu (b); };
         keyboardView.onHold = [this] (int b) { selectBlock (b); cycleHold (b); };
+        keyboardView.onChordType = [this] (int b, int dir) { selectBlock (b); stepChordType (b, dir); };
         keyboardView.onCurve = [this] (int b)
         {
             engine.curveMode[(size_t) b] = (engine.curveMode[(size_t) b].load() + 1) % flow::numCurves;
@@ -193,9 +196,29 @@ public:
         if (editor == nullptr)
         {
             const auto inner = pluginBezel.reduced (5);
-            g.setColour (hobby::kIconGrey.withAlpha (0.6f));
-            g.setFont (hobby::makeFont (typeface, 15.0f));
-            g.drawText (emptyPanelText(), inner.withTrimmedTop (headerH + 4), Justification::centred, false);
+            const auto area = inner.withTrimmedTop (headerH + 4);
+            if (! isActive (selected) && panelMode != panelMaster)
+            {
+                // κανένα plugin ακόμα: χαραγμένο "flow" στο χρώμα της οθόνης, με ανάγλυφο από το φως
+                const auto word = area.withSizeKeepingCentre (area.getWidth(), 120).translated (0, -14);
+                g.setFont (hobby::makeFont (typeface, 110.0f));
+                g.setColour (Colours::black.withAlpha (0.65f));
+                g.drawText ("flow", word.translated (-2, -2), Justification::centred, false);
+                g.setColour (Colours::white.withAlpha (0.10f));
+                g.drawText ("flow", word.translated (2, 2), Justification::centred, false);
+                g.setColour (hobby::kScreen);
+                g.drawText ("flow", word, Justification::centred, false);
+
+                g.setFont (hobby::makeFont (typeface, 15.0f));
+                g.setColour (Colours::white.withAlpha (0.22f));
+                g.drawText ("P R I S M A   A U D I O", area.withTrimmedTop (area.getHeight() / 2 + 52), Justification::centredTop, false);
+            }
+            else
+            {
+                g.setColour (hobby::kIconGrey.withAlpha (0.6f));
+                g.setFont (hobby::makeFont (typeface, 15.0f));
+                g.drawText (emptyPanelText(), area, Justification::centred, false);
+            }
         }
 
         for (auto* t : tiles())
@@ -236,9 +259,9 @@ public:
 
 private:
     //==========================================================================
-    std::array<ValueTile*, 10> tiles()
+    std::array<ValueTile*, 11> tiles()
     {
-        return { &vstTile, &mfxTile, &fxTile, &holdTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
+        return { &vstTile, &mfxTile, &fxTile, &holdTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
     }
 
     bool isActive (int b) const { return b >= 0 && b < flow::numBlocks && engine.active[(size_t) b].load() != 0; }
@@ -266,6 +289,36 @@ private:
             if (isActive (b))
                 return b;
         return -1;
+    }
+
+    void cycleChordMode (int b)
+    {
+        if (! isActive (b)) return;
+        const int m = (engine.chordMode[(size_t) b].load() + 1) % 3;
+        engine.chordMode[(size_t) b] = m;
+        engine.chordTonic[(size_t) b] = -1;   // Scale: το πρώτο πλήκτρο που θα πατηθεί γίνεται η τονική
+        saveNow();
+        refreshAll();
+    }
+
+    // κύκλος πάνω από το block: Chord = επόμενος/προηγούμενος τύπος (dir 0 = maj). Scale = major / minor (dir 0 = νέα τονική)
+    void stepChordType (int b, int dir)
+    {
+        if (! isActive (b)) return;
+        const int mode = engine.chordMode[(size_t) b].load();
+        if (mode == 1)
+        {
+            const int n = flow::numChordTypes;
+            const int cur = engine.chordType[(size_t) b].load();
+            engine.chordType[(size_t) b] = dir == 0 ? 0 : (cur + dir + n) % n;
+        }
+        else if (mode == 2)
+        {
+            if (dir == 0) engine.chordTonic[(size_t) b] = -1;
+            else engine.chordMinor[(size_t) b] = engine.chordMinor[(size_t) b].load() != 0 ? 0 : 1;
+        }
+        saveNow();
+        refreshAll();
     }
 
     void cycleHold (int b)
@@ -326,9 +379,12 @@ private:
 
         const int panelOverhead = 10 + headerH + 4;
         const int fixedH = 36 + 246 + 8 + panelOverhead + 8 + 72 + 8 + 152 + 14;
-        int avail = 100000;
+        int avail = 100000, availW = 100000;
         if (auto* d = Desktop::getInstance().getDisplays().getPrimaryDisplay())
-            avail = d->userArea.getHeight() - 30;
+        {
+            avail  = d->userArea.getHeight() - 30;
+            availW = d->userArea.getWidth() - 8;
+        }
 
         editorScale = 1.0f;
         if (shown && eh > 0)
@@ -336,10 +392,12 @@ private:
             const int room = avail - fixedH;
             if (eh > room) editorScale = jlimit (0.4f, 1.0f, (float) jmax (1, room) / (float) eh);
         }
+        if (shown && ew > 0 && ew + 32 > availW)
+            editorScale = jmin (editorScale, jlimit (0.4f, 1.0f, (float) jmax (1, availW - 32) / (float) ew));
 
         const int seh = shown ? (int) std::ceil ((float) eh * editorScale) : 0;
         const int sew = shown ? (int) std::ceil ((float) ew * editorScale) : 0;
-        const int body = shown ? seh : 46;
+        const int body = shown ? seh : ((! isActive (selected) && panelMode != panelMaster) ? 300 : 46);
 
         winW = jmax (992, sew + 32);
         winH = fixedH + body;
@@ -371,7 +429,7 @@ private:
         const int rightX = strip.getRight() - 14 - 52;
 
         int x = leftX;
-        for (auto* t : { &vstTile, &mfxTile, &fxTile, &holdTile })
+        for (auto* t : { &vstTile, &mfxTile, &fxTile, &holdTile, &chordTile })
         {
             t->setBounds (x, ty, 52, 52);
             x += 60;
@@ -691,6 +749,7 @@ private:
         if (userLoad)    // νέο block με καθαρές ρυθμίσεις
         {
             engine.holdMode[(size_t) block] = 0;
+            engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1;
             engine.curveMode[(size_t) block] = 0;
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
@@ -851,6 +910,7 @@ private:
         old.reset();
 
         engine.holdMode[(size_t) block] = 0;
+        engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1;
         engine.curveMode[(size_t) block] = 0;
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
@@ -1213,6 +1273,10 @@ private:
             e->setAttribute ("zone", engine.zoneState[(size_t) b].load() == 0 ? 1 : 0);
             e->setAttribute ("hold", engine.holdMode[(size_t) b].load());
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
+            e->setAttribute ("chord", engine.chordMode[(size_t) b].load());
+            e->setAttribute ("ctype", engine.chordType[(size_t) b].load());
+            e->setAttribute ("cminor", engine.chordMinor[(size_t) b].load());
+            e->setAttribute ("ctonic", engine.chordTonic[(size_t) b].load());
             e->setAttribute ("vol", (double) engine.volPos[(size_t) b].load());
             e->setAttribute ("vmap", engine.volMap[(size_t) b].load());
             e->setAttribute ("tr", engine.transpose[(size_t) b].load());
@@ -1289,6 +1353,10 @@ private:
 
             engine.holdMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("hold", 0));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
+            engine.chordMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("chord", 0));
+            engine.chordType[(size_t) slot]  = jlimit (0, flow::numChordTypes - 1, e->getIntAttribute ("ctype", 0));
+            engine.chordMinor[(size_t) slot] = jlimit (0, 1, e->getIntAttribute ("cminor", 0));
+            engine.chordTonic[(size_t) slot] = jlimit (-1, 11, e->getIntAttribute ("ctonic", -1));
             engine.volPos[(size_t) slot]    = (float) jlimit (0.0, 1.0, e->getDoubleAttribute ("vol", 1.0));
             engine.volMap[(size_t) slot]    = e->getIntAttribute ("vmap", 0);
             engine.transpose[(size_t) slot] = jlimit (-48, 48, e->getIntAttribute ("tr", 0));
@@ -1530,6 +1598,12 @@ private:
         fxTile.setIconColour (nfx > 0 && panelMode == panelFx ? hobby::kOn : hobby::kIconGrey);
         fxTile.setDots (jmin (nfx, 3));
 
+        const int cm = valid ? engine.chordMode[(size_t) sel].load() : 0;
+        chordTile.setDots (cm);
+        chordTile.setIconColour (cm == 0 ? hobby::kIconGrey : hobby::kOn);
+        chordTile.setTooltip (gr ("Chord (επιλεγμένο block): πάτημα = Off / Chord (μία νότα δίνει συγχορδία του τύπου που διαλέγεις) / Scale (συγχορδία της κλίμακας: το πρώτο πλήκτρο που πατάς είναι η τονική). Ο κύκλος πάνω από το block αλλάζει τύπο. Τώρα: ")
+                              + (cm == 0 ? "Off" : cm == 1 ? "Chord" : "Scale"));
+
         const int hold = valid ? engine.holdMode[(size_t) sel].load() : 0;
         holdTile.setDots (hold);
         holdTile.setIconColour (hold == 0 ? hobby::kIconGrey : hobby::kOn);
@@ -1664,7 +1738,7 @@ private:
     LoopsView loopsView;
     KeyboardView keyboardView;
     PanelHeader header;
-    ValueTile vstTile, mfxTile, fxTile, holdTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
+    ValueTile vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
@@ -1674,7 +1748,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.4.0"; }
+    const String getApplicationVersion() override { return "0.5.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

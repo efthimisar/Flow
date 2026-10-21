@@ -357,6 +357,7 @@ public:
         : engine (e), selected (sel), message (msg), typeface (face) {}
 
     std::function<void (int)> onSelect, onRedoZone, onCurve, onVolumeMenu, onHold;
+    std::function<void (int, int)> onChordType;   // (block, +1 / -1 / 0 = maj ή νέα τονική)
     std::function<void (int, float)> onVolume;
     std::function<void (int, int)> onTranspose;   // (block, +1 / -1 / 0 = μηδενισμός)
 
@@ -375,7 +376,15 @@ public:
         const bool selValid = sel >= 0 && sel < flow::numBlocks && engine.active[(size_t) sel].load() != 0;
         if (selValid)
         {
-            g.drawText ("BLOCK " + String (sel + 1), 14, 12, getWidth() - 28, 28, Justification::centredLeft, false);
+            const String blockTxt = "BLOCK " + String (sel + 1);
+            g.drawText (blockTxt, 14, 12, getWidth() - 28, 28, Justification::centredLeft, false);
+            const auto cname = detectChord (engine.pcMaskOut[(size_t) sel].load(), engine.bassOut[(size_t) sel].load());
+            if (cname.isNotEmpty())
+            {
+                g.setColour (hobby::kLilac);
+                g.drawText (cname, 14 + (int) std::ceil (textWidth (g.getCurrentFont(), blockTxt)) + 16, 12, 200, 28, Justification::centredLeft, false);
+                g.setColour (hobby::kText);
+            }
             if (engine.zoneState[(size_t) sel].load() == 0)
                 g.drawText (noteName (engine.lo[(size_t) sel].load()) + " " + String::fromUTF8 ("\xe2\x80\x93") + " " + noteName (engine.hi[(size_t) sel].load()),
                             14, 12, getWidth() - 28, 28, Justification::centredRight, false);
@@ -465,7 +474,7 @@ public:
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             auto& s = spans[(size_t) b];
-            for (auto* r : { &numRect[(size_t) b], &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &barRect[(size_t) b] })
+            for (auto* r : { &numRect[(size_t) b], &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &barRect[(size_t) b] })
                 *r = {};
             if (! s.used) continue;
 
@@ -475,9 +484,15 @@ public:
             const int hold = engine.holdMode[(size_t) b].load();
             const int tr = engine.transpose[(size_t) b].load();
 
-            const int cap = jlimit (1, 4, (int) std::floor ((width + gap) / (D + gap)));
-            const bool showHold = cap >= 3, showCurve = cap >= 2, showTr = cap >= 4;
-            const int shown = 1 + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0);
+            const int cmode = engine.chordMode[(size_t) b].load();
+            const int cap = jlimit (1, 5, (int) std::floor ((width + gap) / (D + gap)));
+            // προτεραιότητα όταν δεν χωράνε όλα: αριθμός, chord (αν είναι ενεργό), καμπύλη, hold, transpose
+            int room = cap - 1;
+            const bool showChord = cmode != 0 && room > 0;  if (showChord) --room;
+            const bool showCurve = room > 0;                if (showCurve) --room;
+            const bool showHold  = room > 0;                if (showHold)  --room;
+            const bool showTr    = room > 0;
+            const int shown = 1 + (showChord ? 1 : 0) + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0);
             const float total = (float) shown * D + (float) (shown - 1) * gap;
             float x = s.l + (width - total) * 0.5f;
             const float cy = labelY;
@@ -490,6 +505,24 @@ public:
             g.setFont (numFont);
             g.drawText (String (b + 1), numRect[(size_t) b], Justification::centred, false);
             x += D + gap;
+
+            if (showChord)   // τύπος συγχορδίας (Chord) ή κλίμακα (Scale)
+            {
+                chordRect[(size_t) b] = { x, cy, D, D };
+                const auto cr = chordRect[(size_t) b];
+                g.setColour (col.withMultipliedAlpha (alpha * 0.28f));
+                g.fillEllipse (cr);
+                g.setColour (col.withMultipliedAlpha (alpha));
+                g.drawEllipse (cr.reduced (0.75f), 1.5f);
+                static const char* names[] = { "maj", "min", "7", "maj7", "m7", "sus4", "dim" };
+                String txt;
+                if (cmode == 1) txt = names[jlimit (0, flow::numChordTypes - 1, engine.chordType[(size_t) b].load())];
+                else if (engine.chordTonic[(size_t) b].load() < 0) txt = "?";
+                else txt = engine.chordMinor[(size_t) b].load() != 0 ? "min" : "maj";
+                g.setFont (txt.length() > 3 ? hobby::makeFont (typeface, 9.0f) : smallFont);
+                g.drawText (txt, cr, Justification::centred, false);
+                x += D + gap;
+            }
 
             if (showHold)    // hold: LM / LP, κενό όταν είναι Off
             {
@@ -556,10 +589,12 @@ public:
 
             const bool onBar = barRect[(size_t) b].expanded (0.0f, 6.0f).contains (p);
             const bool onTr = trRect[(size_t) b].expanded (2.0f).contains (p);
+            const bool onChord = chordRect[(size_t) b].expanded (2.0f).contains (p);
 
             if (e.mods.isPopupMenu())
             {
                 if (onTr) { if (onTranspose) onTranspose (b, -1); }
+                else if (onChord) { if (onChordType) onChordType (b, -1); }
                 else if (onBar) { if (onVolumeMenu) onVolumeMenu (b); }
                 else if (p.y < keysY) { if (onRedoZone) onRedoZone (b); }
                 return;
@@ -570,6 +605,7 @@ public:
                 if (onTranspose) onTranspose (b, e.getNumberOfClicks() >= 2 ? 0 : 1);
                 return;
             }
+            if (onChord) { if (onChordType) onChordType (b, e.getNumberOfClicks() >= 2 ? 0 : 1); return; }
             if (holdRect[(size_t) b].expanded (2.0f).contains (p)) { if (onHold) onHold (b); return; }
             if (curveRect[(size_t) b].expanded (2.0f).contains (p)) { if (onCurve) onCurve (b); return; }
 
@@ -594,6 +630,37 @@ public:
 
 private:
     struct Span { float l = 1e9f, r = -1e9f; bool used = false; };
+
+    // Εκτίμηση ονόματος συγχορδίας από τα pitch classes που ακούγονται. Δεν είναι πάντα μοναδική (C6 / Am7): προτιμά το μπάσο.
+    static float textWidth (const Font& f, const String& t)
+    {
+        GlyphArrangement ga;
+        ga.addLineOfText (f, t, 0.0f, 0.0f);
+        return ga.getBoundingBox (0, -1, true).getWidth();
+    }
+
+    static String detectChord (int mask, int bass)
+    {
+        int count = 0;
+        for (int i = 0; i < 12; ++i) count += (mask >> i) & 1;
+        if (count < 3) return {};
+
+        struct T { const char* name; int pcs; };
+        static const T types[] = { { "", 0x091 }, { "m", 0x089 }, { "7", 0x491 }, { "maj7", 0x891 }, { "m7", 0x489 }, { "sus4", 0x0A1 },
+                                   { "sus2", 0x085 }, { "dim", 0x049 }, { "aug", 0x111 }, { "6", 0x291 }, { "m7b5", 0x449 } };
+        static const char* nn[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+
+        auto rot = [] (int v, int r) { return ((v << r) | (v >> (12 - r))) & 0xfff; };
+        String best; int bestScore = -1;
+        for (int r = 0; r < 12; ++r)
+            for (auto& t : types)
+                if (rot (t.pcs, r) == mask)
+                {
+                    const int score = (r == bass ? 2 : 0);
+                    if (score > bestScore) { bestScore = score; best = String (nn[r]) + t.name; }
+                }
+        return best;
+    }
 
     static Path curvePath (int c, Rectangle<float> r)
     {
@@ -621,7 +688,7 @@ private:
     const String& message;
     Typeface::Ptr typeface;
     std::array<Span, flow::numBlocks> spans;
-    std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, barRect;
+    std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect;
     float kw = 1.0f, labelY = 46.0f, keysY = 77.0f;
     int dragBlock = -1;
 };

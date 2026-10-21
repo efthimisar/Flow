@@ -48,7 +48,7 @@ namespace hobby
 // Σύμβολα που ζωγραφίζονται με διανύσματα. Πρόσθεσε νέα στο τέλος του enum και στο switch του drawSymbol.
 enum class Symbol { PadRecord, PadOverdub, Play, Stop, Cancel, Undo,
                     StartQ, LengthQ, Snap, Loop, Sync, Tempo, Thru,
-                    Block, Learn, Vst, Window, Hold, Arp, Folder, Fx };
+                    Block, Learn, Vst, Window, Hold, Arp, Folder, Fx, Chord };
 
 void drawSymbol (juce::Graphics&, Symbol, juce::Point<float> centre, float size, juce::Colour);
 

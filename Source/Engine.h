@@ -29,6 +29,7 @@ namespace flow
 
     // καμπύλες έντασης: 0 διαγώνια, 1 βαθιά (αργή αρχή), 2 ανάποδη βαθιά (γρήγορη αρχή), 3 διαγώνια προς τα κάτω
     constexpr int numCurves = 4;
+    constexpr int numChordTypes = 7;   // maj, min, 7, maj7, m7, sus4, dim
     inline float curveGain (int curve, float x)
     {
         x = juce::jlimit (0.0f, 1.0f, x);
@@ -78,6 +79,7 @@ namespace flow
                 active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
                 lo[b] = lowestNote; hi[b] = lowestNote;
                 holdMode[b] = 0;
+                chordMode[b] = 0; chordType[b] = 0; chordMinor[b] = 0; chordTonic[b] = -1; pcMaskOut[b] = 0; bassOut[b] = -1;
                 arpMode[b] = 0;
                 curveMode[b] = 0;
                 transpose[b] = 0;
@@ -97,7 +99,7 @@ namespace flow
         }
 
         //==================== controls and read-outs (message thread) ====================
-        std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose,
+        std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
                                                 volMap, loopStateOut, loopLayersOut, loopMuteOut, loopTapsOut,
                                                 cmdMain, cmdUndo, cmdStop;
         std::array<std::atomic<double>, numBlocks> loopBeatsOut, recStartBeatOut;
@@ -452,6 +454,7 @@ namespace flow
                 }
 
                 runBlock (b, gs, numSamples, sr);
+                applyChord (B, b);
 
                 // MIDI FX: τα νότες/CC περνούν από το MIDI effect πριν φτάσουν στο instrument
                 if (B.midiFx != nullptr)
@@ -587,6 +590,8 @@ namespace flow
             int64_t lastTap = 0;
             std::array<uint8_t, 128> vel {};
             std::array<uint8_t, 128> outNote {}, loopOut {};
+            std::array<std::array<uint8_t, 6>, 128> chordNotes {};   // νότες συγχορδίας ανά πλήκτρο (εκτός της βασικής)
+            std::array<uint8_t, 128> chordCount {};
             float prevGain = -1.0f;
             int lastLatched = -1;
             int prevHold = 0, prevArp = 0;
@@ -600,7 +605,7 @@ namespace flow
             {
                 pressed.reset(); latched.reset(); sounding.reset(); loopSounding.reset(); recOpen.reset();
                 vel.fill (0);
-                outNote.fill (0); loopOut.fill (0);
+                outNote.fill (0); loopOut.fill (0); chordCount.fill (0);
                 lastLatched = -1; prevHold = 0; prevArp = 0; arpIndex = 0;
                 loopState = loopOff; recStart = 0.0; loopBeats = 0.0;
                 rec.clear();
@@ -633,6 +638,7 @@ namespace flow
         juce::CriticalSection lock;
         std::array<Block, numBlocks> blocks;
         std::vector<PluginPtr> masterFx;
+        juce::MidiBuffer chordTmp;
         Head head;
         std::array<int, 128> owner;
         std::array<std::vector<Action>, numBlocks> inActions;
@@ -991,6 +997,125 @@ namespace flow
             }
 
             return false;
+        }
+
+
+        //==================== Chord ====================
+        // Το πλήκτρο που πατάς δίνει μία νότα. Εδώ, μετά το hold/loop/transpose και πριν από το MIDI FX, γίνεται συγχορδία.
+        // Έτσι το loop γράφει μόνο τη μία νότα και αν αλλάξει ο τύπος, αλλάζει και το loop.
+        static int chordIntervals (int type, int* out)
+        {
+            static const int T[][5] = { { 0, 4, 7, -1, -1 }, { 0, 3, 7, -1, -1 }, { 0, 4, 7, 10, -1 }, { 0, 4, 7, 11, -1 },
+                                        { 0, 3, 7, 10, -1 }, { 0, 5, 7, -1, -1 }, { 0, 3, 6, -1, -1 } };
+            const int* t = T[juce::jlimit (0, numChordTypes - 1, type)];
+            int n = 0;
+            for (int i = 0; i < 5 && t[i] >= 0; ++i) out[n++] = t[i];
+            return n;
+        }
+
+        int buildChord (int b, int note, int* out) const
+        {
+            const int mode = chordMode[(size_t) b].load();
+            if (mode == 1) return chordIntervals (chordType[(size_t) b].load(), out);
+
+            if (mode == 2)
+            {
+                const int tonic = chordTonic[(size_t) b].load();
+                if (tonic < 0) { out[0] = 0; return 1; }
+                static const int MAJ[7] = { 0, 2, 4, 5, 7, 9, 11 }, MIN[7] = { 0, 2, 3, 5, 7, 8, 10 };
+                const int* sc = chordMinor[(size_t) b].load() != 0 ? MIN : MAJ;
+                const int rel = ((note - tonic) % 12 + 12) % 12;
+                int d = -1;
+                for (int i = 0; i < 7; ++i) if (sc[i] == rel) d = i;
+                if (d < 0) { out[0] = 0; return 1; }
+                int n = 0;
+                for (int k : { 0, 2, 4 })
+                {
+                    const int idx = d + k;
+                    out[n++] = sc[idx % 7] + 12 * (idx / 7) - sc[d];
+                }
+                return n;
+            }
+
+            out[0] = 0;
+            return 1;
+        }
+
+        void applyChord (Block& B, int b)
+        {
+            const int mode = chordMode[(size_t) b].load();
+
+            // πρώτο πλήκτρο σε Scale χωρίς τονική: γίνεται η τονική
+            if (mode == 2 && chordTonic[(size_t) b].load() < 0)
+                for (const auto meta : B.out)
+                {
+                    const auto m = meta.getMessage();
+                    if (m.isNoteOn()) { chordTonic[(size_t) b] = m.getNoteNumber() % 12; break; }
+                }
+
+            if (mode != 0 || B.out.getNumEvents() > 0)
+            {
+                bool any = mode != 0;
+                if (! any)
+                    for (int n = 0; n < 128 && ! any; ++n) any = B.chordCount[(size_t) n] != 0;
+
+                if (any)
+                {
+                    chordTmp.clear();
+                    for (const auto meta : B.out)
+                    {
+                        const auto m = meta.getMessage();
+                        const int pos = meta.samplePosition;
+                        if (m.isNoteOn())
+                        {
+                            const int root = m.getNoteNumber();
+                            if (B.chordCount[(size_t) root] != 0)
+                            {
+                                for (int i = 0; i < B.chordCount[(size_t) root]; ++i)
+                                    chordTmp.addEvent (juce::MidiMessage::noteOff (m.getChannel(), B.chordNotes[(size_t) root][(size_t) i]), pos);
+                                B.chordCount[(size_t) root] = 0;
+                            }
+                            chordTmp.addEvent (m, pos);
+                            int iv[8];
+                            const int cnt = mode != 0 ? buildChord (b, root, iv) : 1;
+                            int stored = 0;
+                            for (int i = 1; i < cnt && stored < 6; ++i)
+                            {
+                                const int nn = root + iv[i];
+                                if (nn < 0 || nn > 127) continue;
+                                B.chordNotes[(size_t) root][(size_t) stored++] = (uint8_t) nn;
+                                chordTmp.addEvent (juce::MidiMessage::noteOn (m.getChannel(), nn, m.getVelocity()), pos);
+                            }
+                            B.chordCount[(size_t) root] = (uint8_t) stored;
+                        }
+                        else if (m.isNoteOff())
+                        {
+                            const int root = m.getNoteNumber();
+                            chordTmp.addEvent (m, pos);
+                            for (int i = 0; i < B.chordCount[(size_t) root]; ++i)
+                                chordTmp.addEvent (juce::MidiMessage::noteOff (m.getChannel(), B.chordNotes[(size_t) root][(size_t) i]), pos);
+                            B.chordCount[(size_t) root] = 0;
+                        }
+                        else
+                            chordTmp.addEvent (m, pos);
+                    }
+                    B.out.swapWith (chordTmp);
+                }
+            }
+
+            // ανάγνωση για την ανίχνευση ονόματος συγχορδίας (pitch classes + μπάσο των νοτών που ακούγονται, με transpose)
+            int mask = 0, bass = -1;
+            for (int n = 0; n < 128; ++n)
+            {
+                if (! B.sounding[(size_t) n]) continue;
+                const int on = B.outNote[(size_t) n];
+                if (bass < 0 || on < bass) bass = on;
+                mask |= 1 << (on % 12);
+                for (int i = 0; i < B.chordCount[(size_t) on]; ++i)
+                    mask |= 1 << (B.chordNotes[(size_t) on][(size_t) i] % 12);
+            }
+            pcMaskOut[(size_t) b] = mask;
+            bassOut[(size_t) b] = bass < 0 ? -1 : bass % 12;
         }
 
         void pushRaw (int b, int pos, const juce::MidiMessage& msg)

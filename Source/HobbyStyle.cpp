@@ -294,6 +294,15 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (p, 1.7f);
             break;
         }
+        case Symbol::Chord:
+        {
+            juce::Path p;
+            for (float y : { -6.0f, 0.0f, 6.0f })
+                p.addEllipse (-4.5f, y - 2.5f, 7.0f, 5.0f);
+            p.startNewSubPath (2.5f, -8.0f); p.lineTo (2.5f, 6.0f);
+            stroke (p, 1.7f);
+            break;
+        }
         case Symbol::Fx:
         {
             juce::Path p;
