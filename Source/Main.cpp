@@ -1220,6 +1220,7 @@ private:
         menu.addSeparator();
         menu.addItem (2, gr ("Αποθήκευση set…"));
         menu.addItem (3, gr ("Φόρτωση set…"));
+        menu.addItem (9, gr ("Επαναφορά τελευταίας συνεδρίας"), hasSessionBackup());
         menu.addSeparator();
         menu.addItem (4, gr ("Panic: σίγαση κολλημένων νοτών (Esc)"));
         menu.addItem (5, gr ("Panic: ανάθεση πεταλιού ή πλήκτρου (MIDI learn)"));
@@ -1237,6 +1238,7 @@ private:
             if (r == 1) safe->openAudioSettings();
             if (r == 2) safe->saveSetToFile();
             if (r == 3) safe->loadSetFromFile();
+            if (r == 9) safe->restoreLastSession();
             if (r == 4) safe->doPanic();
             if (r == 5) safe->startPedalLearn (flow::ctlPanic);
             if (r == 6) safe->engine.mapCode[flow::ctlPanic] = 0;
@@ -1718,14 +1720,29 @@ private:
         settings->setValue ("loadingTokens", "");
         properties.saveIfNeeded();
 
+        startupCrashed = crashed;
+
+        // Το app ανοίγει πάντα άδειο. Η τελευταία συνεδρία (αν είχε blocks) φυλάγεται ως αντίγραφο και ξαναφορτώνεται μόνο από το "π / -".
         std::unique_ptr<XmlElement> xml (settings->getXmlValue ("session"));
-        if (xml == nullptr || ! xml->hasTagName ("FlowSet")) return;
+        if (xml == nullptr || ! xml->hasTagName ("FlowSet") || xml->getChildByName ("Block") == nullptr) return;
 
-        settings->setValue ("sessionBackup", xml.get());   // αντίγραφο ασφαλείας αν κάτι δεν φορτώσει
+        settings->setValue ("sessionBackup", xml.get());
         properties.saveIfNeeded();
+    }
 
-        applySet (*xml, crashed);
+    bool hasSessionBackup()
+    {
+        std::unique_ptr<XmlElement> xml (properties.getUserSettings()->getXmlValue ("sessionBackup"));
+        return xml != nullptr && xml->hasTagName ("FlowSet") && xml->getChildByName ("Block") != nullptr;
+    }
+
+    void restoreLastSession()
+    {
+        std::unique_ptr<XmlElement> xml (properties.getUserSettings()->getXmlValue ("sessionBackup"));
+        if (xml == nullptr || ! xml->hasTagName ("FlowSet")) return;
+        applySet (*xml, startupCrashed);
         engine.tempo = jlimit (40.0, 240.0, xml->getDoubleAttribute ("tempo", 120.0));
+        saveNow();
     }
 
     //==========================================================================
@@ -1926,6 +1943,7 @@ private:
     int selected = 0;
     int panelMode = panelInstrument, panelIndex = 0;
     bool layouting = false;
+    StringArray startupCrashed;
     static constexpr int headerH = 34;
     int winW = 992, winH = 700, lastPrefW = 0, lastPrefH = 0;
     float editorScale = 1.0f;
@@ -1960,7 +1978,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.7.1"; }
+    const String getApplicationVersion() override { return "0.8.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
