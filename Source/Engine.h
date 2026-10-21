@@ -25,7 +25,7 @@ namespace flow
     enum LoopState { loopOff = 0, loopRec = 1, loopPlay = 2, loopOver = 3 };
     constexpr int maxLayers = 4;
     // κουμπιά που ανατίθενται σε πετάλι ή πλήκτρο (MIDI learn)
-    enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, ctlMetro, ctlPanic, numControls };
+    enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, ctlMetro, ctlPanic, ctlScenePrev, ctlSceneNext, numControls };
 
     // καμπύλες έντασης: 0 διαγώνια, 1 βαθιά (αργή αρχή), 2 ανάποδη βαθιά (γρήγορη αρχή), 3 διαγώνια προς τα κάτω
     constexpr int numCurves = 4;
@@ -79,7 +79,7 @@ namespace flow
                 active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
                 lo[b] = lowestNote; hi[b] = lowestNote;
                 holdMode[b] = 0;
-                chordMode[b] = 0; chordType[b] = 0; chordMinor[b] = 0; chordTonic[b] = -1; pcMaskOut[b] = 0; bassOut[b] = -1;
+                blockOff[b] = 0; chordMode[b] = 0; chordType[b] = 0; chordMinor[b] = 0; chordTonic[b] = -1; pcMaskOut[b] = 0; bassOut[b] = -1;
                 arpMode[b] = 0;
                 curveMode[b] = 0;
                 transpose[b] = 0;
@@ -99,7 +99,7 @@ namespace flow
         }
 
         //==================== controls and read-outs (message thread) ====================
-        std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
+        std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, blockOff, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
                                                 volMap, loopStateOut, loopLayersOut, loopMuteOut, loopTapsOut,
                                                 cmdMain, cmdUndo, cmdStop;
         std::array<std::atomic<double>, numBlocks> loopBeatsOut, recStartBeatOut;
@@ -107,6 +107,7 @@ namespace flow
         std::array<std::atomic<int>, numControls> mapCode;   // MIDI learn πεταλιών / πλήκτρων
         std::atomic<int> mapLearnTarget { -1 }, learnedCount { 0 }, learnedTarget { -1 }, learnedCode { 0 };
         std::atomic<int> volLearn { -1 }, volLearnedCount { 0 }, volLearnedBlock { -1 }, volLearnedCode { 0 };
+        std::atomic<int> sceneRequest { -1 };   // από πετάλι: -2 = προηγούμενη, -3 = επόμενη (το διαβάζει το UI)
         std::atomic<int> selectedBlock { 0 };   // το block στο οποίο δρουν Hold και looper
         std::atomic<int> changeCount { 0 };     // ανεβαίνει όταν αλλάζει κάτι που πρέπει να αποθηκευτεί
         std::atomic<double> beatPosOut { 0.0 };
@@ -492,8 +493,9 @@ namespace flow
                 for (auto& fx : B.fx)
                     processFx (*fx, B.scratch.getWritePointer (0), B.scratch.getWritePointer (1), numSamples);
 
-                const float gain = curveGain (curveMode[(size_t) b].load(), volPos[(size_t) b].load());
-                gainOut[(size_t) b] = gain;
+                const float shown = curveGain (curveMode[(size_t) b].load(), volPos[(size_t) b].load());
+                gainOut[(size_t) b] = shown;
+                const float gain = blockOff[(size_t) b].load() != 0 ? 0.0f : shown;
                 if (B.prevGain < 0.0f) B.prevGain = gain;
                 if (B.prevGain != gain || gain != 1.0f)
                 {
@@ -990,6 +992,8 @@ namespace flow
                         case ctlTape:  recorder.pressButton(); break;
                         case ctlMetro: metroOn = ! metroOn.load(); break;
                         case ctlPanic: ++panicCount; break;
+                        case ctlScenePrev: sceneRequest = -2; break;
+                        case ctlSceneNext: sceneRequest = -3; break;
                         default: break;
                     }
                 }

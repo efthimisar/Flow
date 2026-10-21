@@ -293,7 +293,7 @@ public:
                     const double len = jmin (L, axisBeats - k);
                     const Rectangle<float> seg (laneX + laneW * (float) (k / axisBeats) + 0.002f * laneW, y,
                                                 laneW * (float) (len / axisBeats) - 0.004f * laneW, lh);
-                    g.setColour (allMuted ? Colour (0xff3a3d46) : blockLight (b));
+                    g.setColour ((allMuted || engine.blockOff[(size_t) b].load() != 0) ? Colour (0xff3a3d46) : blockLight (b));
                     g.fillRoundedRectangle (seg, corner);
                     if (state == flow::loopOver)
                     {
@@ -357,9 +357,17 @@ public:
         : engine (e), selected (sel), message (msg), typeface (face) {}
 
     std::function<void (int)> onSelect, onRedoZone, onCurve, onVolumeMenu, onHold;
+    std::function<void (int)> onScene;
+    std::function<void()> onSceneMenu;
+    std::function<void (int)> onToggleOff;   // διπλό κλικ στον αριθμό: block σβηστό / αναμμένο
+    int sceneCurrent = 0;
+    std::array<bool, 4> sceneSaved {};
     std::function<void (int, int)> onChordType;   // (block, +1 / -1 / 0 = maj ή νέα τονική)
     std::function<void (int, float)> onVolume;
     std::function<void (int, int)> onTranspose;   // (block, +1 / -1 / 0 = μηδενισμός)
+
+    Colour keyLight (int b) const { return engine.blockOff[(size_t) b].load() != 0 ? Colour (0xff7a7168) : blockLight (b); }
+    Colour keyDeep (int b) const  { return engine.blockOff[(size_t) b].load() != 0 ? Colour (0xff4f4944) : blockDeep (b); }
 
     void paint (Graphics& g) override
     {
@@ -385,9 +393,6 @@ public:
                 g.drawText (cname, 14 + (int) std::ceil (textWidth (g.getCurrentFont(), blockTxt)) + 16, 12, 200, 28, Justification::centredLeft, false);
                 g.setColour (hobby::kText);
             }
-            if (engine.zoneState[(size_t) sel].load() == 0)
-                g.drawText (noteName (engine.lo[(size_t) sel].load()) + " " + String::fromUTF8 ("\xe2\x80\x93") + " " + noteName (engine.hi[(size_t) sel].load()),
-                            14, 12, getWidth() - 28, 28, Justification::centredRight, false);
         }
 
         const int taps = selValid ? engine.loopTapsOut[(size_t) sel].load() : 0;
@@ -400,6 +405,48 @@ public:
         {
             g.setColour (hobby::kLilac);
             g.drawText ("STOP x" + String (taps), 200, 12, getWidth() - 400, 28, Justification::centred, false);
+        }
+        else if (selValid && engine.zoneState[(size_t) sel].load() == 0)
+        {
+            g.setColour (hobby::kText);
+            g.setFont (hobby::makeFont (typeface, 19.0f));
+            g.drawText (noteName (engine.lo[(size_t) sel].load()) + " " + String::fromUTF8 ("\xe2\x80\x93") + " " + noteName (engine.hi[(size_t) sel].load()),
+                        200, 12, getWidth() - 400, 28, Justification::centred, false);
+        }
+
+        // σκηνές A-D δεξιά: γεμάτος = παίζει, γραμμή = αποθηκευμένη, διακεκομμένος = άδεια
+        {
+            constexpr float SD = 24.0f, sg = 6.0f;
+            float sx = (float) getWidth() - 14.0f - (4.0f * SD + 3.0f * sg);
+            g.setFont (hobby::makeFont (typeface, 13.0f));
+            for (int i = 0; i < 4; ++i)
+            {
+                const Rectangle<float> r (sx, 14.0f, SD, SD);
+                sceneRect[(size_t) i] = r;
+                if (i == sceneCurrent)
+                {
+                    g.setColour (hobby::kText);
+                    g.fillEllipse (r);
+                    g.setColour (hobby::kScreen);
+                }
+                else if (sceneSaved[(size_t) i])
+                {
+                    g.setColour (hobby::kIconGrey);
+                    g.drawEllipse (r.reduced (0.75f), 1.5f);
+                }
+                else
+                {
+                    g.setColour (Colour (0xff5a5048));
+                    Path ring;
+                    ring.addEllipse (r.reduced (0.75f));
+                    Path dashed;
+                    const float dl[] = { 3.0f, 3.0f };
+                    PathStrokeType (1.5f).createDashedStroke (dashed, ring, dl, 2);
+                    g.fillPath (dashed);
+                }
+                g.drawText (String::charToString ((juce_wchar) ('A' + i)), r, Justification::centred, false);
+                sx += SD + sg;
+            }
         }
 
         const float x0 = 14.0f;
@@ -438,13 +485,13 @@ public:
             if (black)
             {
                 blackRects.push_back ({ l, keysY, r - l, 34.0f });
-                Colour c = b >= 0 ? blockDeep (b) : (isFirst ? blockDeep (cb) : Colour (0xff4a4038));
+                Colour c = b >= 0 ? keyDeep (b) : (isFirst ? blockDeep (cb) : Colour (0xff4a4038));
                 blackCols.push_back (c.withMultipliedAlpha (alpha));
             }
             else
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                Colour c = b >= 0 ? blockLight (b) : (isFirst ? blockLight (cb) : Colour (0xffece7df));
+                Colour c = b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : Colour (0xffece7df));
                 g.setColour (c.withMultipliedAlpha (alpha));
                 g.fillRoundedRectangle (kr, 3.0f);
                 g.setColour (hobby::kScreen);
@@ -479,7 +526,7 @@ public:
             if (! s.used) continue;
 
             const float width = s.r - s.l;
-            const Colour col = blockLight (b);
+            const Colour col = keyLight (b);
             const float alpha = b == sel ? 1.0f : 0.7f;
             const int hold = engine.holdMode[(size_t) b].load();
             const int tr = engine.transpose[(size_t) b].load();
@@ -582,6 +629,14 @@ public:
         const auto p = e.position;
         dragBlock = -1;
 
+        for (int i = 0; i < 4; ++i)
+            if (sceneRect[(size_t) i].expanded (3.0f).contains (p))
+            {
+                if (e.mods.isPopupMenu()) { if (onSceneMenu) onSceneMenu(); }
+                else if (onScene) onScene (i);
+                return;
+            }
+
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             const auto& s = spans[(size_t) b];
@@ -605,6 +660,7 @@ public:
                 if (onTranspose) onTranspose (b, e.getNumberOfClicks() >= 2 ? 0 : 1);
                 return;
             }
+            if (numRect[(size_t) b].expanded (2.0f).contains (p) && e.getNumberOfClicks() >= 2) { if (onToggleOff) onToggleOff (b); return; }
             if (onChord) { if (onChordType) onChordType (b, e.getNumberOfClicks() >= 2 ? 0 : 1); return; }
             if (holdRect[(size_t) b].expanded (2.0f).contains (p)) { if (onHold) onHold (b); return; }
             if (curveRect[(size_t) b].expanded (2.0f).contains (p)) { if (onCurve) onCurve (b); return; }
@@ -688,6 +744,7 @@ private:
     const String& message;
     Typeface::Ptr typeface;
     std::array<Span, flow::numBlocks> spans;
+    std::array<Rectangle<float>, 4> sceneRect;
     std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect;
     float kw = 1.0f, labelY = 46.0f, keysY = 77.0f;
     int dragBlock = -1;

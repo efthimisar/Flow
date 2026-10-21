@@ -95,6 +95,9 @@ public:
         keyboardView.onSelect = [this] (int b) { selectBlock (b); };
         keyboardView.onRedoZone = [this] (int b) { showZoneMenu (b); };
         keyboardView.onHold = [this] (int b) { selectBlock (b); cycleHold (b); };
+        keyboardView.onScene = [this] (int i) { gotoScene (i); };
+        keyboardView.onSceneMenu = [this] { showSceneMenu(); };
+        keyboardView.onToggleOff = [this] (int b) { toggleBlockOff (b); };
         keyboardView.onChordType = [this] (int b, int dir) { selectBlock (b); stepChordType (b, dir); };
         keyboardView.onCurve = [this] (int b)
         {
@@ -289,6 +292,98 @@ private:
             if (isActive (b))
                 return b;
         return -1;
+    }
+
+    //==========================================================================
+    // σκηνές A-D: ποια blocks παίζουν και, ανά block, ένταση, hold, chord, transpose, καμπύλη. Plugins, ζώνες και loops δεν αλλάζουν.
+    struct SceneBlock { int off = 0, hold = 0, cmode = 0, ctype = 0, cminor = 0, ctonic = -1, tr = 0, curve = 0; float vol = 1.0f; };
+    struct Scene { bool saved = false; std::array<SceneBlock, flow::numBlocks> b; };
+    std::array<Scene, 4> scenes;
+    int currentScene = 0;
+
+    void captureScene (int i)
+    {
+        auto& sc = scenes[(size_t) i];
+        for (int b = 0; b < flow::numBlocks; ++b)
+        {
+            auto& x = sc.b[(size_t) b];
+            x.off    = engine.blockOff[(size_t) b].load();
+            x.hold   = engine.holdMode[(size_t) b].load();
+            x.cmode  = engine.chordMode[(size_t) b].load();
+            x.ctype  = engine.chordType[(size_t) b].load();
+            x.cminor = engine.chordMinor[(size_t) b].load();
+            x.ctonic = engine.chordTonic[(size_t) b].load();
+            x.tr     = engine.transpose[(size_t) b].load();
+            x.curve  = engine.curveMode[(size_t) b].load();
+            x.vol    = engine.volPos[(size_t) b].load();
+        }
+        sc.saved = true;
+    }
+
+    void recallScene (int i)
+    {
+        const auto& sc = scenes[(size_t) i];
+        for (int b = 0; b < flow::numBlocks; ++b)
+        {
+            if (! isActive (b)) continue;   // σκηνή σε block που δεν υπάρχει πια: αγνοείται
+            const auto& x = sc.b[(size_t) b];
+            engine.blockOff[(size_t) b]  = x.off;
+            engine.holdMode[(size_t) b]  = x.hold;
+            engine.chordMode[(size_t) b] = x.cmode;
+            engine.chordType[(size_t) b] = x.ctype;
+            engine.chordMinor[(size_t) b] = x.cminor;
+            engine.chordTonic[(size_t) b] = x.ctonic;
+            engine.transpose[(size_t) b] = x.tr;
+            engine.curveMode[(size_t) b] = x.curve;
+            engine.volPos[(size_t) b]    = x.vol;
+        }
+    }
+
+    // η σκηνή που φεύγεις θυμάται την τελευταία της κατάσταση. Άδεια σκηνή: αντιγράφει την τωρινή και ανοίγει.
+    void gotoScene (int i)
+    {
+        if (i < 0 || i > 3 || i == currentScene) return;
+        captureScene (currentScene);
+        if (scenes[(size_t) i].saved) recallScene (i);
+        else                          captureScene (i);
+        currentScene = i;
+        ++engine.changeCount;
+        saveNow();
+        refreshAll();
+    }
+
+    void stepScene (int dir)
+    {
+        int n = currentScene;
+        for (int k = 0; k < 4; ++k)
+        {
+            n = (n + dir + 4) % 4;
+            if (scenes[(size_t) n].saved) { gotoScene (n); return; }
+        }
+    }
+
+    void toggleBlockOff (int b)
+    {
+        if (! isActive (b)) return;
+        engine.blockOff[(size_t) b] = engine.blockOff[(size_t) b].load() != 0 ? 0 : 1;
+        saveNow();
+        refreshAll();
+    }
+
+    void showSceneMenu()
+    {
+        PopupMenu menu;
+        menu.addItem (1, gr ("Επόμενη σκηνή: ανάθεση πεταλιού"));
+        menu.addItem (2, gr ("Προηγούμενη σκηνή: ανάθεση πεταλιού"));
+        menu.addItem (3, gr ("Αφαίρεση αναθέσεων"), engine.mapCode[flow::ctlSceneNext].load() != 0 || engine.mapCode[flow::ctlScenePrev].load() != 0);
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardView),
+                            [safe = SafePointer<MainComponent> (this)] (int r)
+        {
+            if (safe == nullptr) return;
+            if (r == 1) safe->startPedalLearn (flow::ctlSceneNext);
+            if (r == 2) safe->startPedalLearn (flow::ctlScenePrev);
+            if (r == 3) { safe->engine.mapCode[flow::ctlSceneNext] = 0; safe->engine.mapCode[flow::ctlScenePrev] = 0; safe->saveNow(); }
+        });
     }
 
     void cycleChordMode (int b)
@@ -749,7 +844,7 @@ private:
         if (userLoad)    // νέο block με καθαρές ρυθμίσεις
         {
             engine.holdMode[(size_t) block] = 0;
-            engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1;
+            engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
             engine.curveMode[(size_t) block] = 0;
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
@@ -910,7 +1005,7 @@ private:
         old.reset();
 
         engine.holdMode[(size_t) block] = 0;
-        engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1;
+        engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
         engine.curveMode[(size_t) block] = 0;
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
@@ -1273,6 +1368,7 @@ private:
             e->setAttribute ("zone", engine.zoneState[(size_t) b].load() == 0 ? 1 : 0);
             e->setAttribute ("hold", engine.holdMode[(size_t) b].load());
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
+            e->setAttribute ("off", engine.blockOff[(size_t) b].load());
             e->setAttribute ("chord", engine.chordMode[(size_t) b].load());
             e->setAttribute ("ctype", engine.chordType[(size_t) b].load());
             e->setAttribute ("cminor", engine.chordMinor[(size_t) b].load());
@@ -1293,6 +1389,33 @@ private:
                 l->setAttribute ("mute", (int) snap.mute);
                 for (auto& layer : snap.layers)
                     l->createNewChildElement ("Layer")->addTextElement (loopToText (layer));
+            }
+        }
+
+        {
+            captureScene (currentScene);
+            auto* sx = root->createNewChildElement ("Scenes");
+            sx->setAttribute ("current", currentScene);
+            for (int i = 0; i < 4; ++i)
+            {
+                if (! scenes[(size_t) i].saved) continue;
+                auto* si = sx->createNewChildElement ("Scene");
+                si->setAttribute ("idx", i);
+                for (int b = 0; b < flow::numBlocks; ++b)
+                {
+                    const auto& x = scenes[(size_t) i].b[(size_t) b];
+                    auto* be = si->createNewChildElement ("B");
+                    be->setAttribute ("s", b);
+                    be->setAttribute ("off", x.off);
+                    be->setAttribute ("hold", x.hold);
+                    be->setAttribute ("cm", x.cmode);
+                    be->setAttribute ("ct", x.ctype);
+                    be->setAttribute ("cn", x.cminor);
+                    be->setAttribute ("cto", x.ctonic);
+                    be->setAttribute ("tr", x.tr);
+                    be->setAttribute ("cv", x.curve);
+                    be->setAttribute ("vol", (double) x.vol);
+                }
             }
         }
 
@@ -1337,6 +1460,35 @@ private:
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 0));
         pendingSelect = root.getIntAttribute ("selected", 0);
 
+        for (auto& sc : scenes) sc = Scene();
+        currentScene = 0;
+        if (auto* sx = root.getChildByName ("Scenes"))
+        {
+            currentScene = jlimit (0, 3, sx->getIntAttribute ("current", 0));
+            for (auto* si : sx->getChildWithTagNameIterator ("Scene"))
+            {
+                const int idx = si->getIntAttribute ("idx", -1);
+                if (idx < 0 || idx > 3) continue;
+                auto& sc = scenes[(size_t) idx];
+                sc.saved = true;
+                for (auto* be : si->getChildWithTagNameIterator ("B"))
+                {
+                    const int bs = be->getIntAttribute ("s", -1);
+                    if (bs < 0 || bs >= flow::numBlocks) continue;
+                    auto& x = sc.b[(size_t) bs];
+                    x.off = jlimit (0, 1, be->getIntAttribute ("off", 0));
+                    x.hold = jlimit (0, 2, be->getIntAttribute ("hold", 0));
+                    x.cmode = jlimit (0, 2, be->getIntAttribute ("cm", 0));
+                    x.ctype = jlimit (0, flow::numChordTypes - 1, be->getIntAttribute ("ct", 0));
+                    x.cminor = jlimit (0, 1, be->getIntAttribute ("cn", 0));
+                    x.ctonic = jlimit (-1, 11, be->getIntAttribute ("cto", -1));
+                    x.tr = jlimit (-48, 48, be->getIntAttribute ("tr", 0));
+                    x.curve = jlimit (0, flow::numCurves - 1, be->getIntAttribute ("cv", 0));
+                    x.vol = (float) jlimit (0.0, 1.0, be->getDoubleAttribute ("vol", 1.0));
+                }
+            }
+        }
+
         for (auto* e : root.getChildWithTagNameIterator ("Block"))
         {
             const int slot = e->getIntAttribute ("slot", -1);
@@ -1353,6 +1505,7 @@ private:
 
             engine.holdMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("hold", 0));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
+            engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
             engine.chordMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("chord", 0));
             engine.chordType[(size_t) slot]  = jlimit (0, flow::numChordTypes - 1, e->getIntAttribute ("ctype", 0));
             engine.chordMinor[(size_t) slot] = jlimit (0, 1, e->getIntAttribute ("cminor", 0));
@@ -1528,7 +1681,7 @@ private:
     //==========================================================================
     static const char* controlName (int i)
     {
-        static const char* const names[flow::numControls] = { "Hold", "Rec MIDI loop / Play / Overdub", "Undo", "Stop", "Rec Audio", "Metronome", "Panic" };
+        static const char* const names[flow::numControls] = { "Hold", "Rec MIDI loop / Play / Overdub", "Undo", "Stop", "Rec Audio", "Metronome", "Panic", "Προηγούμενη σκηνή", "Επόμενη σκηνή" };
         return names[i];
     }
 
@@ -1567,6 +1720,8 @@ private:
             case flow::ctlUndo:  return &undoTile;
             case flow::ctlStop:  return &stopTile;
             case flow::ctlMetro: return &metroTile;
+            case flow::ctlScenePrev:
+            case flow::ctlSceneNext: return &metroTile;
             default:             return &tapeTile;
         }
     }
@@ -1656,6 +1811,8 @@ private:
         header.cpu = cpuSmooth;
         header.repaint();
 
+        keyboardView.sceneCurrent = currentScene;
+        for (int i = 0; i < 4; ++i) keyboardView.sceneSaved[(size_t) i] = scenes[(size_t) i].saved || i == currentScene;
         loopsView.repaint();
         keyboardView.repaint();
     }
@@ -1667,6 +1824,10 @@ private:
             message.clear();
             engine.cancelLearns();
         }
+
+        const int sreq = engine.sceneRequest.exchange (-1);
+        if (sreq == -2) stepScene (-1);
+        if (sreq == -3) stepScene (+1);
 
         const int learned = engine.learnedCount.load();
         if (learned != lastLearned)
@@ -1748,7 +1909,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.5.0"; }
+    const String getApplicationVersion() override { return "0.6.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
