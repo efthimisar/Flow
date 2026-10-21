@@ -28,7 +28,7 @@ public:
           holdTile (Symbol::Hold, typeface),
           chordTile (Symbol::Chord, typeface),
           recTile (Symbol::PadRecord, typeface),
-          undoTile (Symbol::Undo, typeface),
+          undoTile (Symbol::Mute, typeface),
           stopTile (Symbol::Stop, typeface),
           tapeTile (Symbol::Stop, typeface),
           metroTile (Symbol::Tempo, typeface),
@@ -57,8 +57,8 @@ public:
         fxTile.setTooltip (gr ("FX: αλυσίδα audio effects μετά το instrument. Τα κυκλάκια 1, 2, 3 και το + είναι στην κεφαλίδα του πάνελ. Δεξί κλικ: προσθήκη"));
         folderTile.setTooltip (gr ("Φάκελος αποθήκευσης των Rec Audio (zip με master και stems)"));
         recTile.setTooltip ("Rec MIDI loop / Play / Overdub: " + gr ("ηχογράφηση, αναπαραγωγή, overdub του MIDI loop. Δεξί κλικ: quantize και πετάλι"));
-        undoTile.setTooltip ("Undo: " + gr ("αφαιρεί το τελευταίο στρώμα του MIDI loop"));
-        stopTile.setTooltip ("Stop: " + gr ("πάτα N φορές για σίγαση ή επαναφορά του στρώματος N"));
+        undoTile.setTooltip ("Mute: " + gr ("πάτα N φορές για σίγαση ή επαναφορά του στρώματος N του MIDI loop"));
+        stopTile.setTooltip ("Stop: " + gr ("σταματά το MIDI loop (το Rec MIDI loop το ξαναρχίζει). Δύο φορές γρήγορα = Undo, αφαιρεί το τελευταίο στρώμα"));
         tapeTile.setTooltip ("Rec Audio: " + gr ("σταμάτημα ή νέο take (master και stems ανά block, σε zip)"));
         metroTile.setTooltip (gr ("Metronome (πλήκτρο M). Ακούγεται μονοφωνικά σε ξεχωριστή έξοδο. Δεξί κλικ: ήχος, ένταση, έξοδος, πλήκτρο/πετάλι"));
 
@@ -76,7 +76,7 @@ public:
         holdTile.onClick = [this] { cycleHold (selected); };
         chordTile.onClick = [this] { cycleChordMode (selected); };
         recTile.onClick  = [this] { if (isActive (selected)) engine.pressMain (selected); };
-        undoTile.onClick = [this] { if (isActive (selected)) engine.pressUndo (selected); };
+        undoTile.onClick = [this] { if (isActive (selected)) engine.pressMute (selected); };
         stopTile.onClick = [this] { if (isActive (selected)) engine.pressStop (selected); };
         tapeTile.onClick = [this] { engine.recorder.pressButton(); };
         metroTile.onClick = [this] { toggleMetronome(); };
@@ -85,7 +85,7 @@ public:
         // δεξί κλικ: ανάθεση σε πετάλι / ρυθμίσεις
         holdTile.onRightClick = [this] { showPedalMenu (flow::ctlHold); };
         recTile.onRightClick  = [this] { showRecMenu(); };
-        undoTile.onRightClick = [this] { showPedalMenu (flow::ctlUndo); };
+        undoTile.onRightClick = [this] { showPedalMenu (flow::ctlMute); };
         stopTile.onRightClick = [this] { showPedalMenu (flow::ctlStop); };
         tapeTile.onRightClick = [this] { showPedalMenu (flow::ctlTape); };
         metroTile.onRightClick = [this] { showMetroMenu(); };
@@ -155,7 +155,10 @@ public:
         deviceManager.initialise (0, 16, savedAudio.get(), true);
 
         for (auto& device : MidiInput::getAvailableDevices())
+        {
             deviceManager.setMidiInputDeviceEnabled (device.identifier, true);
+            knownMidi.add (device.identifier);
+        }
 
         deviceManager.addAudioCallback (&engine);
         deviceManager.addMidiInputDeviceCallback (String(), &engine.incoming);
@@ -1123,6 +1126,10 @@ private:
         menu.addSubMenu (gr ("Start quantize (η αρχή του Rec MIDI loop)"), startMenu);
         menu.addSubMenu (gr ("Length quantize (το μήκος του loop)"), lenMenu);
         menu.addSubMenu (gr ("Snap νοτών"), snapMenu);
+        PopupMenu afterMenu;
+        afterMenu.addItem (50, "Play", true, engine.afterFirst.load() == 0);
+        afterMenu.addItem (51, "Overdub", true, engine.afterFirst.load() == 1);
+        menu.addSubMenu (gr ("Μετά το πρώτο loop"), afterMenu);
         menu.addSeparator();
         menu.addItem (40, gr ("Ανάθεση πεταλιού (MIDI learn)"));
         menu.addItem (41, gr ("Αφαίρεση ανάθεσης"), code != 0);
@@ -1136,6 +1143,7 @@ private:
             if (r >= 10 && r <= 12) e.startQ = r - 10;
             if (r >= 20 && r <= 22) e.lengthQ = r - 20;
             if (r >= 30 && r <= 32) e.snapQ = r - 30;
+            if (r == 50 || r == 51) e.afterFirst = r - 50;
             if (r == 40) safe->startPedalLearn (flow::ctlRec);
             if (r == 41) e.mapCode[flow::ctlRec] = 0;
             safe->saveNow();
@@ -1353,7 +1361,8 @@ private:
     {
         StringArray tokens;
         for (auto& e : ev)
-            tokens.add (String (e.phase, 6) + ":" + String (e.on ? 1 : 0) + ":" + String (e.note) + ":" + String (e.vel));
+            tokens.add (e.isRaw ? String (e.phase, 6) + ":2:" + String (e.note) + ":" + String (e.vel) + ":" + String (e.d2)
+                                : String (e.phase, 6) + ":" + String (e.on ? 1 : 0) + ":" + String (e.note) + ":" + String (e.vel));
         return tokens.joinIntoString (" ");
     }
 
@@ -1366,7 +1375,9 @@ private:
         {
             StringArray f;
             f.addTokens (t, ":", "");
-            if (f.size() == 4)
+            if (f.size() == 5 && f[1].getIntValue() == 2)
+                ev.push_back ({ f[0].getDoubleValue(), true, jlimit (0, 255, f[2].getIntValue()), jlimit (0, 127, f[3].getIntValue()), true, jlimit (0, 127, f[4].getIntValue()) });
+            else if (f.size() == 4)
                 ev.push_back ({ f[0].getDoubleValue(), f[1].getIntValue() != 0, jlimit (0, 127, f[2].getIntValue()), jlimit (0, 127, f[3].getIntValue()) });
         }
         return ev;
@@ -1380,6 +1391,7 @@ private:
         root->setAttribute ("startQ", engine.startQ.load());
         root->setAttribute ("lengthQ", engine.lengthQ.load());
         root->setAttribute ("snapQ", engine.snapQ.load());
+        root->setAttribute ("afterFirst", engine.afterFirst.load());
         root->setAttribute ("selected", selected);
 
         for (int b = 0; b < flow::numBlocks; ++b)
@@ -1483,6 +1495,7 @@ private:
         engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 0));
         engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 0));
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 0));
+        engine.afterFirst = jlimit (0, 1, root.getIntAttribute ("afterFirst", 0));
         pendingSelect = root.getIntAttribute ("selected", 0);
 
         for (auto& sc : scenes) sc = Scene();
@@ -1757,7 +1770,8 @@ private:
         {
             case flow::ctlHold:  return &holdTile;
             case flow::ctlRec:   return &recTile;
-            case flow::ctlUndo:  return &undoTile;
+            case flow::ctlUndo:  return &stopTile;
+            case flow::ctlMute:  return &undoTile;
             case flow::ctlStop:  return &stopTile;
             case flow::ctlMetro: return &metroTile;
             case flow::ctlScenePrev:
@@ -1819,11 +1833,12 @@ private:
         recTile.setSymbol (recSymbol);
         recTile.setIconColour (recColour);
 
-        undoTile.setIconColour (loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
-
-        stopTile.setIconColour (taps > 0 ? hobby::kLilac
+        undoTile.setIconColour (taps > 0 ? hobby::kLilac
                                          : mute != 0 ? hobby::mix (hobby::kIconGrey, hobby::kLilac, 0.4f + 0.6f * hobby::pulse (t * 0.5))
                                                      : hobby::kIconGrey);
+
+        const bool loopStopped = valid && engine.loopStoppedOut[(size_t) sel].load() != 0;
+        stopTile.setIconColour (loopStopped ? hobby::kPeach : hobby::kIconGrey);
 
         switch (engine.recorder.getState())
         {
@@ -1845,7 +1860,7 @@ private:
         header.chordName = (valid && ! master) ? KeyboardView::chordNameFor (engine.pcMaskOut[(size_t) sel].load(), engine.bassOut[(size_t) sel].load()) : String();
         const int stopTaps = valid ? engine.loopTapsOut[(size_t) sel].load() : 0;
         if (message.isNotEmpty())  { header.notice = message; header.noticeColour = hobby::kCoral; }
-        else if (stopTaps > 0)     { header.notice = "STOP x" + String (stopTaps); header.noticeColour = hobby::kLilac; }
+        else if (stopTaps > 0)     { header.notice = "MUTE x" + String (stopTaps); header.noticeColour = hobby::kLilac; }
         else                       header.notice = String();
         header.accent = valid ? blockLight (sel) : hobby::kIconGrey;
         header.masterMode = master;
@@ -1862,6 +1877,29 @@ private:
 
     void timerCallback() override
     {
+        // νέες συσκευές MIDI (π.χ. Bluetooth πετάλι που συνδέθηκε μετά την εκκίνηση) ενεργοποιούνται μόνες τους
+        if (++midiPollTicks >= 30)
+        {
+            midiPollTicks = 0;
+            StringArray present;
+            for (auto& device : MidiInput::getAvailableDevices())
+            {
+                present.add (device.identifier);
+                if (! knownMidi.contains (device.identifier))
+                {
+                    knownMidi.add (device.identifier);
+                    deviceManager.setMidiInputDeviceEnabled (device.identifier, true);
+                }
+            }
+            for (int i = knownMidi.size(); --i >= 0;)
+                if (! present.contains (knownMidi[i]))
+                    knownMidi.remove (i);
+        }
+
+        const int mc = engine.midiCount.load();
+        if (mc != lastMidiCount) { lastMidiCount = mc; lastMidiMs = Time::getMillisecondCounter(); }
+        header.midiActive = Time::getMillisecondCounter() - lastMidiMs < 250;
+
         if (messageTicks > 0 && --messageTicks == 0)
         {
             message.clear();
@@ -1913,6 +1951,9 @@ private:
     int selected = 0;
     int panelMode = panelInstrument, panelIndex = 0;
     bool layouting = false, inRefresh = false;
+    StringArray knownMidi;
+    int midiPollTicks = 0, lastMidiCount = 0;
+    uint32 lastMidiMs = 0;
     StringArray startupCrashed;
     static constexpr int headerH = 34;
     int winW = 992, winH = 700, lastPrefW = 0, lastPrefH = 0;
@@ -1947,7 +1988,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.11.0"; }
+    const String getApplicationVersion() override { return "0.12.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

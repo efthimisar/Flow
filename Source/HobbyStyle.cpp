@@ -303,6 +303,17 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (p, 1.7f);
             break;
         }
+        case Symbol::Mute:
+        {
+            juce::Path p;
+            p.addRectangle (-9.0f, -3.5f, 5.0f, 7.0f);
+            p.startNewSubPath (-4.0f, -3.5f); p.lineTo (2.0f, -8.0f); p.lineTo (2.0f, 8.0f); p.lineTo (-4.0f, 3.5f); p.closeSubPath();
+            fill (p, col);
+            juce::Path s;
+            s.startNewSubPath (-9.0f, 9.0f); s.lineTo (10.0f, -9.0f);
+            stroke (s, 2.2f);
+            break;
+        }
         case Symbol::Fx:
         {
             juce::Path p;

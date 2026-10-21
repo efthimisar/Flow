@@ -23,9 +23,9 @@ namespace flow
     constexpr double beatsPerBar = 4.0;
 
     enum LoopState { loopOff = 0, loopRec = 1, loopPlay = 2, loopOver = 3 };
-    constexpr int maxLayers = 4;
+    constexpr int maxLayers = 32;
     // κουμπιά που ανατίθενται σε πετάλι ή πλήκτρο (MIDI learn)
-    enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, ctlMetro, ctlPanic, ctlScenePrev, ctlSceneNext, numControls };
+    enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, ctlMetro, ctlPanic, ctlScenePrev, ctlSceneNext, ctlMute, numControls };
 
     // καμπύλες έντασης: 0 διαγώνια, 1 βαθιά (αργή αρχή), 2 ανάποδη βαθιά (γρήγορη αρχή), 3 διαγώνια προς τα κάτω
     constexpr int numCurves = 6;   // 4 = S-καμπύλη, 5 = πολύ βαθιά (κυβική)
@@ -62,7 +62,7 @@ namespace flow
     inline bool isBlackKey (int n) { const int m = n % 12; return m == 1 || m == 3 || m == 6 || m == 8 || m == 10; }
 
     // γεγονός loop: phase σε beats μέσα στο loop (στην εγγραφή: απόλυτη θέση beat)
-    struct LoopEvent { double phase; bool on; int note; int vel; };
+    struct LoopEvent { double phase; bool on; int note; int vel; bool isRaw = false; int d2 = 0; };   // isRaw: note = status, vel = data1, d2 = data2 (CC, pitch bend, aftertouch)
 
     struct LoopSnapshot
     {
@@ -95,7 +95,7 @@ namespace flow
                 loopLayersOut[b] = 0;
                 loopMuteOut[b] = 0;
                 loopTapsOut[b] = 0;
-                cmdMain[b] = 0; cmdUndo[b] = 0; cmdStop[b] = 0;
+                cmdMain[b] = 0; cmdUndo[b] = 0; cmdStop[b] = 0; cmdMute[b] = 0; loopStoppedOut[b] = 0;
             }
             for (int i = 0; i < numControls; ++i) mapCode[i] = 0;
             owner.fill (-1);
@@ -106,7 +106,7 @@ namespace flow
         std::array<std::atomic<uint64_t>, numBlocks * 2> latchBits;   // πλήκτρα που κρατιούνται από το Latch (και νότες συγχορδίας), για την οθόνη
         std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, blockOff, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
                                                 volMap, loopStateOut, loopLayersOut, loopMuteOut, loopTapsOut,
-                                                cmdMain, cmdUndo, cmdStop;
+                                                cmdMain, cmdUndo, cmdStop, cmdMute, loopStoppedOut;
         std::array<std::atomic<double>, numBlocks> loopBeatsOut, recStartBeatOut;
         std::array<std::atomic<float>, numBlocks> volPos, gainOut;
         std::array<std::atomic<int>, numControls> mapCode;   // MIDI learn πεταλιών / πλήκτρων
@@ -122,6 +122,8 @@ namespace flow
         std::atomic<double> tempo { 120.0 };
         std::atomic<int> startQ { 0 }, lengthQ { 0 }, snapQ { 0 };   // startQ/lengthQ: 0 Off, 1 Beat, 2 Bar. snapQ: 0 Off, 1 = 1/8, 2 = 1/16
         std::atomic<int> tapRequest { 0 };
+        std::atomic<int> afterFirst { 0 };      // μετά το πρώτο loop: 0 = Play, 1 = Overdub
+        std::atomic<int> midiCount { 0 };       // μετρά τα μηνύματα MIDI που έρχονται (για την ένδειξη στην κεφαλίδα)
         std::atomic<int> tapActiveOut { 0 };
 
         // metronome
@@ -143,6 +145,7 @@ namespace flow
         void pressMain (int b) { ++cmdMain[(size_t) b]; }
         void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
         void pressStop (int b) { ++cmdStop[(size_t) b]; }
+        void pressMute (int b) { ++cmdMute[(size_t) b]; }
         void tapFromUi()       { ++tapRequest; }
         void panic()           { ++panicCount; }
 
@@ -233,6 +236,7 @@ namespace flow
                 B.seenMain = cmdMain[(size_t) b].load();
                 B.seenUndo = cmdUndo[(size_t) b].load();
                 B.seenStop = cmdStop[(size_t) b].load();
+                B.seenMute = cmdMute[(size_t) b].load();
                 loopStateOut[b] = loopOff;
                 loopBeatsOut[b] = 0.0;
                 loopLayersOut[b] = 0;
@@ -456,6 +460,7 @@ namespace flow
                     B.seenMain = cmdMain[(size_t) b].load();
                     B.seenUndo = cmdUndo[(size_t) b].load();
                     B.seenStop = cmdStop[(size_t) b].load();
+                    B.seenMute = cmdMute[(size_t) b].load();
                     continue;
                 }
 
@@ -581,6 +586,8 @@ namespace flow
             int vel = 0;
             bool on = false;
             int rawIndex = -1;
+            bool rawLoop = false;
+            int d2 = 0;
         };
 
         struct Block
@@ -593,7 +600,10 @@ namespace flow
             std::array<std::vector<LoopEvent>, maxLayers> layerEv;
             int nLayers = 0;
             unsigned muteMask = 0;
-            int seenMain = 0, seenUndo = 0, seenStop = 0, seenPanic = 0, taps = 0;
+            int seenMain = 0, seenUndo = 0, seenStop = 0, seenMute = 0, seenPanic = 0, taps = 0;
+            bool stopped = false, stopTapValid = false;
+            int64_t lastStopTap = 0;
+            unsigned loopSusMask = 0, loopBendMask = 0;
             int64_t lastTap = 0;
             std::array<uint8_t, 128> vel {};
             std::array<uint8_t, 128> outNote {}, loopOut {};
@@ -617,7 +627,7 @@ namespace flow
                 loopState = loopOff; recStart = 0.0; loopBeats = 0.0;
                 rec.clear();
                 for (auto& l : layerEv) l.clear();
-                nLayers = 0; muteMask = 0; taps = 0; lastTap = 0;
+                nLayers = 0; muteMask = 0; taps = 0; lastTap = 0; stopped = false; stopTapValid = false; loopSusMask = 0; loopBendMask = 0;
                 out.clear();
             }
         };
@@ -839,6 +849,7 @@ namespace flow
             {
                 const auto msg = metadata.getMessage();
                 const int pos = juce::jlimit (0, numSamples - 1, metadata.samplePosition);
+                if (! msg.isMidiClock() && ! msg.isActiveSense()) ++midiCount;
 
                 if (handlePedal (msg))
                     continue;
@@ -994,6 +1005,7 @@ namespace flow
                         case ctlRec:   if (ok) ++cmdMain[(size_t) sel]; break;
                         case ctlUndo:  if (ok) ++cmdUndo[(size_t) sel]; break;
                         case ctlStop:  if (ok) ++cmdStop[(size_t) sel]; break;
+                        case ctlMute:  if (ok) ++cmdMute[(size_t) sel]; break;
                         case ctlTape:  recorder.pressButton(); break;
                         case ctlMetro: metroOn = ! metroOn.load(); break;
                         case ctlPanic: ++panicCount; break;
@@ -1252,6 +1264,14 @@ namespace flow
                     B.out.addEvent (juce::MidiMessage::noteOff (1, B.loopOut[(size_t) n]), 0);
 
             B.loopSounding.reset();
+
+            for (int ch = 0; ch < 16; ++ch)
+            {
+                if ((B.loopSusMask >> ch) & 1u)  B.out.addEvent (juce::MidiMessage::controllerEvent (ch + 1, 64, 0), 0);
+                if ((B.loopBendMask >> ch) & 1u) B.out.addEvent (juce::MidiMessage::pitchWheel (ch + 1, 8192), 0);
+            }
+            B.loopSusMask = 0;
+            B.loopBendMask = 0;
         }
 
         void stopLoop (Block& B)
@@ -1263,6 +1283,7 @@ namespace flow
             B.nLayers = 0;
             B.muteMask = 0;
             B.taps = 0;
+            B.stopped = false;
             B.loopBeats = 0.0;
             B.loopState = loopOff;
         }
@@ -1289,6 +1310,14 @@ namespace flow
                 const double ph = std::max (0.0, e.phase - B.recStart);
                 if (ph >= len) continue;
                 double a = B.recStart + ph;
+
+                if (e.isRaw)    // CC, pitch bend, aftertouch: χωρίς snap
+                {
+                    double rp = std::fmod (a, len);
+                    if (rp < 0.0) rp += len;
+                    dst.push_back ({ rp, true, e.note, e.vel, true, e.d2 });
+                    continue;
+                }
 
                 if (grid > 0.0)
                 {
@@ -1323,7 +1352,7 @@ namespace flow
             return true;
         }
 
-        void finishRecording (Block& B, double beatNow)
+        void finishRecording (Block& B, double beatNow, bool allowOverdub = true)
         {
             const double elapsed = beatNow - B.recStart;
             if (elapsed <= 0.0) { stopLoop (B); return; }   // ακυρώθηκε πριν αρχίσει (start quantize)
@@ -1335,8 +1364,21 @@ namespace flow
             else              beats = std::max (1.0, std::ceil (elapsed / beatsPerBar - 1.0e-9)) * beatsPerBar;
             B.loopBeats = std::min (beats, maxLoopBars * beatsPerBar);
 
-            if (commitLayer (B, beatNow)) B.loopState = loopPlay;
-            else                          stopLoop (B);
+            if (commitLayer (B, beatNow))
+            {
+                B.loopState = loopPlay;
+                if (allowOverdub && afterFirst.load() == 1)    // μετά το πρώτο loop: κατευθείαν overdub
+                {
+                    B.recStart = beatNow;
+                    B.rec.clear();
+                    B.recOpen.reset();
+                    B.loopState = loopOver;
+                }
+            }
+            else
+            {
+                stopLoop (B);
+            }
         }
 
         void finishOverdub (Block& B, double beatNow)
@@ -1362,6 +1404,7 @@ namespace flow
                 }
                 case loopRec:  finishRecording (B, beat); break;
                 case loopPlay:
+                    if (B.stopped) { B.stopped = false; break; }   // μετά από Stop: ξαναπαίζει
                     if (B.nLayers < maxLayers)
                     {
                         B.recStart = beat;
@@ -1372,6 +1415,19 @@ namespace flow
                     break;
                 case loopOver: finishOverdub (B, beat); break;
                 default: break;
+            }
+        }
+
+        // Stop: ολοκληρώνει ό,τι ηχογραφείται και σταματά την αναπαραγωγή. Το Rec MIDI loop την ξαναρχίζει.
+        void loopStop (Block& B, double beat)
+        {
+            if (B.loopState == loopRec)       finishRecording (B, beat, false);
+            else if (B.loopState == loopOver) finishOverdub (B, beat);
+
+            if (B.loopState == loopPlay && ! B.stopped)
+            {
+                B.stopped = true;
+                cutLoopNotes (B);
             }
         }
 
@@ -1486,9 +1542,26 @@ namespace flow
                 loopUndo (B);
             }
 
+            const int64_t doubleTapWindow = (int64_t) (sr * 0.4);
             for (int cs = cmdStop[(size_t) b].load(); B.seenStop != cs; )
             {
                 ++B.seenStop;
+                if (B.stopTapValid && gs - B.lastStopTap <= doubleTapWindow)
+                {
+                    loopUndo (B);               // Stop δύο φορές γρήγορα = Undo
+                    B.stopTapValid = false;
+                }
+                else
+                {
+                    loopStop (B, beat0);
+                    B.lastStopTap = gs;
+                    B.stopTapValid = true;
+                }
+            }
+
+            for (int cm2 = cmdMute[(size_t) b].load(); B.seenMute != cm2; )
+            {
+                ++B.seenMute;
                 if (gs - B.lastTap > tapWindow) B.taps = 0;
                 ++B.taps;
                 B.lastTap = gs;
@@ -1496,7 +1569,7 @@ namespace flow
 
             if (B.taps > 0 && gs - B.lastTap > tapWindow)
             {
-                // N πατήματα STOP = σίγαση / επαναφορά του layer N
+                // N πατήματα MUTE = σίγαση / επαναφορά του layer N
                 const int layer = B.taps - 1;
                 if (B.loopState == loopPlay && layer < B.nLayers)
                 {
@@ -1536,7 +1609,7 @@ namespace flow
                 }
             }
 
-            if ((B.loopState == loopPlay || B.loopState == loopOver) && B.loopBeats > 0.0)
+            if ((B.loopState == loopPlay || B.loopState == loopOver) && B.loopBeats > 0.0 && ! B.stopped)
             {
                 const double L = B.loopBeats;
                 for (int layer = 0; layer < B.nLayers; ++layer)
@@ -1552,7 +1625,7 @@ namespace flow
                             Action a;
                             a.pos = juce::jlimit (0, numSamples - 1, (int) ((x - beat0) / blkBps));
                             a.order = 3; a.kind = Kind::LoopEvt;
-                            a.note = e.note; a.vel = e.vel; a.on = e.on;
+                            a.note = e.note; a.vel = e.vel; a.on = e.on; a.rawLoop = e.isRaw; a.d2 = e.d2;
                             actions.push_back (a);
                         }
                     }
@@ -1598,8 +1671,18 @@ namespace flow
                         break;
 
                     case Kind::Raw:
-                        B.out.addEvent (inRaw[(size_t) b][(size_t) a.rawIndex], a.pos);
+                    {
+                        const auto& rm = inRaw[(size_t) b][(size_t) a.rawIndex];
+                        B.out.addEvent (rm, a.pos);
+                        if ((B.loopState == loopRec || B.loopState == loopOver) && ! (rm.isController() && rm.getControllerNumber() >= 120))
+                        {
+                            const auto* d = rm.getRawData();
+                            const int sz = rm.getRawDataSize();
+                            if (sz >= 2)
+                                B.rec.push_back ({ blkBeat0 + (double) a.pos * blkBps, true, (int) d[0], (int) d[1], true, sz > 2 ? (int) d[2] : 0 });
+                        }
                         break;
+                    }
 
                     case Kind::ArpStep:
                         arpStep (B, b, a.pos, hold, arp);
@@ -1610,6 +1693,17 @@ namespace flow
                         break;
 
                     case Kind::LoopEvt:
+                        if (a.rawLoop)
+                        {
+                            const int st = a.note & 0xF0, ch = a.note & 0x0F;
+                            if (st == 0xD0 || st == 0xC0)
+                                B.out.addEvent (juce::MidiMessage (a.note, a.vel, 0.0), a.pos);
+                            else
+                                B.out.addEvent (juce::MidiMessage (a.note, a.vel, a.d2, 0.0), a.pos);
+                            if (st == 0xB0 && a.vel == 64) { if (a.d2 >= 64) B.loopSusMask |= 1u << ch; else B.loopSusMask &= ~(1u << ch); }
+                            if (st == 0xE0) B.loopBendMask |= 1u << ch;
+                            break;
+                        }
                         if (a.on)
                         {
                             B.loopOut[(size_t) a.note] = (uint8_t) juce::jlimit (0, 127, a.note + transpose[(size_t) b].load());
@@ -1629,6 +1723,7 @@ namespace flow
             loopLayersOut[b] = B.nLayers;
             loopMuteOut[b]   = (int) B.muteMask;
             loopTapsOut[b]   = B.taps;
+            loopStoppedOut[b] = B.stopped ? 1 : 0;
             recStartBeatOut[b] = B.recStart;
 
         }

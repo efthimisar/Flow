@@ -293,8 +293,9 @@ public:
             {
                 const double L = jmax (0.25, engine.loopBeatsOut[(size_t) b].load());
                 const int layers = engine.loopLayersOut[(size_t) b].load();
-                const unsigned allMask = layers > 0 ? ((1u << layers) - 1u) : 0u;
-                const bool allMuted = layers > 0 && ((unsigned) engine.loopMuteOut[(size_t) b].load() & allMask) == allMask;
+                const unsigned allMask = layers <= 0 ? 0u : (layers >= 32 ? 0xffffffffu : ((1u << layers) - 1u));
+                const bool allMuted = (layers > 0 && ((unsigned) engine.loopMuteOut[(size_t) b].load() & allMask) == allMask)
+                                      || engine.loopStoppedOut[(size_t) b].load() != 0;
 
                 for (double k = 0.0; k < axisBeats - 1.0e-6; k += L)
                 {
@@ -718,6 +719,7 @@ public:
     explicit PanelHeader (Typeface::Ptr face) : typeface (face) {}
 
     // δεδομένα που ορίζει το MainComponent
+    bool midiActive = false;   // τελεία: το Flow ακούει MIDI
     String title, chordName, notice;
     Colour noticeColour { Colour (0xffe8837a) };
     Colour accent { Colour (0xff9ad4a8) };
@@ -777,6 +779,9 @@ public:
         const float total = (float) n * (D + gap) + (canAdd ? D : 0.0f) + 12.0f + 1.0f + 12.0f + D;
         float x = (float) getWidth() - 12.0f - total;
         const float y = (h - D) * 0.5f;
+
+        g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
+        g.fillEllipse (x - 20.0f, h * 0.5f - 3.5f, 7.0f, 7.0f);
 
         circles.clear();
         for (int i = 0; i < n; ++i)
