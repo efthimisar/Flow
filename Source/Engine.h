@@ -28,7 +28,7 @@ namespace flow
     enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, ctlMetro, ctlPanic, ctlScenePrev, ctlSceneNext, numControls };
 
     // καμπύλες έντασης: 0 διαγώνια, 1 βαθιά (αργή αρχή), 2 ανάποδη βαθιά (γρήγορη αρχή), 3 διαγώνια προς τα κάτω
-    constexpr int numCurves = 4;
+    constexpr int numCurves = 6;   // 4 = S-καμπύλη, 5 = πολύ βαθιά (κυβική)
     constexpr int numChordTypes = 7;   // maj, min, 7, maj7, m7, sus4, dim
     inline float curveGain (int curve, float x)
     {
@@ -38,6 +38,8 @@ namespace flow
             case 1:  return x * x;
             case 2:  return 1.0f - (1.0f - x) * (1.0f - x);
             case 3:  return 1.0f - x;
+            case 4:  return x * x * (3.0f - 2.0f * x);
+            case 5:  return x * x * x;
             default: return x;
         }
     }
@@ -51,6 +53,8 @@ namespace flow
             case 1:  return std::sqrt (g);
             case 2:  return 1.0f - std::sqrt (1.0f - g);
             case 3:  return 1.0f - g;
+            case 4:  return 0.5f - std::sin (std::asin (1.0f - 2.0f * g) / 3.0f);
+            case 5:  return std::cbrt (g);
             default: return g;
         }
     }
@@ -78,7 +82,7 @@ namespace flow
             {
                 active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
                 lo[b] = lowestNote; hi[b] = lowestNote;
-                holdMode[b] = 0;
+                holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0;
                 blockOff[b] = 0; chordMode[b] = 0; chordType[b] = 0; chordMinor[b] = 0; chordTonic[b] = -1; pcMaskOut[b] = 0; bassOut[b] = -1;
                 arpMode[b] = 0;
                 curveMode[b] = 0;
@@ -99,6 +103,7 @@ namespace flow
         }
 
         //==================== controls and read-outs (message thread) ====================
+        std::array<std::atomic<uint64_t>, numBlocks * 2> latchBits;   // πλήκτρα που κρατιούνται από το Latch (και νότες συγχορδίας), για την οθόνη
         std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, blockOff, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
                                                 volMap, loopStateOut, loopLayersOut, loopMuteOut, loopTapsOut,
                                                 cmdMain, cmdUndo, cmdStop;
@@ -1120,6 +1125,25 @@ namespace flow
             }
             pcMaskOut[(size_t) b] = mask;
             bassOut[(size_t) b] = bass < 0 ? -1 : bass % 12;
+
+            uint64_t lb[2] { 0, 0 };
+            if (holdMode[b].load() != 0)
+            {
+                auto setb = [&] (int n) { if (n >= 0 && n < 128) lb[n >> 6] |= (uint64_t) 1 << (n & 63); };
+                for (int n = 0; n < 128; ++n)
+                {
+                    if (! B.latched[(size_t) n]) continue;
+                    setb (n);
+                    if (B.sounding[(size_t) n])
+                    {
+                        const int on = B.outNote[(size_t) n];
+                        for (int i = 0; i < B.chordCount[(size_t) on]; ++i)
+                            setb (B.chordNotes[(size_t) on][(size_t) i]);
+                    }
+                }
+            }
+            latchBits[(size_t) b * 2] = lb[0];
+            latchBits[(size_t) b * 2 + 1] = lb[1];
         }
 
         void pushRaw (int b, int pos, const juce::MidiMessage& msg)

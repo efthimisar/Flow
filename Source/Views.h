@@ -364,12 +364,11 @@ public:
     KeyboardView (flow::Engine& e, const int& sel, const String& msg, Typeface::Ptr face)
         : engine (e), selected (sel), message (msg), typeface (face) {}
 
+    static String chordNameFor (int mask, int bass) { return detectChord (mask, bass); }
+
     std::function<void (int)> onSelect, onRedoZone, onCurve, onVolumeMenu, onHold;
-    std::function<void (int)> onScene;
-    std::function<void()> onSceneMenu;
+    std::function<void (int)> onRemoveBlock;
     std::function<void (int)> onToggleOff;   // διπλό κλικ στον αριθμό: block σβηστό / αναμμένο
-    int sceneCurrent = 0;
-    std::array<bool, 4> sceneSaved {};
     std::function<void (int, int)> onChordType;   // (block, +1 / -1 / 0 = maj ή νέα τονική)
     std::function<void (int, float)> onVolume;
     std::function<void (int, int)> onTranspose;   // (block, +1 / -1 / 0 = μηδενισμός)
@@ -381,86 +380,17 @@ public:
     {
         const int sel = selected;
         const double t = Time::getMillisecondCounterHiRes() * 0.001;
-        const float freeAlpha = 0.08f + 0.92f * hobby::pulse (t / 3.0);   // τα ελεύθερα πλήκτρα σβήνουν και ανάβουν αργά όσο περιμένει ζώνη
+        const float blink = hobby::pulse (t / 1.6);   // τα ελεύθερα πλήκτρα (χωρίς block) αναβοσβήνουν σιγά σιγά
+        const Colour freeWhite = Colour (0xff141210).interpolatedWith (Colour (0xff3d3732), blink);
+        const Colour freeBlack = Colour (0xff0c0b0a).interpolatedWith (Colour (0xff2a2623), blink);
         const int cb = engine.pendingBlock();
         const bool waiting = cb >= 0;
         const int firstKey = waiting && engine.zoneState[(size_t) cb].load() == 2 ? engine.zoneFirst[(size_t) cb].load() : -1;
 
-        // επικεφαλίδα: BLOCK n αριστερά, μήνυμα στη μέση, περιοχή νοτών δεξιά
-        g.setFont (hobby::makeFont (typeface, 19.0f));
-        g.setColour (hobby::kText);
-        const bool selValid = sel >= 0 && sel < flow::numBlocks && engine.active[(size_t) sel].load() != 0;
-        if (selValid)
-        {
-            const String blockTxt = "BLOCK " + String (sel + 1);
-            g.drawText (blockTxt, 14, 12, getWidth() - 28, 28, Justification::centredLeft, false);
-            const auto cname = detectChord (engine.pcMaskOut[(size_t) sel].load(), engine.bassOut[(size_t) sel].load());
-            if (cname.isNotEmpty())
-            {
-                g.setColour (hobby::kLilac);
-                g.drawText (cname, 14 + (int) std::ceil (textWidth (g.getCurrentFont(), blockTxt)) + 16, 12, 200, 28, Justification::centredLeft, false);
-                g.setColour (hobby::kText);
-            }
-        }
-
-        const int taps = selValid ? engine.loopTapsOut[(size_t) sel].load() : 0;
-        if (message.isNotEmpty())
-        {
-            g.setColour (hobby::kCoral);
-            g.drawText (message, 200, 12, getWidth() - 400, 28, Justification::centred, true);
-        }
-        else if (taps > 0)
-        {
-            g.setColour (hobby::kLilac);
-            g.drawText ("STOP x" + String (taps), 200, 12, getWidth() - 400, 28, Justification::centred, false);
-        }
-        else if (selValid && engine.zoneState[(size_t) sel].load() == 0)
-        {
-            g.setColour (hobby::kText);
-            g.setFont (hobby::makeFont (typeface, 19.0f));
-            g.drawText (noteName (engine.lo[(size_t) sel].load()) + " " + String::fromUTF8 ("\xe2\x80\x93") + " " + noteName (engine.hi[(size_t) sel].load()),
-                        200, 12, getWidth() - 400, 28, Justification::centred, false);
-        }
-
-        // σκηνές A-D δεξιά: γεμάτος = παίζει, γραμμή = αποθηκευμένη, διακεκομμένος = άδεια
-        {
-            constexpr float SD = 24.0f, sg = 6.0f;
-            float sx = (float) getWidth() - 14.0f - (4.0f * SD + 3.0f * sg);
-            g.setFont (hobby::makeFont (typeface, 13.0f));
-            for (int i = 0; i < 4; ++i)
-            {
-                const Rectangle<float> r (sx, 14.0f, SD, SD);
-                sceneRect[(size_t) i] = r;
-                if (i == sceneCurrent)
-                {
-                    g.setColour (hobby::kText);
-                    g.fillEllipse (r);
-                    g.setColour (hobby::kScreen);
-                }
-                else if (sceneSaved[(size_t) i])
-                {
-                    g.setColour (hobby::kIconGrey);
-                    g.drawEllipse (r.reduced (0.75f), 1.5f);
-                }
-                else
-                {
-                    g.setColour (Colour (0xff5a5048));
-                    Path ring;
-                    ring.addEllipse (r.reduced (0.75f));
-                    Path dashed;
-                    const float dl[] = { 3.0f, 3.0f };
-                    PathStrokeType (1.5f).createDashedStroke (dashed, ring, dl, 2);
-                    g.fillPath (dashed);
-                }
-                g.drawText (String::charToString ((juce_wchar) ('A' + i)), r, Justification::centred, false);
-                sx += SD + sg;
-            }
-        }
-
         const float x0 = 14.0f;
         kw = (float) getWidth() - 28.0f;
         const float ww = kw / 52.0f;
-        labelY = 12.0f + 28.0f + 6.0f;
+        labelY = 12.0f;
         keysY = labelY + 31.0f;
 
         for (auto& s : spans) s = Span();
@@ -488,18 +418,20 @@ public:
             }
 
             const bool isFirst = n == firstKey;
-            const float alpha = (b < 0 && waiting && ! isFirst) ? freeAlpha : 1.0f;
+            const float alpha = 1.0f;
+            const bool latchedKey = b >= 0 && engine.blockOff[(size_t) b].load() == 0
+                                    && ((engine.latchBits[(size_t) b * 2 + (size_t) (n >> 6)].load() >> (n & 63)) & 1) != 0;
 
             if (black)
             {
                 blackRects.push_back ({ l, keysY, r - l, 34.0f });
-                Colour c = b >= 0 ? keyDeep (b) : (isFirst ? blockDeep (cb) : Colour (0xff4a4038));
+                Colour c = latchedKey ? Colours::white : (b >= 0 ? keyDeep (b) : (isFirst ? blockDeep (cb) : freeBlack));
                 blackCols.push_back (c.withMultipliedAlpha (alpha));
             }
             else
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                Colour c = b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : Colour (0xffece7df));
+                Colour c = latchedKey ? Colours::white : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
                 g.setColour (c.withMultipliedAlpha (alpha));
                 g.fillRoundedRectangle (kr, 3.0f);
                 g.setColour (hobby::kScreen);
@@ -529,7 +461,7 @@ public:
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             auto& s = spans[(size_t) b];
-            for (auto* r : { &numRect[(size_t) b], &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &barRect[(size_t) b] })
+            for (auto* r : { &numRect[(size_t) b], &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &barRect[(size_t) b], &xRect[(size_t) b] })
                 *r = {};
             if (! s.used) continue;
 
@@ -546,8 +478,9 @@ public:
             const bool showChord = cmode != 0 && room > 0;  if (showChord) --room;
             const bool showCurve = room > 0;                if (showCurve) --room;
             const bool showHold  = room > 0;                if (showHold)  --room;
-            const bool showTr    = room > 0;
-            const int shown = 1 + (showChord ? 1 : 0) + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0);
+            const bool showTr    = room > 0;              if (showTr)    --room;
+            const bool showX     = room > 0;
+            const int shown = 1 + (showChord ? 1 : 0) + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showX ? 1 : 0);
             const float total = (float) shown * D + (float) (shown - 1) * gap;
             float x = s.l + (width - total) * 0.5f;
             const float cy = labelY;
@@ -621,13 +554,29 @@ public:
                 g.drawEllipse (tr2.reduced (0.75f), 1.5f);
                 g.setFont (smallFont);
                 g.drawText (tr > 0 ? "+" + String (tr) : String (tr), tr2, Justification::centred, false);
+                x += D + gap;
+            }
+
+            if (showX)       // σβήσιμο block: δύο πατήματα (το πρώτο κοκκινίζει για 3 δευτερόλεπτα)
+            {
+                xRect[(size_t) b] = { x, cy, D, D };
+                const auto xr = xRect[(size_t) b];
+                const bool armed = armedBlock == b && Time::getMillisecondCounter() < armedUntil;
+                const Colour xc = armed ? hobby::kRed : col.withMultipliedAlpha (0.4f);
+                if (armed) { g.setColour (xc.withAlpha (0.25f)); g.fillEllipse (xr); }
+                g.setColour (xc);
+                g.drawEllipse (xr.reduced (0.75f), 1.5f);
+                Path xp;
+                xp.startNewSubPath (xr.getCentreX() - 3.5f, xr.getCentreY() - 3.5f); xp.lineTo (xr.getCentreX() + 3.5f, xr.getCentreY() + 3.5f);
+                xp.startNewSubPath (xr.getCentreX() + 3.5f, xr.getCentreY() - 3.5f); xp.lineTo (xr.getCentreX() - 3.5f, xr.getCentreY() + 3.5f);
+                g.strokePath (xp, PathStrokeType (1.5f, PathStrokeType::curved, PathStrokeType::rounded));
             }
 
             const Rectangle<float> bar (s.l + 0.006f * kw, keysY - 4.0f, width - 0.012f * kw, 3.0f);
             barRect[(size_t) b] = bar;
             g.setColour (Colour (0xff3a3430));
             g.fillRoundedRectangle (bar, 1.5f);
-            g.setColour (col);
+            g.setColour (engine.blockOff[(size_t) b].load() != 0 ? Colour (0xff7a7168) : Colour (0xfff2c14e));
             g.fillRoundedRectangle (bar.withWidth (jmax (0.0f, bar.getWidth() * engine.gainOut[(size_t) b].load())), 1.5f);
         }
     }
@@ -636,14 +585,6 @@ public:
     {
         const auto p = e.position;
         dragBlock = -1;
-
-        for (int i = 0; i < 4; ++i)
-            if (sceneRect[(size_t) i].expanded (3.0f).contains (p))
-            {
-                if (e.mods.isPopupMenu()) { if (onSceneMenu) onSceneMenu(); }
-                else if (onScene) onScene (i);
-                return;
-            }
 
         for (int b = 0; b < flow::numBlocks; ++b)
         {
@@ -660,6 +601,14 @@ public:
                 else if (onChord) { if (onChordType) onChordType (b, -1); }
                 else if (onBar) { if (onVolumeMenu) onVolumeMenu (b); }
                 else if (p.y < keysY) { if (onRedoZone) onRedoZone (b); }
+                return;
+            }
+
+            if (xRect[(size_t) b].expanded (2.0f).contains (p))
+            {
+                if (armedBlock == b && Time::getMillisecondCounter() < armedUntil) { armedBlock = -1; if (onRemoveBlock) onRemoveBlock (b); }
+                else { armedBlock = b; armedUntil = Time::getMillisecondCounter() + 3000; }
+                repaint();
                 return;
             }
 
@@ -734,6 +683,8 @@ private:
             case 1:  p.startNewSubPath (4.0f, 11.0f); p.cubicTo (12.0f, 11.0f, 16.0f, 8.0f, 18.0f, 3.0f); break;
             case 2:  p.startNewSubPath (4.0f, 11.0f); p.cubicTo (6.0f, 6.0f, 10.0f, 3.0f, 18.0f, 3.0f); break;
             case 3:  p.startNewSubPath (4.0f, 3.0f);  p.lineTo (18.0f, 11.0f); break;
+            case 4:  p.startNewSubPath (4.0f, 11.0f); p.cubicTo (10.0f, 11.0f, 12.0f, 3.0f, 18.0f, 3.0f); break;
+            case 5:  p.startNewSubPath (4.0f, 11.0f); p.cubicTo (14.0f, 11.0f, 17.0f, 9.0f, 18.0f, 3.0f); break;
             default: p.startNewSubPath (4.0f, 11.0f); p.lineTo (18.0f, 3.0f); break;
         }
         p.applyTransform (AffineTransform::translation (r.getCentreX() - 11.0f, r.getCentreY() - 7.0f));
@@ -752,8 +703,9 @@ private:
     const String& message;
     Typeface::Ptr typeface;
     std::array<Span, flow::numBlocks> spans;
-    std::array<Rectangle<float>, 4> sceneRect;
-    std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect;
+    std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect, xRect;
+    int armedBlock = -1;
+    uint32 armedUntil = 0;
     float kw = 1.0f, labelY = 46.0f, keysY = 77.0f;
     int dragBlock = -1;
 };
@@ -766,7 +718,8 @@ public:
     explicit PanelHeader (Typeface::Ptr face) : typeface (face) {}
 
     // δεδομένα που ορίζει το MainComponent
-    String title;
+    String title, chordName, notice;
+    Colour noticeColour { Colour (0xffe8837a) };
     Colour accent { Colour (0xff9ad4a8) };
     int numCircles = 0;       // πόσα FX έχει η αλυσίδα που φαίνεται
     int activeCircle = -1;    // ποιο δείχνει ο editor
@@ -777,7 +730,7 @@ public:
     int64 armedUntilMs = 0;            // το κουμπί αφαίρεσης περιμένει δεύτερο πάτημα μέχρι αυτή τη στιγμή
 
     std::function<void (int)> onCircle, onCircleMenu;
-    std::function<void()> onPlus, onMaster, onReplace, onRemove, onNewBlock;
+    std::function<void()> onPlus, onMaster, onReplace, onRemove;
 
     void paint (Graphics& g) override
     {
@@ -786,52 +739,24 @@ public:
         g.setColour (hobby::kText);
         g.drawText (title, 12, 0, getWidth() / 2 - 150, getHeight(), Justification::centredLeft, false);
 
-        // αριστερά, μετά τον τίτλο: αλλαγή (δύο βέλη) και αφαίρεση (Χ, με δεύτερο πάτημα για επιβεβαίωση)
-        replaceRect = removeRect = newBlockRect = {};
+        // συγχορδία δίπλα στον τίτλο
+        if (chordName.isNotEmpty())
         {
-            constexpr float AD = 22.0f;
-            const float nx = 12.0f + textWidthOf (g.getCurrentFont(), title) + 16.0f + (showActions ? 2.0f * (AD + 6.0f) : 0.0f);
-            newBlockRect = { nx, (h - AD) * 0.5f, AD, AD };
-            g.setColour (hobby::kIconGrey);
-            g.drawEllipse (newBlockRect.reduced (0.75f), 1.5f);
-            g.fillRect (newBlockRect.getCentreX() - 5.0f, newBlockRect.getCentreY() - 0.75f, 10.0f, 1.5f);
-            g.fillRect (newBlockRect.getCentreX() - 0.75f, newBlockRect.getCentreY() - 5.0f, 1.5f, 10.0f);
+            g.setColour (hobby::kLilac);
+            g.drawText (chordName, 12 + (int) std::ceil (textWidthOf (g.getCurrentFont(), title)) + 16, 0, 140, getHeight(), Justification::centredLeft, false);
         }
-        if (showActions)
+
+        // μήνυμα ή STOP xN: στη θέση του CPU
+        if (notice.isNotEmpty())
         {
-            constexpr float AD = 22.0f;
-            const float ax = 12.0f + textWidthOf (g.getCurrentFont(), title) + 16.0f;
-            const float ay = (h - AD) * 0.5f;
-            replaceRect = { ax, ay, AD, AD };
-            removeRect = { ax + AD + 6.0f, ay, AD, AD };
-            const bool armed = Time::getMillisecondCounter() < (uint32) armedUntilMs;
-
-            g.setColour (hobby::kIconGrey);
-            g.drawEllipse (replaceRect.reduced (0.75f), 1.5f);
-            {
-                const auto c = replaceRect.getCentre();
-                Path p;
-                p.startNewSubPath (c.x - 5.0f, c.y - 2.5f); p.lineTo (c.x + 5.0f, c.y - 2.5f);
-                p.startNewSubPath (c.x + 2.5f, c.y - 5.0f); p.lineTo (c.x + 5.0f, c.y - 2.5f); p.lineTo (c.x + 2.5f, c.y);
-                p.startNewSubPath (c.x + 5.0f, c.y + 2.5f); p.lineTo (c.x - 5.0f, c.y + 2.5f);
-                p.startNewSubPath (c.x - 2.5f, c.y); p.lineTo (c.x - 5.0f, c.y + 2.5f); p.lineTo (c.x - 2.5f, c.y + 5.0f);
-                g.strokePath (p, PathStrokeType (1.4f, PathStrokeType::curved, PathStrokeType::rounded));
-            }
-
-            const Colour rc = armed ? hobby::kRed : hobby::kIconGrey;
-            if (armed) { g.setColour (rc.withAlpha (0.25f)); g.fillEllipse (removeRect); }
-            g.setColour (rc);
-            g.drawEllipse (removeRect.reduced (0.75f), 1.5f);
-            {
-                const auto c = removeRect.getCentre();
-                Path p;
-                p.startNewSubPath (c.x - 4.0f, c.y - 4.0f); p.lineTo (c.x + 4.0f, c.y + 4.0f);
-                p.startNewSubPath (c.x + 4.0f, c.y - 4.0f); p.lineTo (c.x - 4.0f, c.y + 4.0f);
-                g.strokePath (p, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
-            }
+            g.setFont (hobby::makeFont (typeface, 16.0f));
+            g.setColour (noticeColour);
+            g.drawText (notice, getWidth() / 2 - 150, 0, 300, getHeight(), Justification::centred, true);
         }
 
         // CPU μικρό, στη μέση
+        if (notice.isEmpty())
+        {
         const float cx = (float) getWidth() * 0.5f;
         const bool hot = cpu >= 0.85f;
         g.setFont (hobby::makeFont (typeface, 13.0f));
@@ -844,6 +769,7 @@ public:
         g.fillRoundedRectangle (bar.withWidth (jmax (2.0f, bar.getWidth() * jlimit (0.0f, 1.0f, cpu))), 2.0f);
         g.setColour (hot ? hobby::kRed : hobby::kIconGrey);
         g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (cx + 26.0f, 0.0f, 40.0f, h), Justification::centredLeft, false);
+        }
 
         // δεξιά: M | + 3 2 1  (η σειρά: 1 2 3 + | M)
         constexpr float D = 22.0f, gap = 5.0f;
@@ -894,15 +820,6 @@ public:
     void mouseDown (const MouseEvent& e) override
     {
         const auto p = e.position;
-        if (newBlockRect.expanded (3.0f).contains (p)) { if (onNewBlock) onNewBlock(); return; }
-        if (showActions && replaceRect.expanded (3.0f).contains (p)) { if (onReplace) onReplace(); return; }
-        if (showActions && removeRect.expanded (3.0f).contains (p))
-        {
-            if (Time::getMillisecondCounter() < (uint32) armedUntilMs) { armedUntilMs = 0; if (onRemove) onRemove(); }
-            else armedUntilMs = (int64) Time::getMillisecondCounter() + 3000;
-            repaint();
-            return;
-        }
         if (masterRect.expanded (3.0f).contains (p)) { if (onMaster) onMaster(); return; }
         if (plusRect.expanded (3.0f).contains (p)) { if (onPlus) onPlus(); return; }
         for (size_t i = 0; i < circles.size(); ++i)
@@ -917,5 +834,5 @@ public:
 private:
     Typeface::Ptr typeface;
     std::vector<Rectangle<float>> circles;
-    Rectangle<float> plusRect, masterRect, replaceRect, removeRect, newBlockRect;
+    Rectangle<float> plusRect, masterRect, replaceRect, removeRect;
 };

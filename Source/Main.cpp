@@ -95,8 +95,7 @@ public:
         keyboardView.onSelect = [this] (int b) { selectBlock (b); };
         keyboardView.onRedoZone = [this] (int b) { showZoneMenu (b); };
         keyboardView.onHold = [this] (int b) { selectBlock (b); cycleHold (b); };
-        keyboardView.onScene = [this] (int i) { gotoScene (i); };
-        keyboardView.onSceneMenu = [this] { showSceneMenu(); };
+        keyboardView.onRemoveBlock = [this] (int b) { removeBlock (b); };
         keyboardView.onToggleOff = [this] (int b) { toggleBlockOff (b); };
         keyboardView.onChordType = [this] (int b, int dir) { selectBlock (b); stepChordType (b, dir); };
         keyboardView.onCurve = [this] (int b)
@@ -128,19 +127,6 @@ public:
             toggleWindowForPanel (same);
         };
         header.onCircleMenu = [this] (int i) { showCircleMenu (i); };
-        header.onReplace = [this]
-        {
-            if (! isActive (selected)) return;
-            if (panelMode == panelMidiFx) loadMidiFxInto (selected);
-            else                          replaceInstrument();
-        };
-        header.onRemove = [this]
-        {
-            if (! isActive (selected)) return;
-            if (panelMode == panelMidiFx) removeMidiFx (selected);
-            else                          removeBlock (selected);
-        };
-        header.onNewBlock = [this] { chooseAndLoadPlugin(); };
         header.onPlus = [this] { addFxTo (panelMode == panelMaster ? -1 : selected); };
         header.onMaster = [this]
         {
@@ -460,7 +446,7 @@ private:
     //==========================================================================
     // γεωμετρία παραθύρου: μία στήλη (κεφαλίδα, οθόνη loops, κουμπιά, πλήκτρα). Τα plugin ανοίγουν σε δικά τους παράθυρα.
     static constexpr int topH = 36, botH = 14, gapPx = 8, sideM = 11, headerBarH = 44;
-    static constexpr int minLoopsH = 160, stripH = 72, keysH = 152, minContentW = 724, defaultLoopsH = 250;
+    static constexpr int minLoopsH = 160, stripH = 72, keysH = 120, minContentW = 724, defaultLoopsH = 250;
     static constexpr int minContentH() { return minLoopsH + gapPx + stripH + gapPx + keysH; }
     static constexpr int chromeH() { return topH + headerBarH + gapPx + botH; }
     static constexpr int minWinW() { return minContentW + 2 * sideM; }
@@ -1853,12 +1839,14 @@ private:
         const bool master = panelMode == panelMaster;
         String title;
         if (master)            title = "MASTER FX";
-        else if (! valid)      title = "VST";
-        else if (panelMode == panelMidiFx) title = "BLOCK " + String (sel + 1) + " / MIDI FX";
-        else if (panelMode == panelFx)     title = "BLOCK " + String (sel + 1) + " / FX";
-        else                               title = "BLOCK " + String (sel + 1) + " / VST";
+        else if (! valid)      title = "FLOW";
+        else                   title = "BLOCK " + String (sel + 1);
         header.title = title;
-        header.showActions = valid && ! master && panelMode != panelFx;
+        header.chordName = (valid && ! master) ? KeyboardView::chordNameFor (engine.pcMaskOut[(size_t) sel].load(), engine.bassOut[(size_t) sel].load()) : String();
+        const int stopTaps = valid ? engine.loopTapsOut[(size_t) sel].load() : 0;
+        if (message.isNotEmpty())  { header.notice = message; header.noticeColour = hobby::kCoral; }
+        else if (stopTaps > 0)     { header.notice = "STOP x" + String (stopTaps); header.noticeColour = hobby::kLilac; }
+        else                       header.notice = String();
         header.accent = valid ? blockLight (sel) : hobby::kIconGrey;
         header.masterMode = master;
         header.numCircles = master ? engine.numFx (-1) : (valid ? engine.numFx (sel) : 0);
@@ -1868,8 +1856,6 @@ private:
         header.cpu = cpuSmooth;
         header.repaint();
 
-        keyboardView.sceneCurrent = currentScene;
-        for (int i = 0; i < 4; ++i) keyboardView.sceneSaved[(size_t) i] = scenes[(size_t) i].saved || i == currentScene;
         loopsView.repaint();
         keyboardView.repaint();
     }
@@ -1882,9 +1868,7 @@ private:
             engine.cancelLearns();
         }
 
-        const int sreq = engine.sceneRequest.exchange (-1);
-        if (sreq == -2) stepScene (-1);
-        if (sreq == -3) stepScene (+1);
+        engine.sceneRequest.exchange (-1);
 
         const int learned = engine.learnedCount.load();
         if (learned != lastLearned)
@@ -1963,7 +1947,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.10.1"; }
+    const String getApplicationVersion() override { return "0.11.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
