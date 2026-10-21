@@ -255,6 +255,8 @@ public:
     void resized() override
     {
         if (getWidth() <= 0 || getHeight() <= 0) return;
+        if (! inRefresh)   // ο χρήστης τράβηξε το παράθυρο: ένας editor που δέχεται resize γεμίζει το panel
+            setEditorSizeKeepingRatio (getWidth() - 32, getHeight() - fixedChromeH());
         layoutFor (getWidth(), getHeight());
         placeChildren();
     }
@@ -485,15 +487,12 @@ private:
     // γεωμετρία παραθύρου
     static constexpr int panelOverheadPx() { return 10 + 34 + 4; }
 
-    // προτιμώμενο μέγεθος παραθύρου: ό,τι χρειάζεται το plugin, μέσα στα όρια της οθόνης στην οποία βρίσκεται το παράθυρο
-    void computePreferred()
-    {
-        const bool shown = editor != nullptr;
-        const int ew = shown ? editor->getWidth()  : 0;
-        const int eh = shown ? editor->getHeight() : 0;
+    static constexpr int fixedChromeH() { return 36 + 246 + 8 + panelOverheadPx() + 8 + 72 + 8 + 152 + 14; }
 
-        const int fixedH = 36 + 246 + 8 + panelOverheadPx() + 8 + 72 + 8 + 152 + 14;
-        int availH = 100000, availW = 100000;
+    // διαθέσιμος χώρος στην οθόνη όπου βρίσκεται το παράθυρο
+    void getAvailable (int& availW, int& availH)
+    {
+        availH = 100000; availW = 100000;
         const auto& displays = Desktop::getInstance().getDisplays();
         const Displays::Display* d = nullptr;
         if (auto* w = findParentComponentOfClass<DocumentWindow>())
@@ -504,35 +503,41 @@ private:
             availH = d->userArea.getHeight() - 30;
             availW = d->userArea.getWidth() - 8;
         }
+    }
 
-        float s = 1.0f;
-        if (shown && eh > 0 && eh > availH - fixedH)
-            s = jmax (0.25f, (float) jmax (1, availH - fixedH) / (float) eh);
-        if (shown && ew > 0 && ew + 32 > availW)
-            s = jmin (s, jmax (0.25f, (float) jmax (1, availW - 32) / (float) ew));
+    // Οι editors των plugins είναι native views: δεν μικραίνουν με transform. Μικραίνουν μόνο αν το ίδιο το plugin δέχεται resize.
+    void setEditorSizeKeepingRatio (int maxW, int maxH)
+    {
+        if (editor == nullptr || ! editor->isResizable()) return;
+        const int ew = editor->getWidth(), eh = editor->getHeight();
+        if (ew <= 0 || eh <= 0) return;
+        const float s = jmin ((float) jmax (200, maxW) / (float) ew, (float) jmax (100, maxH) / (float) eh);
+        const int nw = (int) std::floor ((float) ew * s), nh = (int) std::floor ((float) eh * s);
+        if (std::abs (nw - ew) > 1 || std::abs (nh - eh) > 1)
+        {
+            layouting = true;
+            editor->setSize (nw, nh);
+            layouting = false;
+        }
+    }
 
-        const int seh = shown ? (int) std::ceil ((float) eh * s) : 0;
-        const int sew = shown ? (int) std::ceil ((float) ew * s) : 0;
-        const int body = shown ? seh : ((! isActive (selected) && panelMode != panelMaster) ? 300 : 46);
+    // προτιμώμενο μέγεθος παραθύρου: ό,τι χρειάζεται το plugin
+    void computePreferred()
+    {
+        const bool shown = editor != nullptr;
+        const int ew = shown ? editor->getWidth()  : 0;
+        const int eh = shown ? editor->getHeight() : 0;
+        const int body = shown ? eh : ((! isActive (selected) && panelMode != panelMaster) ? 300 : 46);
 
-        winW = jmin (jmax (992, sew + 32), jmax (992, availW));
-        winH = jmin (fixedH + body, jmax (fixedH + 46, availH));
+        winW = jmax (992, ew + 32);
+        winH = fixedChromeH() + body;
     }
 
     // γεωμετρία για το τωρινό μέγεθος του παραθύρου (το επιλέγει είτε το plugin είτε ο χρήστης τραβώντας τις άκρες)
     void layoutFor (int W, int H)
     {
         const int panelOverhead = panelOverheadPx();
-        const int fixedH = 36 + 246 + 8 + panelOverhead + 8 + 72 + 8 + 152 + 14;
-        const int body = jmax (46, H - fixedH);
-
-        editorScale = 1.0f;
-        if (editor != nullptr && editor->getWidth() > 0 && editor->getHeight() > 0)
-        {
-            editorScale = jmin (1.0f, (float) body / (float) editor->getHeight(),
-                                (float) jmax (1, W - 32) / (float) editor->getWidth());
-            editorScale = jmax (0.1f, editorScale);
-        }
+        const int body = jmax (46, H - fixedChromeH());
 
         int y = 36;
         loopsBezel = { 11, y, W - 22, 246 };
@@ -577,21 +582,20 @@ private:
 
         if (editor != nullptr)
         {
-            // το transform εφαρμόζεται γύρω από την αρχή του γονέα, γι' αυτό η μετακίνηση μπαίνει μέσα στο transform και η θέση μένει (0,0)
-            const int sew = (int) std::ceil ((float) editor->getWidth() * editorScale);
-            const int seh = (int) std::ceil ((float) editor->getHeight() * editorScale);
+            const int ew = editor->getWidth(), eh = editor->getHeight();
             const int roomH = panel.getHeight() - headerH - 4;
-            const float x0 = (float) (panel.getCentreX() - sew / 2);
-            const float y0 = (float) (panel.getY() + headerH + 4 + jmax (0, (roomH - seh) / 2));
+            const int x0 = panel.getCentreX() - ew / 2;
+            const int y0 = panel.getY() + headerH + 4 + jmax (0, (roomH - eh) / 2);
             layouting = true;
-            editor->setTransform (AffineTransform::scale (editorScale).translated (x0, y0));
-            editor->setTopLeftPosition (0, 0);
+            editor->setTransform ({});
+            editor->setTopLeftPosition (x0, y0);
             layouting = false;
         }
     }
 
     void refreshSize()
     {
+        inRefresh = true;
         computePreferred();
 
         // το μέγεθος αλλάζει από μόνο του μόνο όταν αλλάζει αυτό που χρειάζεται το plugin. Αλλιώς μένει όπως το έβαλε ο χρήστης.
@@ -614,9 +618,18 @@ private:
             }
         }
 
+        // κάτω όριο: αν το plugin δεν μικραίνει, το παράθυρο δεν γίνεται μικρότερο από τον editor του
+        if (auto* w = findParentComponentOfClass<DocumentWindow>())
+        {
+            const bool fixedEditor = editor != nullptr && ! editor->isResizable();
+            w->setResizeLimits (fixedEditor ? jmax (992, editor->getWidth() + 32) : 992,
+                                fixedEditor ? fixedChromeH() + editor->getHeight() + 28 : fixedChromeH() + 46 + 28, 4000, 3000);
+        }
+
         layoutFor (getWidth(), getHeight());
         placeChildren();
         repaint();
+        inRefresh = false;
     }
 
     void parentHierarchyChanged() override { refreshSize(); }
@@ -655,6 +668,10 @@ private:
             editorPlugin = plugin;
             addAndMakeVisible (editor.get());
             editor->addComponentListener (this);
+
+            int aw = 100000, ah = 100000;
+            getAvailable (aw, ah);
+            setEditorSizeKeepingRatio (aw - 32, ah - fixedChromeH());   // πολύ μεγάλος editor: μικραίνει μόνο αν το plugin το δέχεται
         }
 
         refreshSize();
@@ -1942,7 +1959,7 @@ private:
     Typeface::Ptr typeface;
     int selected = 0;
     int panelMode = panelInstrument, panelIndex = 0;
-    bool layouting = false;
+    bool layouting = false, inRefresh = false;
     StringArray startupCrashed;
     static constexpr int headerH = 34;
     int winW = 992, winH = 700, lastPrefW = 0, lastPrefH = 0;
@@ -1978,7 +1995,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.8.0"; }
+    const String getApplicationVersion() override { return "0.8.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
