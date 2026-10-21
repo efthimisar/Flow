@@ -1,438 +1,15 @@
 // Flow - master keyboard host για VST3 / AU plugins.
 // Prisma Audio
 
-#include <juce_audio_utils/juce_audio_utils.h>
-#include "Engine.h"
-#include "HobbyStyle.h"
+#include "Views.h"
+#include <map>
 
-using namespace juce;
-
-static String gr (const char* utf8Text) { return String::fromUTF8 (utf8Text); }
-
-//==============================================================================
-// Χρώματα των blocks: ανοιχτό για τα λευκά πλήκτρα, πιο βαθύ για τα μαύρα.
-static Colour blockLight (int b)
+namespace
 {
-    static const Colour c[7] { Colour (0xff9ad4a8), Colour (0xffc4aef0), Colour (0xfff5de8a), Colour (0xfff4a7b9),
-                               Colour (0xff8fc8f0), Colour (0xfff5b88a), Colour (0xffff8f84) };
-    return c[b % 7];
+    enum PanelMode { panelInstrument = 0, panelMidiFx, panelFx, panelMaster };
+    constexpr int maxFxPerChain = 8;
+    using PluginPtr = flow::PluginPtr;
 }
-
-static Colour blockDeep (int b)
-{
-    static const Colour c[7] { Colour (0xff5b9a70), Colour (0xff8670c4), Colour (0xffc2a63f), Colour (0xffc76f87),
-                               Colour (0xff4f93c4), Colour (0xffc98550), Colour (0xffd6594c) };
-    return c[b % 7];
-}
-
-static String noteName (int n) { return MidiMessage::getMidiNoteName (n, true, true, 4); }
-
-static float textWidth (const Font& f, const String& s)
-{
-    GlyphArrangement ga;
-    ga.addLineOfText (f, s, 0.0f, 0.0f);
-    return ga.getBoundingBox (0, -1, true).getWidth();
-}
-
-static String clockText (double seconds)
-{
-    const int total = (int) seconds;
-    return String::formatted ("%02d:%02d:%02d", total / 3600, (total / 60) % 60, total % 60);
-}
-
-static StringArray activeBlocks (const flow::Engine& engine)
-{
-    StringArray list;
-    for (int b = 0; b < flow::numBlocks; ++b)
-        if (engine.active[(size_t) b].load() != 0)
-            list.add (String (b));
-    return list;
-}
-
-//==============================================================================
-// Οθόνη loops: μία λωρίδα ανά block, 4 μέτρα, λευκή κεφαλή αναπαραγωγής.
-class LoopsView : public Component
-{
-public:
-    LoopsView (flow::Engine& e, const int& sel, const String& msg, Typeface::Ptr face) : engine (e), selected (sel), message (msg), typeface (face) {}
-
-    std::function<void (int)> onSelect;
-
-    void paint (Graphics& g) override
-    {
-        const int w = getWidth();
-        const int64_t axis = jmax<int64_t> (1, engine.axisSamples());
-        const int64_t now = engine.globalSamples.load();
-
-        int recording = -1;
-        bool overdubbing = false;
-        for (int b = 0; b < flow::numBlocks; ++b)
-        {
-            if (engine.active[(size_t) b].load() == 0) continue;
-            const int st = engine.loopStateOut[(size_t) b].load();
-            if (st == flow::loopRec || st == flow::loopOver) { recording = b; overdubbing = st == flow::loopOver; break; }
-        }
-
-        // επάνω: αριστερά REC Loop / n, δεξιά REC Audio / χρόνος
-        const auto f = hobby::makeFont (typeface, 19.0f);
-        g.setFont (f);
-
-        const String loopWord = overdubbing ? "OVERDUB" : "REC";
-        g.setColour (recording >= 0 ? (overdubbing ? hobby::kPeach : hobby::kRed) : hobby::kIconGrey);
-        g.drawText (loopWord, 14, 12, 120, 28, Justification::centredLeft, false);
-        g.setColour (hobby::kText);
-        g.drawText (" Loop / " + (recording >= 0 ? String (recording + 1) : String ("-")),
-                    14 + (int) std::ceil (textWidth (f, loopWord)), 12, 200, 28, Justification::centredLeft, false);
-
-        const auto tapeState = engine.recorder.getState();
-        const bool taping = tapeState == RecorderEngine::State::Recording;
-        const String audioRest = tapeState == RecorderEngine::State::Error ? String (" Audio / ERROR")
-                                 : " Audio / " + clockText (engine.recorder.getElapsedSeconds());
-        const float restW = textWidth (f, audioRest), recW = textWidth (f, "REC");
-        g.setColour (hobby::kText);
-        g.drawText (audioRest, w - 14 - (int) std::ceil (restW) - 4, 12, (int) std::ceil (restW) + 4, 28, Justification::centredRight, false);
-        g.setColour (taping ? hobby::kRed : hobby::kIconGrey);
-        g.drawText ("REC", w - 14 - (int) std::ceil (restW) - (int) std::ceil (recW) - 4, 12, (int) std::ceil (recW) + 4, 28,
-                    Justification::centredRight, false);
-
-        const int taps = selected >= 0 ? engine.loopTapsOut[(size_t) selected].load() : 0;
-        if (message.isNotEmpty())
-        {
-            g.setColour (hobby::kCoral);
-            g.drawText (message, 260, 12, w - 520, 28, Justification::centred, true);
-        }
-        else if (taps > 0)
-        {
-            g.setColour (hobby::kLilac);
-            g.drawText ("STOP x" + String (taps), 260, 12, w - 520, 28, Justification::centred, false);
-        }
-
-        // λωρίδες
-        const auto list = activeBlocks (engine);
-        const int count = list.size();
-        const int top = 48;
-        const int step = count > 0 ? jmin (44, 176 / count) : 44;
-        const int laneH = jmax (6, step - 6);
-        const float laneX = 42.0f, laneW = (float) (w - 14) - laneX;
-
-        stepOut = step; laneHOut = laneH; topOut = top;
-
-        g.setFont (hobby::makeFont (typeface, jlimit (10.0f, 16.0f, (float) laneH * 0.6f)));
-        for (int i = 0; i < count; ++i)
-        {
-            const int b = list[i].getIntValue();
-            const int y = top + i * step;
-            g.setColour (b == selected ? hobby::kText : hobby::kIconGrey);
-            g.drawText (String (b + 1), 14, y, 24, laneH, Justification::centredRight, false);
-            g.setColour (Colour (0xff2d2926));
-            g.fillRoundedRectangle (laneX, (float) y, laneW, (float) laneH, jmin (6.0f, (float) laneH * 0.3f));
-        }
-
-        const int gridBottom = top + jmax (1, count) * step + 4;
-        g.setColour (hobby::kGridLine);
-        for (int i = 0; i <= 4; ++i)
-        {
-            const float x = laneX + laneW * (float) i / 4.0f;
-            g.fillRect (x - 0.5f, (float) (top - 6), 1.0f, (float) (gridBottom - top + 6));
-        }
-
-        for (int i = 0; i < count; ++i)
-        {
-            const int b = list[i].getIntValue();
-            const float y = (float) (top + i * step);
-            const float lh = (float) laneH;
-            const float corner = jmin (6.0f, lh * 0.3f);
-            const int state = engine.loopStateOut[(size_t) b].load();
-
-            if (state == flow::loopPlay || state == flow::loopOver)
-            {
-                const int bars = jmax (1, engine.loopBarsOut[(size_t) b].load());
-                const int n = jmax (1, flow::axisBars / bars);
-                const float len = laneW / (float) n;
-                const int layers = engine.loopLayersOut[(size_t) b].load();
-                const unsigned allMask = layers > 0 ? ((1u << layers) - 1u) : 0u;
-                const bool allMuted = layers > 0 && ((unsigned) engine.loopMuteOut[(size_t) b].load() & allMask) == allMask;
-
-                for (int k = 0; k < n; ++k)
-                {
-                    const Rectangle<float> seg (laneX + (float) k * len + 0.002f * laneW, y, len - 0.004f * laneW, lh);
-                    g.setColour (allMuted ? Colour (0xff3a3d46) : blockLight (b));
-                    g.fillRoundedRectangle (seg, corner);
-                    if (state == flow::loopOver)
-                    {
-                        g.setColour (hobby::kPeach);
-                        g.drawRoundedRectangle (seg.expanded (1.0f), corner + 1.0f, 1.5f);
-                    }
-                }
-            }
-            else if (state == flow::loopRec)
-            {
-                const int64_t start = engine.recStartOut[(size_t) b].load();
-                const int64_t elapsed = jlimit<int64_t> (0, axis, now - start);
-                const int64_t p0 = start % axis;
-                auto piece = [&] (int64_t from, int64_t len)
-                {
-                    const float x = laneX + laneW * (float) from / (float) axis;
-                    const float ww = laneW * (float) len / (float) axis;
-                    g.setColour (hobby::kRed.withAlpha (0.35f));
-                    g.fillRoundedRectangle (x - 2.0f, y - 2.0f, ww + 4.0f, lh + 4.0f, corner + 1.0f);
-                    g.setColour (hobby::kCoral);
-                    g.fillRoundedRectangle (x, y, jmax (2.0f, ww), lh, corner);
-                };
-                const int64_t firstLen = jmin (elapsed, axis - p0);
-                piece (p0, firstLen);
-                if (elapsed > firstLen) piece (0, elapsed - firstLen);
-            }
-        }
-
-        const float hx = laneX + laneW * (float) (now % axis) / (float) axis;
-        g.setColour (Colours::white);
-        g.fillRect (hx - 1.0f, (float) (top - 8), 2.0f, (float) (gridBottom - top + 8));
-    }
-
-    void mouseDown (const MouseEvent& e) override
-    {
-        if (e.mods.isPopupMenu() || stepOut <= 0) return;
-        const auto list = activeBlocks (engine);
-        const int i = (e.y - topOut) / stepOut;
-        if (e.y >= topOut && i >= 0 && i < list.size() && onSelect)
-            onSelect (list[i].getIntValue());
-    }
-
-private:
-    flow::Engine& engine;
-    const int& selected;
-    const String& message;
-    Typeface::Ptr typeface;
-    int stepOut = 0, laneHOut = 0, topOut = 48;
-};
-
-//==============================================================================
-// Πληκτρολόγιο 88 πλήκτρων: κάθε block έχει δικό του χρώμα, αριθμό, καμπύλη έντασης και γραμμή έντασης.
-class KeyboardView : public Component
-{
-public:
-    KeyboardView (flow::Engine& e, const int& sel, Typeface::Ptr face) : engine (e), selected (sel), typeface (face) {}
-
-    std::function<void (int)> onSelect, onRedoZone, onCurve, onVolumeMenu;
-    std::function<void (int, float)> onVolume;
-
-    void paint (Graphics& g) override
-    {
-        const int sel = selected;
-        const double t = Time::getMillisecondCounterHiRes() * 0.001;
-        const float freeAlpha = 0.08f + 0.92f * hobby::pulse (t / 3.0);   // τα ελεύθερα πλήκτρα σβήνουν και ανάβουν αργά όσο περιμένει ζώνη
-        const int cb = engine.pendingBlock();
-        const bool waiting = cb >= 0;
-        const int firstKey = waiting && engine.zoneState[(size_t) cb].load() == 2 ? engine.zoneFirst[(size_t) cb].load() : -1;
-
-        // επικεφαλίδα: BLOCK n αριστερά, περιοχή νοτών δεξιά
-        g.setFont (hobby::makeFont (typeface, 19.0f));
-        g.setColour (hobby::kText);
-        const bool selValid = sel >= 0 && sel < flow::numBlocks && engine.active[(size_t) sel].load() != 0;
-        if (selValid)
-        {
-            g.drawText ("BLOCK " + String (sel + 1), 14, 12, getWidth() - 28, 28, Justification::centredLeft, false);
-            if (engine.zoneState[(size_t) sel].load() == 0)
-                g.drawText (noteName (engine.lo[(size_t) sel].load()) + " " + String::fromUTF8 ("\xe2\x80\x93") + " " + noteName (engine.hi[(size_t) sel].load()),
-                            14, 12, getWidth() - 28, 28, Justification::centredRight, false);
-        }
-
-        const float x0 = 14.0f;
-        kw = (float) getWidth() - 28.0f;
-        const float ww = kw / 52.0f;
-        labelY = 12.0f + 28.0f + 6.0f;
-        keysY = labelY + 22.0f;
-
-        auto isBlack = [] (int n) { const int m = n % 12; return m == 1 || m == 3 || m == 6 || m == 8 || m == 10; };
-
-        for (auto& s : spans) s = Span();
-        std::vector<Rectangle<float>> blackRects;
-        std::vector<Colour> blackCols;
-        std::vector<float> seps;
-
-        int wi = 0, prev = -1;
-        for (int n = flow::lowestNote; n <= flow::highestNote; ++n)
-        {
-            const int b = engine.blockForNote (n);
-            const bool black = isBlack (n);
-            const float l = x0 + (black ? ((float) wi - 0.3f) * ww : (float) wi * ww);
-            const float r = x0 + (black ? ((float) wi + 0.3f) * ww : (float) (wi + 1) * ww);
-
-            if (b >= 0 && prev >= 0 && b != prev)
-                seps.push_back (x0 + (float) wi * ww);
-
-            if (b >= 0)
-            {
-                auto& s = spans[(size_t) b];
-                s.used = true;
-                s.l = jmin (s.l, l);
-                s.r = jmax (s.r, r);
-            }
-
-            const bool isFirst = n == firstKey;
-            const float alpha = (b < 0 && waiting && ! isFirst) ? freeAlpha : 1.0f;
-
-            if (black)
-            {
-                blackRects.push_back ({ l, keysY, r - l, 34.0f });
-                Colour c = b >= 0 ? blockDeep (b) : (isFirst ? blockDeep (cb) : Colour (0xff4a4038));
-                blackCols.push_back (c.withMultipliedAlpha (alpha));
-            }
-            else
-            {
-                const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                Colour c = b >= 0 ? blockLight (b) : (isFirst ? blockLight (cb) : Colour (0xffece7df));
-                g.setColour (c.withMultipliedAlpha (alpha));
-                g.fillRoundedRectangle (kr, 3.0f);
-                g.setColour (hobby::kScreen);
-                g.drawRoundedRectangle (kr.reduced (0.5f), 3.0f, 1.0f);
-                ++wi;
-            }
-            prev = b;
-        }
-
-        for (size_t i = 0; i < blackRects.size(); ++i)
-        {
-            g.setColour (blackCols[i]);
-            g.fillRoundedRectangle (blackRects[i], 2.0f);
-            g.setColour (hobby::kScreen);
-            g.drawRoundedRectangle (blackRects[i].reduced (0.5f), 2.0f, 1.0f);
-        }
-
-        g.setColour (hobby::kScreen);
-        for (auto sx : seps)
-            g.fillRect (sx - 1.0f, keysY, 2.0f, 56.0f);
-
-        // πάνω από κάθε ζώνη: αριθμός, ένδειξη hold, κουμπί καμπύλης. Από κάτω: γραμμή έντασης.
-        const auto numFont = hobby::makeFont (typeface, 13.0f);
-        const auto holdFont = hobby::makeFont (typeface, 11.0f);
-        for (int b = 0; b < flow::numBlocks; ++b)
-        {
-            auto& s = spans[(size_t) b];
-            btn[(size_t) b] = {};
-            barRect[(size_t) b] = {};
-            if (! s.used) continue;
-
-            const float width = s.r - s.l;
-            const Colour col = blockLight (b);
-            const String num (b + 1);
-            const int hold = engine.holdMode[(size_t) b].load();
-            const String holdText = hold == 1 ? "LM" : hold == 2 ? "LP" : String();
-
-            const float numW = textWidth (numFont, num);
-            const float holdW = holdText.isEmpty() ? 0.0f : textWidth (holdFont, holdText);
-            float total = numW + 6.0f + 24.0f;
-            bool showBtn = true, showHold = holdText.isNotEmpty();
-            if (showHold && total + 6.0f + holdW > width) showHold = false;
-            if (showHold) total += 6.0f + holdW;
-            if (total > width) { showBtn = false; total = numW + (showHold ? 6.0f + holdW : 0.0f); }
-
-            float x = s.l + (width - total) * 0.5f;
-            const float alpha = b == sel ? 1.0f : 0.65f;
-            g.setFont (numFont);
-            g.setColour (col.withMultipliedAlpha (alpha));
-            g.drawText (num, Rectangle<float> (x, labelY, numW + 2.0f, 16.0f), Justification::centredLeft, false);
-            x += numW + 6.0f;
-            if (showHold)
-            {
-                g.setFont (holdFont);
-                g.drawText (holdText, Rectangle<float> (x, labelY, holdW + 2.0f, 16.0f), Justification::centredLeft, false);
-                x += holdW + 6.0f;
-            }
-            if (showBtn)
-            {
-                const Rectangle<float> br (x, labelY, 24.0f, 16.0f);
-                btn[(size_t) b] = br;
-                g.setGradientFill (ColourGradient (Colour (0xff46403b), 0.0f, br.getY(), Colour (0xff2a2623), 0.0f, br.getBottom(), false));
-                g.fillRoundedRectangle (br, 5.0f);
-                g.setColour (Colour (0xff1c1917));
-                g.drawRoundedRectangle (br.reduced (0.5f), 5.0f, 1.0f);
-                g.setColour (col);
-                g.strokePath (curvePath (engine.curveMode[(size_t) b].load(), br), PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
-            }
-
-            const Rectangle<float> bar (s.l + 0.006f * kw, keysY - 4.0f, width - 0.012f * kw, 3.0f);
-            barRect[(size_t) b] = bar;
-            g.setColour (Colour (0xff3a3430));
-            g.fillRoundedRectangle (bar, 1.5f);
-            g.setColour (col);
-            g.fillRoundedRectangle (bar.withWidth (jmax (0.0f, bar.getWidth() * engine.gainOut[(size_t) b].load())), 1.5f);
-        }
-    }
-
-    void mouseDown (const MouseEvent& e) override
-    {
-        const auto p = e.position;
-        dragBlock = -1;
-
-        for (int b = 0; b < flow::numBlocks; ++b)
-        {
-            const auto& s = spans[(size_t) b];
-            if (! s.used || p.x < s.l || p.x > s.r || p.y < labelY - 2.0f || p.y > keysY + 56.0f) continue;
-
-            const bool onBar = barRect[(size_t) b].expanded (0.0f, 6.0f).contains (p);
-
-            if (e.mods.isPopupMenu())
-            {
-                if (onBar) { if (onVolumeMenu) onVolumeMenu (b); }
-                else if (p.y < keysY) { if (onRedoZone) onRedoZone (b); }
-                return;
-            }
-
-            if (btn[(size_t) b].expanded (2.0f).contains (p)) { if (onCurve) onCurve (b); return; }
-
-            if (onBar)
-            {
-                dragBlock = b;
-                setVolumeFromX (b, p.x);
-                return;
-            }
-
-            if (onSelect) onSelect (b);
-            return;
-        }
-    }
-
-    void mouseDrag (const MouseEvent& e) override
-    {
-        if (dragBlock >= 0) setVolumeFromX (dragBlock, e.position.x);
-    }
-
-    void mouseUp (const MouseEvent&) override { dragBlock = -1; }
-
-private:
-    struct Span { float l = 1e9f, r = -1e9f; bool used = false; };
-
-    static Path curvePath (int c, Rectangle<float> r)
-    {
-        Path p;
-        switch (c)
-        {
-            case 1:  p.startNewSubPath (4.0f, 11.0f); p.cubicTo (12.0f, 11.0f, 16.0f, 8.0f, 18.0f, 3.0f); break;
-            case 2:  p.startNewSubPath (4.0f, 11.0f); p.cubicTo (6.0f, 6.0f, 10.0f, 3.0f, 18.0f, 3.0f); break;
-            case 3:  p.startNewSubPath (4.0f, 3.0f);  p.lineTo (18.0f, 11.0f); break;
-            default: p.startNewSubPath (4.0f, 11.0f); p.lineTo (18.0f, 3.0f); break;
-        }
-        p.applyTransform (AffineTransform::translation (r.getCentreX() - 11.0f, r.getCentreY() - 7.0f));
-        return p;
-    }
-
-    void setVolumeFromX (int b, float x)
-    {
-        const auto bar = barRect[(size_t) b];
-        if (bar.getWidth() <= 0.0f || ! onVolume) return;
-        onVolume (b, jlimit (0.0f, 1.0f, (x - bar.getX()) / bar.getWidth()));
-    }
-
-    flow::Engine& engine;
-    const int& selected;
-    Typeface::Ptr typeface;
-    std::array<Span, flow::numBlocks> spans;
-    std::array<Rectangle<float>, flow::numBlocks> btn, barRect;
-    float kw = 1.0f, labelY = 46.0f, keysY = 68.0f;
-    int dragBlock = -1;
-};
 
 //==============================================================================
 class MainComponent : public Component,
@@ -442,14 +19,18 @@ class MainComponent : public Component,
 public:
     MainComponent()
         : typeface (hobby::loadTypeface()),
-          loopsView (engine, selected, message, typeface),
-          keyboardView (engine, selected, typeface),
+          loopsView (engine, selected, typeface),
+          keyboardView (engine, selected, message, typeface),
+          header (typeface),
           vstTile (Symbol::Vst, typeface),
+          mfxTile (Symbol::Thru, typeface),
+          fxTile (Symbol::Fx, typeface),
           holdTile (Symbol::Hold, typeface),
           recTile (Symbol::PadRecord, typeface),
           undoTile (Symbol::Undo, typeface),
           stopTile (Symbol::Stop, typeface),
           tapeTile (Symbol::Stop, typeface),
+          metroTile (Symbol::Tempo, typeface),
           folderTile (Symbol::Folder, typeface)
     {
         PropertiesFile::Options options;
@@ -463,51 +44,65 @@ public:
         formatManager.addFormat (std::make_unique<AudioUnitPluginFormat>());
        #endif
 
+        setWantsKeyboardFocus (true);
+
         for (auto* t : tiles())
             addAndMakeVisible (t);
         for (auto* t : { &recTile, &undoTile, &stopTile, &tapeTile })
             t->setRound (true);
 
-        vstTile.setTooltip (gr ("VST: φόρτωση plugin (δημιουργεί νέο block). Δεξί κλικ: αφαίρεση του επιλεγμένου block"));
-        folderTile.setTooltip (gr ("Φάκελος αποθήκευσης των WAV του Tape Recorder"));
-        recTile.setTooltip ("Rec / Play / Overdub: " + gr ("ηχογράφηση, αναπαραγωγή, overdub του loop"));
-        undoTile.setTooltip ("Undo: " + gr ("αφαιρεί το τελευταίο στρώμα του loop"));
+        vstTile.setTooltip (gr ("VST: δείχνει το instrument του block. Δεξί κλικ: νέο block, αντικατάσταση, αφαίρεση"));
+        mfxTile.setTooltip (gr ("MIDI FX: MIDI effect (π.χ. Stepic) πριν από το instrument. Αν δεν έχει plugin, ανοίγει επιλογή αρχείου. Δεξί κλικ: αντικατάσταση, αφαίρεση"));
+        fxTile.setTooltip (gr ("FX: αλυσίδα audio effects μετά το instrument. Τα κυκλάκια 1, 2, 3 και το + είναι στην κεφαλίδα του πάνελ. Δεξί κλικ: προσθήκη"));
+        folderTile.setTooltip (gr ("Φάκελος αποθήκευσης των Rec Audio (zip με master και stems)"));
+        recTile.setTooltip ("Rec MIDI loop / Play / Overdub: " + gr ("ηχογράφηση, αναπαραγωγή, overdub του MIDI loop. Δεξί κλικ: quantize και πετάλι"));
+        undoTile.setTooltip ("Undo: " + gr ("αφαιρεί το τελευταίο στρώμα του MIDI loop"));
         stopTile.setTooltip ("Stop: " + gr ("πάτα N φορές για σίγαση ή επαναφορά του στρώματος N"));
-        tapeTile.setTooltip ("Tape Recorder: " + gr ("σταμάτημα ή νέο take"));
+        tapeTile.setTooltip ("Rec Audio: " + gr ("σταμάτημα ή νέο take (master και stems ανά block, σε zip)"));
+        metroTile.setTooltip (gr ("Metronome (πλήκτρο M). Ακούγεται μονοφωνικά σε ξεχωριστή έξοδο. Δεξί κλικ: ήχος, ένταση, έξοδος, πλήκτρο/πετάλι"));
 
         addAndMakeVisible (loopsView);
         addAndMakeVisible (keyboardView);
+        addAndMakeVisible (header);
 
-        vstTile.onClick = [this] { chooseAndLoadPlugin(); };
+        vstTile.onClick = [this] { onVstClick(); };
         vstTile.onRightClick = [this] { showVstMenu(); };
+        mfxTile.onClick = [this] { onMidiFxClick(); };
+        mfxTile.onRightClick = [this] { showMidiFxMenu(); };
+        fxTile.onClick = [this] { onFxClick(); };
+        fxTile.onRightClick = [this] { showFxMenu(); };
 
-        holdTile.onClick = [this]
-        {
-            if (! isActive (selected)) return;
-            engine.holdMode[(size_t) selected] = (engine.holdMode[(size_t) selected].load() + 1) % 3;
-            saveNow();
-            refreshAll();
-        };
-
+        holdTile.onClick = [this] { cycleHold (selected); };
         recTile.onClick  = [this] { if (isActive (selected)) engine.pressMain (selected); };
         undoTile.onClick = [this] { if (isActive (selected)) engine.pressUndo (selected); };
         stopTile.onClick = [this] { if (isActive (selected)) engine.pressStop (selected); };
         tapeTile.onClick = [this] { engine.recorder.pressButton(); };
+        metroTile.onClick = [this] { toggleMetronome(); };
         folderTile.onClick = [this] { chooseTapeFolder(); };
 
-        // δεξί κλικ: ανάθεση σε πετάλι
+        // δεξί κλικ: ανάθεση σε πετάλι / ρυθμίσεις
         holdTile.onRightClick = [this] { showPedalMenu (flow::ctlHold); };
-        recTile.onRightClick  = [this] { showPedalMenu (flow::ctlRec); };
+        recTile.onRightClick  = [this] { showRecMenu(); };
         undoTile.onRightClick = [this] { showPedalMenu (flow::ctlUndo); };
         stopTile.onRightClick = [this] { showPedalMenu (flow::ctlStop); };
         tapeTile.onRightClick = [this] { showPedalMenu (flow::ctlTape); };
+        metroTile.onRightClick = [this] { showMetroMenu(); };
 
         loopsView.onSelect = [this] (int b) { selectBlock (b); };
+        loopsView.getTempoBox().onChange = [this] { dirty = true; };
         keyboardView.onSelect = [this] (int b) { selectBlock (b); };
         keyboardView.onRedoZone = [this] (int b) { showZoneMenu (b); };
+        keyboardView.onHold = [this] (int b) { selectBlock (b); cycleHold (b); };
         keyboardView.onCurve = [this] (int b)
         {
             engine.curveMode[(size_t) b] = (engine.curveMode[(size_t) b].load() + 1) % flow::numCurves;
+            saveNow();
+            refreshAll();
+        };
+        keyboardView.onTranspose = [this] (int b, int dir)
+        {
+            auto& t = engine.transpose[(size_t) b];
+            t = dir == 0 ? 0 : jlimit (-48, 48, t.load() + dir);
             saveNow();
             refreshAll();
         };
@@ -518,6 +113,23 @@ public:
         };
         keyboardView.onVolumeMenu = [this] (int b) { showVolumeMenu (b); };
 
+        header.onCircle = [this] (int i)
+        {
+            if (panelMode != panelMaster) panelMode = panelFx;
+            panelIndex = i;
+            updateEditor();
+            refreshAll();
+        };
+        header.onCircleMenu = [this] (int i) { showCircleMenu (i); };
+        header.onPlus = [this] { addFxTo (panelMode == panelMaster ? -1 : selected); };
+        header.onMaster = [this]
+        {
+            panelMode = panelMode == panelMaster ? panelInstrument : panelMaster;
+            panelIndex = 0;
+            updateEditor();
+            refreshAll();
+        };
+
         auto* settings = properties.getUserSettings();
 
         for (int i = 0; i < flow::numControls; ++i)
@@ -527,11 +139,12 @@ public:
         engine.recorder.setFolder (savedFolder.isNotEmpty() ? File (savedFolder)
                                                             : File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow"));
 
-        selected = settings->getIntValue ("selectedBlock", 0);
-        engine.selectedBlock = selected;
+        engine.metroLevel = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("metroLevel", 0.8));
+        engine.metroChannel = jmax (0, settings->getIntValue ("metroChannel", 2));
+        metroSamplePath = settings->getValue ("metroSample");
 
         std::unique_ptr<XmlElement> savedAudio (settings->getXmlValue ("audioDeviceState"));
-        deviceManager.initialise (0, 2, savedAudio.get(), true);
+        deviceManager.initialise (0, 16, savedAudio.get(), true);
 
         for (auto& device : MidiInput::getAvailableDevices())
             deviceManager.setMidiInputDeviceEnabled (device.identifier, true);
@@ -539,8 +152,11 @@ public:
         deviceManager.addAudioCallback (&engine);
         deviceManager.addMidiInputDeviceCallback (String(), &engine.incoming);
 
+        if (metroSamplePath.isNotEmpty()) loadMetroSample (File (metroSamplePath), false);
+        if (settings->getBoolValue ("link", false) && LinkBridge::isAvailable()) engine.setLinkEnabled (true);
+
         refreshSize();
-        restorePlugins();
+        restoreSession();
         refreshAll();
         lastChange = engine.changeCount.load();
         startTimerHz (30);
@@ -549,12 +165,18 @@ public:
     ~MainComponent() override
     {
         stopTimer();
-        saveSettings (true);
+        if (pendingLoads == 0) saveSettings (true);
         deviceManager.removeMidiInputDeviceCallback (String(), &engine.incoming);
         deviceManager.removeAudioCallback (&engine);
         closeEditor();
         for (int b = 0; b < flow::numBlocks; ++b)
+        {
+            auto extras = engine.takeExtras (b);
+            extras.clear();
             engine.swapPlugin (b, nullptr).reset();
+        }
+        while (engine.numFx (-1) > 0)
+            engine.removeFx (-1, 0).reset();
     }
 
     //==========================================================================
@@ -564,10 +186,17 @@ public:
         hobby::drawBrandMark (g, typeface, getWidth());
 
         hobby::drawBezel (g, loopsBezel.toFloat(), loopsBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
-        if (! pluginBezel.isEmpty())
-            hobby::drawBezel (g, pluginBezel.toFloat(), pluginBezel.reduced (5).toFloat(), hobby::kScreen, 1.0f);
+        hobby::drawBezel (g, pluginBezel.toFloat(), pluginBezel.reduced (5).toFloat(), hobby::kScreen, 1.0f);
         hobby::drawBezel (g, stripBezel.toFloat(), stripBezel.reduced (5).toFloat(), hobby::kStripScreen, 15.0f);
         hobby::drawBezel (g, keysBezel.toFloat(), keysBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
+
+        if (editor == nullptr)
+        {
+            const auto inner = pluginBezel.reduced (5);
+            g.setColour (hobby::kIconGrey.withAlpha (0.6f));
+            g.setFont (hobby::makeFont (typeface, 15.0f));
+            g.drawText (emptyPanelText(), inner.withTrimmedTop (headerH + 4), Justification::centred, false);
+        }
 
         for (auto* t : tiles())
         {
@@ -587,18 +216,39 @@ public:
 
     void resized() override { placeChildren(); }
 
+    void mouseDown (const MouseEvent&) override { grabKeyboardFocus(); }
+
     void mouseUp (const MouseEvent& e) override
     {
-        // κλικ στο "π / -" ανοίγει τις ρυθμίσεις ήχου και MIDI
+        // κλικ στο "π / -": μενού (ρυθμίσεις ήχου, set, panic, Link)
         if (e.y < 30 && std::abs (e.x - getWidth() / 2) < 40 && ! e.mouseWasDraggedSinceMouseDown())
-            openAudioSettings();
+            showPiMenu();
+    }
+
+    bool keyPressed (const KeyPress& k) override
+    {
+        if (k.getModifiers().isAnyModifierKeyDown()) return false;
+        const auto c = k.getTextCharacter();
+        if (c == 'm' || c == 'M') { toggleMetronome(); return true; }
+        if (k == KeyPress::escapeKey) { doPanic(); return true; }
+        return false;
     }
 
 private:
     //==========================================================================
-    std::array<ValueTile*, 7> tiles() { return { &vstTile, &holdTile, &recTile, &undoTile, &stopTile, &tapeTile, &folderTile }; }
+    std::array<ValueTile*, 10> tiles()
+    {
+        return { &vstTile, &mfxTile, &fxTile, &holdTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
+    }
 
     bool isActive (int b) const { return b >= 0 && b < flow::numBlocks && engine.active[(size_t) b].load() != 0; }
+
+    int currentBufferSize() const
+    {
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+            return device->getCurrentBufferSizeSamples();
+        return 512;
+    }
 
     void selectBlock (int b)
     {
@@ -613,10 +263,60 @@ private:
     int firstActive() const
     {
         for (int b = 0; b < flow::numBlocks; ++b)
-            if (isActive (b)) return b;
+            if (isActive (b))
+                return b;
         return -1;
     }
 
+    void cycleHold (int b)
+    {
+        if (! isActive (b)) return;
+        engine.holdMode[(size_t) b] = (engine.holdMode[(size_t) b].load() + 1) % 3;
+        saveNow();
+        refreshAll();
+    }
+
+    //==========================================================================
+    // πάνελ plugin: ποιο plugin δείχνει ο editor
+    juce::AudioPluginInstance* panelPlugin()
+    {
+        if (panelMode == panelMaster)
+            return engine.getFx (-1, panelIndex);
+        if (! isActive (selected)) return nullptr;
+        switch (panelMode)
+        {
+            case panelMidiFx: return engine.getMidiFx (selected);
+            case panelFx:     return engine.getFx (selected, panelIndex);
+            default:          return engine.getPlugin (selected);
+        }
+    }
+
+    void normalisePanel()
+    {
+        if (panelMode == panelMaster)
+        {
+            const int n = engine.numFx (-1);
+            panelIndex = n > 0 ? jlimit (0, n - 1, panelIndex) : 0;
+            return;
+        }
+        if (! isActive (selected)) { panelMode = panelInstrument; return; }
+        if (panelMode == panelMidiFx && engine.getMidiFx (selected) == nullptr) panelMode = panelInstrument;
+        if (panelMode == panelFx)
+        {
+            const int n = engine.numFx (selected);
+            if (n == 0) panelMode = panelInstrument;
+            else        panelIndex = jlimit (0, n - 1, panelIndex);
+        }
+    }
+
+    String emptyPanelText() const
+    {
+        if (panelMode == panelMaster) return gr ("Master FX: πάτα το + για να φορτώσεις effect στο τελικό μίγμα");
+        if (! isActive (selected))    return gr ("Πάτα VST για να φορτώσεις το πρώτο plugin");
+        return gr ("Αυτό το plugin δεν έχει editor");
+    }
+
+    //==========================================================================
     // γεωμετρία παραθύρου
     void computeLayout()
     {
@@ -624,7 +324,8 @@ private:
         const int ew = shown ? editor->getWidth()  : 0;
         const int eh = shown ? editor->getHeight() : 0;
 
-        const int fixedH = 36 + 246 + 8 + 72 + 8 + 152 + 14;
+        const int panelOverhead = 10 + headerH + 4;
+        const int fixedH = 36 + 246 + 8 + panelOverhead + 8 + 72 + 8 + 152 + 14;
         int avail = 100000;
         if (auto* d = Desktop::getInstance().getDisplays().getPrimaryDisplay())
             avail = d->userArea.getHeight() - 30;
@@ -632,28 +333,22 @@ private:
         editorScale = 1.0f;
         if (shown && eh > 0)
         {
-            const int room = avail - fixedH - 18;
+            const int room = avail - fixedH;
             if (eh > room) editorScale = jlimit (0.4f, 1.0f, (float) jmax (1, room) / (float) eh);
         }
 
         const int seh = shown ? (int) std::ceil ((float) eh * editorScale) : 0;
         const int sew = shown ? (int) std::ceil ((float) ew * editorScale) : 0;
+        const int body = shown ? seh : 46;
 
         winW = jmax (992, sew + 32);
-        winH = fixedH + (shown ? seh + 10 + 8 : 0);
+        winH = fixedH + body;
 
         int y = 36;
         loopsBezel = { 11, y, winW - 22, 246 };
         y += 246 + 8;
-        if (shown)
-        {
-            pluginBezel = { 11, y, winW - 22, seh + 10 };
-            y += seh + 10 + 8;
-        }
-        else
-        {
-            pluginBezel = {};
-        }
+        pluginBezel = { 11, y, winW - 22, panelOverhead + body };
+        y += panelOverhead + body + 8;
         stripBezel = { 11, y, winW - 22, 72 };
         y += 72 + 8;
         keysBezel = { 11, y, winW - 22, 152 };
@@ -664,33 +359,38 @@ private:
         loopsView.setBounds (loopsBezel.reduced (5));
         keyboardView.setBounds (keysBezel.reduced (5));
 
-        // τρεις ομάδες με ίσες αποστάσεις: αριστερά VST + Hold, στη μέση τα 4 στρογγυλά, δεξιά ο φάκελος
+        const auto panel = pluginBezel.reduced (5);
+        header.setBounds (panel.getX(), panel.getY(), panel.getWidth(), headerH);
+
+        // τρεις ομάδες: αριστερά VST, MIDI FX, FX, Hold. Στη μέση (κεντραρισμένα στο παράθυρο) τα 4 στρογγυλά. Δεξιά metronome και φάκελος.
         const auto strip = stripBezel.reduced (5);
         const int ty = strip.getY() + 5;
         const int leftX = strip.getX() + 14;
-        const int leftEnd = leftX + 52 + 8 + 52;
-        const int rightX = strip.getRight() - 14 - 52;
         const int midW = 4 * 52 + 3 * 8;
-        const int gap = jmax (8, (rightX - leftEnd - midW) / 2);
-        const int midX = leftEnd + gap;
+        const int midX = strip.getCentreX() - midW / 2;
+        const int rightX = strip.getRight() - 14 - 52;
 
-        vstTile.setBounds (leftX, ty, 52, 52);
-        holdTile.setBounds (leftX + 60, ty, 52, 52);
-        int x = midX;
+        int x = leftX;
+        for (auto* t : { &vstTile, &mfxTile, &fxTile, &holdTile })
+        {
+            t->setBounds (x, ty, 52, 52);
+            x += 60;
+        }
+        x = midX;
         for (auto* t : { &recTile, &undoTile, &stopTile, &tapeTile })
         {
             t->setBounds (x, ty, 52, 52);
             x += 60;
         }
+        metroTile.setBounds (rightX - 60, ty, 52, 52);
         folderTile.setBounds (rightX, ty, 52, 52);
 
         if (editor != nullptr)
         {
-            const auto area = pluginBezel.reduced (5);
             const int sew = (int) std::ceil ((float) editor->getWidth() * editorScale);
             layouting = true;
             editor->setTransform (AffineTransform::scale (editorScale));
-            editor->setTopLeftPosition (area.getCentreX() - sew / 2, area.getY());
+            editor->setTopLeftPosition (panel.getCentreX() - sew / 2, panel.getY() + headerH + 4);
             layouting = false;
         }
     }
@@ -719,7 +419,7 @@ private:
     void parentHierarchyChanged() override { refreshSize(); }
 
     //==========================================================================
-    // plugin editor μέσα στο παράθυρο (πάντα για το επιλεγμένο block)
+    // plugin editor μέσα στο παράθυρο
     void closeEditor()
     {
         if (editor != nullptr)
@@ -728,18 +428,19 @@ private:
             removeChildComponent (editor.get());
             editor.reset();
         }
-        editorBlock = -1;
+        editorPlugin = nullptr;
     }
 
     void updateEditor()
     {
-        auto* plugin = isActive (selected) ? engine.getPlugin (selected) : nullptr;
+        normalisePanel();
+        auto* plugin = panelPlugin();
 
         if (plugin == nullptr)
         {
             closeEditor();
         }
-        else if (editor == nullptr || editorBlock != selected)
+        else if (editor == nullptr || editorPlugin != plugin)
         {
             closeEditor();
 
@@ -748,7 +449,7 @@ private:
                 e = new GenericAudioProcessorEditor (*plugin);
 
             editor.reset (e);
-            editorBlock = selected;
+            editorPlugin = plugin;
             addAndMakeVisible (editor.get());
             editor->addComponentListener (this);
         }
@@ -763,117 +464,229 @@ private:
     }
 
     //==========================================================================
-    // φόρτωση plugin: κάθε plugin δημιουργεί ένα νέο block
+    // κουμπιά VST / MIDI FX / FX
+    void onVstClick()
+    {
+        if (! isActive (selected))
+        {
+            chooseAndLoadPlugin();
+            return;
+        }
+        if (panelMode == panelMaster) header.onMaster();   // επιστροφή από το master
+        panelMode = panelInstrument;
+        updateEditor();
+        refreshAll();
+    }
+
+    void onMidiFxClick()
+    {
+        if (! isActive (selected)) { setMessage (gr ("Φόρτωσε πρώτα ένα instrument (VST)")); return; }
+        if (engine.getMidiFx (selected) != nullptr)
+        {
+            panelMode = panelMidiFx;
+            updateEditor();
+            refreshAll();
+        }
+        else
+        {
+            loadMidiFxInto (selected);
+        }
+    }
+
+    void onFxClick()
+    {
+        if (! isActive (selected)) { setMessage (gr ("Φόρτωσε πρώτα ένα instrument (VST)")); return; }
+        if (engine.numFx (selected) > 0)
+        {
+            panelMode = panelFx;
+            panelIndex = jlimit (0, engine.numFx (selected) - 1, panelIndex);
+            updateEditor();
+            refreshAll();
+        }
+        else
+        {
+            addFxTo (selected);
+        }
+    }
+
     void showVstMenu()
     {
         PopupMenu menu;
+        const bool v = isActive (selected);
         menu.addItem (1, gr ("Φόρτωση plugin (νέο block)…"));
-        menu.addItem (2, isActive (selected) ? gr ("Αφαίρεση block ") + String (selected + 1) : gr ("Αφαίρεση block"), isActive (selected));
+        menu.addItem (2, v ? gr ("Αντικατάσταση instrument του block ") + String (selected + 1) + "…" : gr ("Αντικατάσταση instrument"), v);
+        menu.addItem (3, v ? gr ("Αφαίρεση block ") + String (selected + 1) : gr ("Αφαίρεση block"), v);
 
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&vstTile),
                             [safe = SafePointer<MainComponent> (this)] (int result)
         {
             if (safe == nullptr) return;
             if (result == 1) safe->chooseAndLoadPlugin();
-            if (result == 2) safe->removeBlock (safe->selected);
+            if (result == 2) safe->replaceInstrument();
+            if (result == 3) safe->removeBlock (safe->selected);
         });
     }
 
-    void chooseAndLoadPlugin()
+    void showMidiFxMenu()
     {
-        int slot = -1;
-        for (int b = 0; b < flow::numBlocks && slot < 0; ++b)
-            if (! isActive (b) && ! loadingSlots.contains (b))
-                slot = b;
+        const bool v = isActive (selected);
+        const bool has = v && engine.getMidiFx (selected) != nullptr;
+        PopupMenu menu;
+        menu.addItem (1, has ? gr ("Αντικατάσταση MIDI FX…") : gr ("Φόρτωση MIDI FX…"), v);
+        menu.addItem (2, gr ("Αφαίρεση MIDI FX"), has);
 
-        if (slot < 0)
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&mfxTile),
+                            [safe = SafePointer<MainComponent> (this)] (int result)
         {
-            setMessage (gr ("Δεν υπάρχει ελεύθερο block (μέγιστο 16)."));
-            return;
-        }
+            if (safe == nullptr) return;
+            if (result == 1) safe->loadMidiFxInto (safe->selected);
+            if (result == 2) safe->removeMidiFx (safe->selected);
+        });
+    }
 
-        chooser = std::make_unique<FileChooser> (gr ("Διάλεξε plugin (.vst3 ή .component)"),
-                                                 File ("/Library/Audio/Plug-Ins"),
-                                                 "*.vst3;*.component");
+    void showFxMenu()
+    {
+        const bool v = isActive (selected);
+        PopupMenu menu;
+        menu.addItem (1, gr ("Προσθήκη FX στο block…"), v && engine.numFx (selected) < maxFxPerChain);
+        menu.addItem (2, gr ("Αφαίρεση όλων των FX του block"), v && engine.numFx (selected) > 0);
+
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&fxTile),
+                            [safe = SafePointer<MainComponent> (this)] (int result)
+        {
+            if (safe == nullptr) return;
+            if (result == 1) safe->addFxTo (safe->selected);
+            if (result == 2) safe->clearFx (safe->selected);
+        });
+    }
+
+    void showCircleMenu (int i)
+    {
+        const int target = panelMode == panelMaster ? -1 : selected;
+        const int n = engine.numFx (target);
+        PopupMenu menu;
+        menu.addItem (1, gr ("Αφαίρεση"));
+        menu.addItem (2, gr ("Μετακίνηση αριστερά"), i > 0);
+        menu.addItem (3, gr ("Μετακίνηση δεξιά"), i < n - 1);
+
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&header),
+                            [safe = SafePointer<MainComponent> (this), i, target] (int result)
+        {
+            if (safe == nullptr) return;
+            if (result == 1) safe->removeFxAt (target, i);
+            if (result == 2) safe->moveFxAt (target, i, -1);
+            if (result == 3) safe->moveFxAt (target, i, +1);
+        });
+    }
+
+    //==========================================================================
+    // φόρτωση plugins
+    void pickPlugin (const String& title, std::function<void (const PluginDescription&)> chosen)
+    {
+        chooser = std::make_unique<FileChooser> (title, File ("/Library/Audio/Plug-Ins"), "*.vst3;*.component");
 
         auto flags = FileBrowserComponent::openMode
                    | FileBrowserComponent::canSelectFiles
                    | FileBrowserComponent::canSelectDirectories;
 
-        chooser->launchAsync (flags, [this, slot] (const FileChooser& fc)
+        chooser->launchAsync (flags, [this, chosen] (const FileChooser& fc)
         {
             auto file = fc.getResult();
-            if (file != File())
-                loadFromFile (slot, file);
+            if (file == File()) return;
+
+            OwnedArray<PluginDescription> found;
+            auto path = file.getFullPathName();
+            for (auto* format : formatManager.getFormats())
+                if (format->fileMightContainThisPluginType (path))
+                    format->findAllTypesForFile (found, path);
+
+            if (found.isEmpty())
+            {
+                setMessage (gr ("Δεν βρέθηκε plugin σε αυτό το αρχείο."));
+                return;
+            }
+            chosen (*found.getFirst());
         });
     }
 
-    void loadFromFile (int block, const File& file)
+    int freeSlot() const
     {
-        OwnedArray<PluginDescription> found;
-        auto path = file.getFullPathName();
-
-        for (auto* format : formatManager.getFormats())
-            if (format->fileMightContainThisPluginType (path))
-                format->findAllTypesForFile (found, path);
-
-        if (found.isEmpty())
-        {
-            setMessage (gr ("Δεν βρέθηκε plugin σε αυτό το αρχείο."));
-            return;
-        }
-
-        loadPlugin (block, *found.getFirst(), MemoryBlock(), true, true);
+        for (int b = 0; b < flow::numBlocks; ++b)
+            if (! isActive (b) && ! loadingSlots.contains (b))
+                return b;
+        return -1;
     }
 
-    void setLoading (int block, bool loading)
+    void chooseAndLoadPlugin()
+    {
+        const int slot = freeSlot();
+        if (slot < 0)
+        {
+            setMessage (gr ("Δεν υπάρχει ελεύθερο block (μέγιστο 16)."));
+            return;
+        }
+        pickPlugin (gr ("Διάλεξε plugin (.vst3 ή .component)"), [this, slot] (const PluginDescription& d)
+        {
+            loadPlugin (slot, d, MemoryBlock(), true, true, nullptr);
+        });
+    }
+
+    void replaceInstrument()
+    {
+        if (! isActive (selected)) return;
+        const int slot = selected;
+        pickPlugin (gr ("Νέο instrument για το block ") + String (slot + 1), [this, slot] (const PluginDescription& d)
+        {
+            loadPlugin (slot, d, MemoryBlock(), false, false, nullptr);
+        });
+    }
+
+    void setLoading (const String& token, bool loading)
     {
         auto* settings = properties.getUserSettings();
         StringArray list;
-        list.addTokens (settings->getValue ("loadingBlocks"), ",", "");
+        list.addTokens (settings->getValue ("loadingTokens"), ",", "");
         list.removeEmptyStrings();
-        list.removeString (String (block));
-        if (loading) list.add (String (block));
-        settings->setValue ("loadingBlocks", list.joinIntoString (","));
+        list.removeString (token);
+        if (loading) list.add (token);
+        settings->setValue ("loadingTokens", list.joinIntoString (","));
         properties.saveIfNeeded();
-
-        if (loading) loadingSlots.addIfNotAlreadyThere (block);
-        else         loadingSlots.removeFirstMatchingValue (block);
     }
 
     // userLoad: το plugin φορτώθηκε τώρα από τον χρήστη -> νέο block, επιλέγεται και περιμένει ζώνη
-    void loadPlugin (int block, const PluginDescription& description, const MemoryBlock& state, bool userLoad, bool captureZone)
+    void loadPlugin (int block, const PluginDescription& description, const MemoryBlock& state, bool userLoad, bool captureZone,
+                     std::function<void()> after)
     {
-        setLoading (block, true);   // σημάδι ασφαλείας: αν κρασάρει, δεν ξαναφορτώνεται μόνο του
-
-        double sampleRate = engine.getSampleRate();
-        int bufferSize = 512;
-        if (auto* device = deviceManager.getCurrentAudioDevice())
-            bufferSize = device->getCurrentBufferSizeSamples();
+        const String token = "b" + String (block);
+        setLoading (token, true);   // σημάδι ασφαλείας: αν κρασάρει, δεν ξαναφορτώνεται μόνο του
+        loadingSlots.addIfNotAlreadyThere (block);
+        ++pendingLoads;
 
         SafePointer<MainComponent> safeThis (this);
 
-        formatManager.createPluginInstanceAsync (description, sampleRate, bufferSize,
-            [safeThis, block, description, state, userLoad, captureZone] (std::unique_ptr<AudioPluginInstance> instance, const String& error)
+        formatManager.createPluginInstanceAsync (description, engine.getSampleRate(), currentBufferSize(),
+            [safeThis, block, token, state, userLoad, captureZone, after] (std::unique_ptr<AudioPluginInstance> instance, const String& error)
             {
                 if (safeThis != nullptr)
-                    safeThis->pluginLoaded (block, std::move (instance), error, description, state, userLoad, captureZone);
+                    safeThis->pluginLoaded (block, token, std::move (instance), error, state, userLoad, captureZone, after);
             });
     }
 
-    void pluginLoaded (int block, std::unique_ptr<AudioPluginInstance> instance, const String& error,
-                       const PluginDescription& description, const MemoryBlock& state, bool userLoad, bool captureZone)
+    void pluginLoaded (int block, const String& token, std::unique_ptr<AudioPluginInstance> instance, const String& error,
+                       const MemoryBlock& state, bool userLoad, bool captureZone, std::function<void()> after)
     {
-        setLoading (block, false);
+        setLoading (token, false);
+        loadingSlots.removeFirstMatchingValue (block);
+        --pendingLoads;
 
         if (instance == nullptr)
         {
+            loadFailed = true;
             setMessage (gr ("Αποτυχία φόρτωσης: ") + error);
             return;
         }
 
-        if (editorBlock == block)
-            closeEditor();
+        closeEditor();
 
         if (userLoad)    // νέο block με καθαρές ρυθμίσεις
         {
@@ -881,46 +694,167 @@ private:
             engine.curveMode[(size_t) block] = 0;
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
+            engine.transpose[(size_t) block] = 0;
         }
 
-        descriptions[(size_t) block] = description;
         auto old = engine.swapPlugin (block, std::move (instance), captureZone);
+        if (old != nullptr) stateCache.erase (old.get());
         old.reset();
 
         if (state.getSize() > 0)
             if (auto* p = engine.getPlugin (block))
                 p->setStateInformation (state.getData(), (int) state.getSize());
 
-        if (userLoad || ! isActive (selected))
+        if (userLoad || ! isActive (selected) || block == pendingSelect)
         {
             selected = block;
             engine.selectedBlock = block;
+            if (userLoad) panelMode = panelInstrument;
         }
+        if (block == pendingSelect) pendingSelect = -1;
+
+        if (after) after();
 
         updateEditor();
         refreshAll();
         saveNow (true);
     }
 
-    void removeBlock (int block)
+    // aux plugin (MIDI FX / FX): φορτώνεται και παραδίδεται στο done
+    void loadAux (const PluginDescription& d, const MemoryBlock& state, const String& token, std::function<void (PluginPtr)> done)
+    {
+        setLoading (token, true);
+        ++pendingLoads;
+        SafePointer<MainComponent> safe (this);
+
+        formatManager.createPluginInstanceAsync (d, engine.getSampleRate(), currentBufferSize(),
+            [safe, token, state, done] (std::unique_ptr<AudioPluginInstance> inst, const String& error)
+            {
+                if (safe == nullptr) return;
+                safe->setLoading (token, false);
+                --safe->pendingLoads;
+                if (inst == nullptr)
+                {
+                    safe->loadFailed = true;
+                    safe->setMessage (gr ("Αποτυχία φόρτωσης: ") + error);
+                    return;
+                }
+                if (state.getSize() > 0)
+                    inst->setStateInformation (state.getData(), (int) state.getSize());
+                done (std::move (inst));
+            });
+    }
+
+    void loadMidiFxInto (int block)
+    {
+        if (! isActive (block)) return;
+        pickPlugin (gr ("Διάλεξε MIDI effect (.vst3 ή .component)"), [this, block] (const PluginDescription& d)
+        {
+            loadAux (d, MemoryBlock(), "b" + String (block) + "m", [this, block] (PluginPtr p)
+            {
+                if (! isActive (block)) return;
+                closeEditor();
+                auto old = engine.setMidiFx (block, std::move (p));
+                if (old != nullptr) stateCache.erase (old.get());
+                old.reset();
+                selected = block;
+                engine.selectedBlock = block;
+                panelMode = panelMidiFx;
+                updateEditor();
+                refreshAll();
+                saveNow (true);
+            });
+        });
+    }
+
+    void removeMidiFx (int block)
+    {
+        if (! isActive (block) || engine.getMidiFx (block) == nullptr) return;
+        closeEditor();
+        auto old = engine.setMidiFx (block, nullptr);
+        if (old != nullptr) stateCache.erase (old.get());
+        old.reset();
+        updateEditor();
+        refreshAll();
+        saveNow (true);
+    }
+
+    // target: block 0..15 ή -1 για master
+    void addFxTo (int target)
+    {
+        if (target >= 0 && ! isActive (target)) { setMessage (gr ("Φόρτωσε πρώτα ένα instrument (VST)")); return; }
+        if (engine.numFx (target) >= maxFxPerChain) { setMessage (gr ("Μέγιστο 8 effects ανά αλυσίδα")); return; }
+
+        pickPlugin (target < 0 ? gr ("Master FX: διάλεξε effect") : gr ("FX: διάλεξε effect"), [this, target] (const PluginDescription& d)
+        {
+            loadAux (d, MemoryBlock(), "f" + String (target) + "_" + String (engine.numFx (target)), [this, target] (PluginPtr p)
+            {
+                if (target >= 0 && ! isActive (target)) return;
+                closeEditor();
+                engine.addFx (target, std::move (p));
+                if (target < 0) panelMode = panelMaster;
+                else { panelMode = panelFx; selected = target; engine.selectedBlock = target; }
+                panelIndex = engine.numFx (target) - 1;
+                updateEditor();
+                refreshAll();
+                saveNow (true);
+            });
+        });
+    }
+
+    void removeFxAt (int target, int i)
+    {
+        closeEditor();
+        auto old = engine.removeFx (target, i);
+        if (old != nullptr) stateCache.erase (old.get());
+        old.reset();
+        updateEditor();
+        refreshAll();
+        saveNow (true);
+    }
+
+    void clearFx (int target)
+    {
+        closeEditor();
+        while (engine.numFx (target) > 0)
+        {
+            auto old = engine.removeFx (target, 0);
+            if (old != nullptr) stateCache.erase (old.get());
+        }
+        updateEditor();
+        refreshAll();
+        saveNow (true);
+    }
+
+    void moveFxAt (int target, int i, int dir)
+    {
+        closeEditor();
+        engine.moveFx (target, i, dir);
+        panelIndex = jlimit (0, juce::jmax (0, engine.numFx (target) - 1), i + dir);
+        updateEditor();
+        refreshAll();
+        saveNow (true);
+    }
+
+    void removeBlock (int block, bool save = true)
     {
         if (! isActive (block)) return;
 
-        if (editorBlock == block)
-            closeEditor();
+        closeEditor();
+
+        auto extras = engine.takeExtras (block);
+        for (auto& p : extras) stateCache.erase (p.get());
+        extras.clear();
 
         auto old = engine.swapPlugin (block, nullptr);
+        if (old != nullptr) stateCache.erase (old.get());
         old.reset();
-        descriptions[(size_t) block] = PluginDescription();
 
         engine.holdMode[(size_t) block] = 0;
         engine.curveMode[(size_t) block] = 0;
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
-
-        auto* settings = properties.getUserSettings();
-        for (auto key : { "desc", "state", "lo", "hi", "seq", "zone", "hold", "curve", "vol", "vmap" })
-            settings->removeValue ("b" + String (block) + "_" + key);
+        engine.transpose[(size_t) block] = 0;
 
         if (selected == block)
         {
@@ -928,21 +862,36 @@ private:
             engine.selectedBlock = selected;
         }
 
-        updateEditor();
-        refreshAll();
-        saveNow();
+        if (save)
+        {
+            updateEditor();
+            refreshAll();
+            saveNow();
+        }
     }
 
     void showZoneMenu (int b)
     {
         PopupMenu menu;
         menu.addItem (1, gr ("Ορισμός ζώνης ξανά"));
+        menu.addItem (2, gr ("Transpose +1 οκτάβα"));
+        menu.addItem (3, gr ("Transpose -1 οκτάβα"));
+        menu.addItem (4, gr ("Transpose 0"));
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardView),
                             [safe = SafePointer<MainComponent> (this), b] (int result)
         {
-            if (safe == nullptr || result != 1) return;
-            safe->selectBlock (b);
-            safe->engine.startZone (b);
+            if (safe == nullptr || result == 0) return;
+            if (result == 1)
+            {
+                safe->selectBlock (b);
+                safe->engine.startZone (b);
+            }
+            else
+            {
+                auto& t = safe->engine.transpose[(size_t) b];
+                t = result == 2 ? jlimit (-48, 48, t.load() + 12) : result == 3 ? jlimit (-48, 48, t.load() - 12) : 0;
+                safe->saveNow();
+            }
             safe->refreshAll();
         });
     }
@@ -975,10 +924,199 @@ private:
     }
 
     //==========================================================================
+    // μενού Rec MIDI loop (quantize), metronome, π / -
+    void showRecMenu()
+    {
+        const int code = engine.mapCode[flow::ctlRec].load();
+        const int sq = engine.startQ.load(), lq = engine.lengthQ.load(), nq = engine.snapQ.load();
+
+        PopupMenu startMenu, lenMenu, snapMenu;
+        startMenu.addItem (10, "Off", true, sq == 0);
+        startMenu.addItem (11, "Beat", true, sq == 1);
+        startMenu.addItem (12, "Bar", true, sq == 2);
+        lenMenu.addItem (20, "Off", true, lq == 0);
+        lenMenu.addItem (21, "Beat", true, lq == 1);
+        lenMenu.addItem (22, "Bar", true, lq == 2);
+        snapMenu.addItem (30, "Off", true, nq == 0);
+        snapMenu.addItem (31, "1/8", true, nq == 1);
+        snapMenu.addItem (32, "1/16", true, nq == 2);
+
+        PopupMenu menu;
+        menu.addSubMenu (gr ("Start quantize (η αρχή του Rec MIDI loop)"), startMenu);
+        menu.addSubMenu (gr ("Length quantize (το μήκος του loop)"), lenMenu);
+        menu.addSubMenu (gr ("Snap νοτών"), snapMenu);
+        menu.addSeparator();
+        menu.addItem (40, gr ("Ανάθεση πεταλιού (MIDI learn)"));
+        menu.addItem (41, gr ("Αφαίρεση ανάθεσης"), code != 0);
+        if (code != 0) menu.addItem (42, gr ("Τώρα: ") + pedalCodeText (code), false);
+
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&recTile),
+                            [safe = SafePointer<MainComponent> (this)] (int r)
+        {
+            if (safe == nullptr || r == 0) return;
+            auto& e = safe->engine;
+            if (r >= 10 && r <= 12) e.startQ = r - 10;
+            if (r >= 20 && r <= 22) e.lengthQ = r - 20;
+            if (r >= 30 && r <= 32) e.snapQ = r - 30;
+            if (r == 40) safe->startPedalLearn (flow::ctlRec);
+            if (r == 41) e.mapCode[flow::ctlRec] = 0;
+            safe->saveNow();
+        });
+    }
+
+    void showMetroMenu()
+    {
+        const int code = engine.mapCode[flow::ctlMetro].load();
+        const float level = engine.metroLevel.load();
+        const int outs = engine.numOutChannels.load();
+        const int cur = engine.metroChannel.load();
+
+        PopupMenu levelMenu, outMenu;
+        const float levels[4] { 0.25f, 0.5f, 0.75f, 1.0f };
+        for (int i = 0; i < 4; ++i)
+            levelMenu.addItem (10 + i, String ((int) (levels[i] * 100)) + "%", true, std::abs (level - levels[i]) < 0.13f && (i == 3 || std::abs (level - levels[i]) <= std::abs (level - levels[i + 1])));
+        for (int c = 0; c < outs; ++c)
+            outMenu.addItem (100 + c, gr ("Έξοδος ") + String (c + 1), true, c == cur);
+
+        PopupMenu menu;
+        menu.addItem (1, gr ("Διάλεξε δικό μου ήχο (sample)…"));
+        menu.addItem (2, gr ("Προεπιλεγμένος ήχος"), metroSamplePath.isNotEmpty());
+        menu.addSubMenu (gr ("Ένταση"), levelMenu);
+        menu.addSubMenu (gr ("Έξοδος ακουστικών"), outMenu);
+        menu.addSeparator();
+        menu.addItem (40, gr ("Ανάθεση πλήκτρου ή πεταλιού (MIDI learn)"));
+        menu.addItem (41, gr ("Αφαίρεση ανάθεσης"), code != 0);
+        if (code != 0) menu.addItem (42, gr ("Τώρα: ") + pedalCodeText (code), false);
+
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&metroTile),
+                            [safe = SafePointer<MainComponent> (this), levels] (int r)
+        {
+            if (safe == nullptr || r == 0) return;
+            auto& e = safe->engine;
+            if (r == 1) safe->chooseMetroSample();
+            if (r == 2)
+            {
+                safe->metroSamplePath = {};
+                e.setMetroSample (AudioBuffer<float>());
+            }
+            if (r >= 10 && r <= 13) e.metroLevel = levels[r - 10];
+            if (r >= 100) e.metroChannel = r - 100;
+            if (r == 40) safe->startPedalLearn (flow::ctlMetro);
+            if (r == 41) e.mapCode[flow::ctlMetro] = 0;
+            safe->saveNow();
+        });
+    }
+
+    void showPiMenu()
+    {
+        const int pcode = engine.mapCode[flow::ctlPanic].load();
+        PopupMenu menu;
+        menu.addItem (1, gr ("Ρυθμίσεις ήχου και MIDI…"));
+        menu.addSeparator();
+        menu.addItem (2, gr ("Αποθήκευση set…"));
+        menu.addItem (3, gr ("Φόρτωση set…"));
+        menu.addSeparator();
+        menu.addItem (4, gr ("Panic: σίγαση κολλημένων νοτών (Esc)"));
+        menu.addItem (5, gr ("Panic: ανάθεση πεταλιού ή πλήκτρου (MIDI learn)"));
+        menu.addItem (6, gr ("Panic: αφαίρεση ανάθεσης"), pcode != 0);
+        if (pcode != 0) menu.addItem (7, gr ("Panic τώρα: ") + pedalCodeText (pcode), false);
+        menu.addSeparator();
+        menu.addItem (8, "Ableton Link" + (LinkBridge::isAvailable() ? String() : gr (" (δεν περιλαμβάνεται σε αυτό το build)")),
+                      LinkBridge::isAvailable(), engine.isLinkEnabled());
+
+        const Rectangle<int> area (getScreenX() + getWidth() / 2 - 40, getScreenY() + 4, 80, 28);
+        menu.showMenuAsync (PopupMenu::Options().withTargetScreenArea (area),
+                            [safe = SafePointer<MainComponent> (this)] (int r)
+        {
+            if (safe == nullptr || r == 0) return;
+            if (r == 1) safe->openAudioSettings();
+            if (r == 2) safe->saveSetToFile();
+            if (r == 3) safe->loadSetFromFile();
+            if (r == 4) safe->doPanic();
+            if (r == 5) safe->startPedalLearn (flow::ctlPanic);
+            if (r == 6) safe->engine.mapCode[flow::ctlPanic] = 0;
+            if (r == 8)
+            {
+                const bool on = ! safe->engine.isLinkEnabled();
+                safe->engine.setLinkEnabled (on);
+                safe->setMessage (on ? gr ("Ableton Link: ενεργό") : gr ("Ableton Link: ανενεργό"));
+            }
+            safe->saveNow();
+        });
+    }
+
+    void doPanic()
+    {
+        engine.panic();
+        setMessage ("Panic");
+    }
+
+    //==========================================================================
+    // metronome
+    void toggleMetronome()
+    {
+        if (! engine.metroOn.load() && engine.numOutChannels.load() <= engine.metroChannel.load())
+        {
+            setMessage (gr ("Metronome: η έξοδος ") + String (engine.metroChannel.load() + 1)
+                        + gr (" δεν υπάρχει. Άνοιξε το π / - και ενεργοποίησε περισσότερες εξόδους"));
+            return;
+        }
+        engine.metroOn = ! engine.metroOn.load();
+    }
+
+    void chooseMetroSample()
+    {
+        chooser = std::make_unique<FileChooser> (gr ("Ήχος για το metronome (wav, aiff, mp3...)"),
+                                                 File::getSpecialLocation (File::userMusicDirectory), "*.wav;*.aif;*.aiff;*.mp3;*.flac;*.m4a");
+        chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles, [this] (const FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f != File()) { loadMetroSample (f, true); saveNow(); }
+        });
+    }
+
+    void loadMetroSample (const File& f, bool report)
+    {
+        AudioFormatManager fm;
+        fm.registerBasicFormats();
+        std::unique_ptr<AudioFormatReader> reader (fm.createReaderFor (f));
+        if (reader == nullptr || reader->lengthInSamples <= 0)
+        {
+            if (report) setMessage (gr ("Δεν μπόρεσα να διαβάσω αυτό το αρχείο ήχου"));
+            return;
+        }
+
+        const int maxLen = (int) jmin<int64> (reader->lengthInSamples, (int64) (reader->sampleRate * 4.0));
+        AudioBuffer<float> raw ((int) reader->numChannels, maxLen);
+        reader->read (&raw, 0, maxLen, 0, true, true);
+
+        AudioBuffer<float> mono (1, maxLen);
+        mono.clear();
+        for (int c = 0; c < raw.getNumChannels(); ++c)
+            mono.addFrom (0, 0, raw, c, 0, maxLen, 1.0f / (float) raw.getNumChannels());
+
+        const double ratio = reader->sampleRate / jmax (1.0, engine.getSampleRate());
+        const int outLen = jmax (1, (int) std::floor ((double) maxLen / ratio));
+        AudioBuffer<float> out (1, outLen);
+        for (int i = 0; i < outLen; ++i)
+        {
+            const double pos = (double) i * ratio;
+            const int i0 = jmin (maxLen - 1, (int) pos);
+            const int i1 = jmin (maxLen - 1, i0 + 1);
+            const float frac = (float) (pos - (double) i0);
+            out.setSample (0, i, mono.getSample (0, i0) * (1.0f - frac) + mono.getSample (0, i1) * frac);
+        }
+
+        metroSamplePath = f.getFullPathName();
+        engine.setMetroSample (std::move (out));
+        if (report) setMessage (gr ("Metronome: ") + f.getFileName());
+    }
+
+    //==========================================================================
     void openAudioSettings()
     {
-        auto* selector = new AudioDeviceSelectorComponent (deviceManager, 0, 0, 0, 2, true, false, true, false);
-        selector->setSize (500, 450);
+        auto* selector = new AudioDeviceSelectorComponent (deviceManager, 0, 0, 0, 16, true, false, false, false);
+        selector->setSize (520, 520);
 
         DialogWindow::LaunchOptions options;
         options.content.setOwned (selector);
@@ -993,7 +1131,7 @@ private:
 
     void chooseTapeFolder()
     {
-        chooser = std::make_unique<FileChooser> (gr ("Φάκελος για τα WAV του Tape Recorder"), engine.recorder.getFolder());
+        chooser = std::make_unique<FileChooser> (gr ("Φάκελος για τα Rec Audio (zip)"), engine.recorder.getFolder());
 
         chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectDirectories,
                               [this] (const FileChooser& fc)
@@ -1008,12 +1146,270 @@ private:
     }
 
     //==========================================================================
-    // αποθήκευση: όλες οι αναθέσεις, ζώνες, καμπύλες, εντάσεις και plugins σώζονται μόλις αλλάξουν.
-    // Η κατάσταση (preset) των plugins σώζεται όταν φορτώνεται, κάθε 20 δευτερόλεπτα και στο κλείσιμο.
-    void saveNow (bool withStates = false)
+    // set: όλα τα blocks (plugins με state, ζώνες, hold, καμπύλες, εντάσεις, transpose, MIDI FX, FX, νότες των loops) + master FX
+    String stateString (AudioPluginInstance* p, bool fresh)
     {
-        saveSettings (withStates);
+        auto it = stateCache.find (p);
+        if (! fresh && it != stateCache.end()) return it->second;
+        MemoryBlock state;
+        p->getStateInformation (state);
+        const auto s = state.toBase64Encoding();
+        stateCache[p] = s;
+        return s;
     }
+
+    XmlElement* pluginElement (XmlElement& parent, const String& tag, AudioPluginInstance* p, bool fresh)
+    {
+        auto* wrapper = parent.createNewChildElement (tag);
+        if (auto d = p->getPluginDescription().createXml())
+        {
+            d->setAttribute ("state", stateString (p, fresh));
+            wrapper->addChildElement (d.release());
+        }
+        return wrapper;
+    }
+
+    static String loopToText (const std::vector<flow::LoopEvent>& ev)
+    {
+        StringArray tokens;
+        for (auto& e : ev)
+            tokens.add (String (e.phase, 6) + ":" + String (e.on ? 1 : 0) + ":" + String (e.note) + ":" + String (e.vel));
+        return tokens.joinIntoString (" ");
+    }
+
+    static std::vector<flow::LoopEvent> loopFromText (const String& text)
+    {
+        std::vector<flow::LoopEvent> ev;
+        StringArray tokens;
+        tokens.addTokens (text, " ", "");
+        for (auto& t : tokens)
+        {
+            StringArray f;
+            f.addTokens (t, ":", "");
+            if (f.size() == 4)
+                ev.push_back ({ f[0].getDoubleValue(), f[1].getIntValue() != 0, jlimit (0, 127, f[2].getIntValue()), jlimit (0, 127, f[3].getIntValue()) });
+        }
+        return ev;
+    }
+
+    std::unique_ptr<XmlElement> createSetXml (bool fresh, bool withLoops)
+    {
+        auto root = std::make_unique<XmlElement> ("FlowSet");
+        root->setAttribute ("version", 1);
+        root->setAttribute ("tempo", engine.tempo.load());
+        root->setAttribute ("startQ", engine.startQ.load());
+        root->setAttribute ("lengthQ", engine.lengthQ.load());
+        root->setAttribute ("snapQ", engine.snapQ.load());
+        root->setAttribute ("selected", selected);
+
+        for (int b = 0; b < flow::numBlocks; ++b)
+        {
+            if (! isActive (b)) continue;
+            auto* e = root->createNewChildElement ("Block");
+            e->setAttribute ("slot", b);
+            e->setAttribute ("lo", engine.lo[(size_t) b].load());
+            e->setAttribute ("hi", engine.hi[(size_t) b].load());
+            e->setAttribute ("seq", engine.zoneSeq[(size_t) b].load());
+            e->setAttribute ("zone", engine.zoneState[(size_t) b].load() == 0 ? 1 : 0);
+            e->setAttribute ("hold", engine.holdMode[(size_t) b].load());
+            e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
+            e->setAttribute ("vol", (double) engine.volPos[(size_t) b].load());
+            e->setAttribute ("vmap", engine.volMap[(size_t) b].load());
+            e->setAttribute ("tr", engine.transpose[(size_t) b].load());
+
+            pluginElement (*e, "Instrument", engine.getPlugin (b), fresh);
+            if (auto* m = engine.getMidiFx (b)) pluginElement (*e, "MidiFx", m, fresh);
+            for (int k = 0; k < engine.numFx (b); ++k) pluginElement (*e, "Fx", engine.getFx (b, k), fresh);
+
+            flow::LoopSnapshot snap;
+            if (withLoops && engine.getLoop (b, snap))
+            {
+                auto* l = e->createNewChildElement ("Loop");
+                l->setAttribute ("beats", snap.beats);
+                l->setAttribute ("mute", (int) snap.mute);
+                for (auto& layer : snap.layers)
+                    l->createNewChildElement ("Layer")->addTextElement (loopToText (layer));
+            }
+        }
+
+        auto* master = root->createNewChildElement ("Master");
+        for (int k = 0; k < engine.numFx (-1); ++k)
+            pluginElement (*master, "Fx", engine.getFx (-1, k), fresh);
+
+        return root;
+    }
+
+    struct PluginEntry { PluginDescription desc; MemoryBlock state; bool ok = false; };
+
+    static PluginEntry readPluginEntry (const XmlElement* wrapper)
+    {
+        PluginEntry pe;
+        if (wrapper == nullptr) return pe;
+        if (auto* d = wrapper->getFirstChildElement())
+        {
+            pe.ok = pe.desc.loadFromXml (*d);
+            pe.state.fromBase64Encoding (d->getStringAttribute ("state"));
+        }
+        return pe;
+    }
+
+    void clearEverything()
+    {
+        closeEditor();
+        for (int b = 0; b < flow::numBlocks; ++b)
+            removeBlock (b, false);
+        clearFx (-1);
+        panelMode = panelInstrument;
+        panelIndex = 0;
+    }
+
+    void applySet (const XmlElement& root, const StringArray& crashed)
+    {
+        clearEverything();
+
+        engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 120.0));
+        engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 0));
+        engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 0));
+        engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 0));
+        pendingSelect = root.getIntAttribute ("selected", 0);
+
+        for (auto* e : root.getChildWithTagNameIterator ("Block"))
+        {
+            const int slot = e->getIntAttribute ("slot", -1);
+            if (slot < 0 || slot >= flow::numBlocks) continue;
+
+            auto inst = readPluginEntry (e->getChildByName ("Instrument"));
+            if (! inst.ok) continue;
+
+            if (crashed.contains ("b" + String (slot)))
+            {
+                setMessage (gr ("Ένα plugin δεν φορτώθηκε σωστά την τελευταία φορά και παραλείφθηκε."));
+                continue;
+            }
+
+            engine.holdMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("hold", 0));
+            engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
+            engine.volPos[(size_t) slot]    = (float) jlimit (0.0, 1.0, e->getDoubleAttribute ("vol", 1.0));
+            engine.volMap[(size_t) slot]    = e->getIntAttribute ("vmap", 0);
+            engine.transpose[(size_t) slot] = jlimit (-48, 48, e->getIntAttribute ("tr", 0));
+
+            const bool hasZone = e->getIntAttribute ("zone", 0) != 0;
+            engine.setZone (slot, e->getIntAttribute ("lo", flow::lowestNote), e->getIntAttribute ("hi", flow::lowestNote),
+                            e->getIntAttribute ("seq", 0));
+
+            auto copy = std::make_shared<XmlElement> (*e);
+            auto crashedCopy = crashed;
+            loadPlugin (slot, inst.desc, inst.state, false, ! hasZone,
+                        [this, slot, copy, crashedCopy] { loadExtras (slot, *copy, crashedCopy); });
+        }
+
+        if (auto* m = root.getChildByName ("Master"))
+        {
+            auto items = std::make_shared<std::vector<PluginEntry>>();
+            for (auto* f : m->getChildWithTagNameIterator ("Fx"))
+            {
+                auto pe = readPluginEntry (f);
+                if (pe.ok && ! crashed.contains ("f-1_" + String ((int) items->size()))) items->push_back (std::move (pe));
+            }
+            loadFxSequence (-1, items, 0);
+        }
+    }
+
+    void loadExtras (int slot, const XmlElement& e, const StringArray& crashed)
+    {
+        if (! isActive (slot)) return;
+
+        auto mfx = readPluginEntry (e.getChildByName ("MidiFx"));
+        if (mfx.ok && ! crashed.contains ("b" + String (slot) + "m"))
+        {
+            loadAux (mfx.desc, mfx.state, "b" + String (slot) + "m", [this, slot] (PluginPtr p)
+            {
+                if (! isActive (slot)) return;
+                closeEditor();
+                engine.setMidiFx (slot, std::move (p)).reset();
+                updateEditor();
+                refreshAll();
+                saveNow (true);
+            });
+        }
+
+        auto items = std::make_shared<std::vector<PluginEntry>>();
+        for (auto* f : e.getChildWithTagNameIterator ("Fx"))
+        {
+            auto pe = readPluginEntry (f);
+            if (pe.ok && ! crashed.contains ("f" + String (slot) + "_" + String ((int) items->size()))) items->push_back (std::move (pe));
+        }
+        loadFxSequence (slot, items, 0);
+
+        if (auto* l = e.getChildByName ("Loop"))
+        {
+            flow::LoopSnapshot snap;
+            snap.beats = l->getDoubleAttribute ("beats", 0.0);
+            snap.mute = (unsigned) l->getIntAttribute ("mute", 0);
+            for (auto* layer : l->getChildWithTagNameIterator ("Layer"))
+                snap.layers.push_back (loopFromText (layer->getAllSubText()));
+            if (snap.beats > 0.0 && ! snap.layers.empty())
+                engine.setLoop (slot, snap);
+        }
+    }
+
+    void loadFxSequence (int target, std::shared_ptr<std::vector<PluginEntry>> items, size_t i)
+    {
+        if (i >= items->size()) return;
+        if (target >= 0 && ! isActive (target)) return;
+
+        auto& pe = (*items)[i];
+        loadAux (pe.desc, pe.state, "f" + String (target) + "_" + String ((int) i), [this, target, items, i] (PluginPtr p)
+        {
+            if (target >= 0 && ! isActive (target)) return;
+            closeEditor();
+            engine.addFx (target, std::move (p));
+            updateEditor();
+            refreshAll();
+            saveNow (true);
+            loadFxSequence (target, items, i + 1);
+        });
+    }
+
+    void saveSetToFile()
+    {
+        auto dir = File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Sets");
+        dir.createDirectory();
+        chooser = std::make_unique<FileChooser> (gr ("Αποθήκευση set"), dir.getChildFile ("Set.flowset"), "*.flowset");
+        chooser->launchAsync (FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles | FileBrowserComponent::warnAboutOverwriting,
+                              [this] (const FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f == File()) return;
+            f = f.withFileExtension ("flowset");
+            auto xml = createSetXml (true, true);
+            if (xml->writeTo (f)) setMessage (gr ("Αποθηκεύτηκε: ") + f.getFileName());
+            else                  setMessage (gr ("Δεν μπόρεσα να γράψω το αρχείο"));
+        });
+    }
+
+    void loadSetFromFile()
+    {
+        auto dir = File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Sets");
+        chooser = std::make_unique<FileChooser> (gr ("Φόρτωση set"), dir, "*.flowset");
+        chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles, [this] (const FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f == File()) return;
+            std::unique_ptr<XmlElement> xml (XmlDocument::parse (f));
+            if (xml == nullptr || ! xml->hasTagName ("FlowSet"))
+            {
+                setMessage (gr ("Αυτό δεν είναι set του Flow"));
+                return;
+            }
+            applySet (*xml, {});
+            setMessage (gr ("Φορτώθηκε: ") + f.getFileName());
+        });
+    }
+
+    //==========================================================================
+    // αυτόματη αποθήκευση της τελευταίας κατάστασης
+    void saveNow (bool withStates = false) { saveSettings (withStates); }
 
     void saveSettings (bool withStates)
     {
@@ -1021,34 +1417,19 @@ private:
 
         std::unique_ptr<XmlElement> audioState (deviceManager.createStateXml());
         settings->setValue ("audioDeviceState", audioState.get());
-        settings->setValue ("selectedBlock", selected);
         settings->setValue ("tapeFolder", engine.recorder.getFolder().getFullPathName());
+        settings->setValue ("metroLevel", (double) engine.metroLevel.load());
+        settings->setValue ("metroChannel", engine.metroChannel.load());
+        settings->setValue ("metroSample", metroSamplePath);
+        settings->setValue ("link", engine.isLinkEnabled());
 
         for (int i = 0; i < flow::numControls; ++i)
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
 
-        for (int b = 0; b < flow::numBlocks; ++b)
+        if (pendingLoads == 0)    // όσο φορτώνονται plugins δεν αντικαθιστούμε το session (θα χανόταν ό,τι δεν έχει φορτώσει ακόμη)
         {
-            if (! isActive (b)) continue;
-            const String n = "b" + String (b) + "_";
-
-            settings->setValue (n + "desc", descriptions[(size_t) b].createXml().get());
-            settings->setValue (n + "lo", engine.lo[(size_t) b].load());
-            settings->setValue (n + "hi", engine.hi[(size_t) b].load());
-            settings->setValue (n + "seq", engine.zoneSeq[(size_t) b].load());
-            settings->setValue (n + "zone", engine.zoneState[(size_t) b].load() == 0 ? 1 : 0);
-            settings->setValue (n + "hold", engine.holdMode[(size_t) b].load());
-            settings->setValue (n + "curve", engine.curveMode[(size_t) b].load());
-            settings->setValue (n + "vol", (double) engine.volPos[(size_t) b].load());
-            settings->setValue (n + "vmap", engine.volMap[(size_t) b].load());
-
-            if (withStates)
-                if (auto* p = engine.getPlugin (b))
-                {
-                    MemoryBlock state;
-                    p->getStateInformation (state);
-                    settings->setValue (n + "state", state.toBase64Encoding());
-                }
+            auto xml = createSetXml (withStates, false);
+            settings->setValue ("session", xml.get());
         }
 
         properties.saveIfNeeded();
@@ -1056,54 +1437,30 @@ private:
         lastSaveMs = Time::getMillisecondCounter();
     }
 
-    void restorePlugins()
+    void restoreSession()
     {
         auto* settings = properties.getUserSettings();
 
         StringArray crashed;
-        crashed.addTokens (settings->getValue ("loadingBlocks"), ",", "");
+        crashed.addTokens (settings->getValue ("loadingTokens"), ",", "");
         crashed.removeEmptyStrings();
-        settings->setValue ("loadingBlocks", "");
+        settings->setValue ("loadingTokens", "");
         properties.saveIfNeeded();
 
-        for (int b = 0; b < flow::numBlocks; ++b)
-        {
-            const String n = "b" + String (b) + "_";
-            if (! settings->containsKey (n + "desc")) continue;
+        std::unique_ptr<XmlElement> xml (settings->getXmlValue ("session"));
+        if (xml == nullptr || ! xml->hasTagName ("FlowSet")) return;
 
-            if (crashed.contains (String (b)))
-            {
-                setMessage (gr ("Ένα plugin δεν φορτώθηκε σωστά την τελευταία φορά και παραλείφθηκε."));
-                settings->removeValue (n + "desc");
-                continue;
-            }
+        settings->setValue ("sessionBackup", xml.get());   // αντίγραφο ασφαλείας αν κάτι δεν φορτώσει
+        properties.saveIfNeeded();
 
-            std::unique_ptr<XmlElement> xml (settings->getXmlValue (n + "desc"));
-            if (xml == nullptr) continue;
-
-            PluginDescription description;
-            if (! description.loadFromXml (*xml)) continue;
-
-            MemoryBlock state;
-            state.fromBase64Encoding (settings->getValue (n + "state"));
-
-            engine.holdMode[(size_t) b]  = jlimit (0, 2, settings->getIntValue (n + "hold", 0));
-            engine.curveMode[(size_t) b] = jlimit (0, flow::numCurves - 1, settings->getIntValue (n + "curve", 0));
-            engine.volPos[(size_t) b]    = (float) jlimit (0.0, 1.0, settings->getDoubleValue (n + "vol", 1.0));
-            engine.volMap[(size_t) b]    = settings->getIntValue (n + "vmap", 0);
-
-            const bool hasZone = settings->getIntValue (n + "zone", 0) != 0;
-            engine.setZone (b, settings->getIntValue (n + "lo", flow::lowestNote), settings->getIntValue (n + "hi", flow::lowestNote),
-                            settings->getIntValue (n + "seq", 0));
-
-            loadPlugin (b, description, state, false, ! hasZone);
-        }
+        applySet (*xml, crashed);
+        engine.tempo = jlimit (40.0, 240.0, xml->getDoubleAttribute ("tempo", 120.0));
     }
 
     //==========================================================================
     static const char* controlName (int i)
     {
-        static const char* const names[flow::numControls] = { "Hold", "Rec / Play / Overdub", "Undo", "Stop", "Tape Recorder" };
+        static const char* const names[flow::numControls] = { "Hold", "Rec MIDI loop / Play / Overdub", "Undo", "Stop", "Rec Audio", "Metronome", "Panic" };
         return names[i];
     }
 
@@ -1137,11 +1494,12 @@ private:
     {
         switch (i)
         {
-            case flow::ctlHold: return &holdTile;
-            case flow::ctlRec:  return &recTile;
-            case flow::ctlUndo: return &undoTile;
-            case flow::ctlStop: return &stopTile;
-            default:            return &tapeTile;
+            case flow::ctlHold:  return &holdTile;
+            case flow::ctlRec:   return &recTile;
+            case flow::ctlUndo:  return &undoTile;
+            case flow::ctlStop:  return &stopTile;
+            case flow::ctlMetro: return &metroTile;
+            default:             return &tapeTile;
         }
     }
 
@@ -1149,7 +1507,10 @@ private:
     {
         engine.cancelLearns();
         engine.mapLearnTarget = i;
-        setMessage (gr ("Πάτησε το πετάλι για: ") + controlName (i));
+        if (i == flow::ctlMetro || i == flow::ctlPanic)
+            setMessage (gr ("Πάτησε ένα ελεύθερο πλήκτρο ή πετάλι για: ") + controlName (i));
+        else
+            setMessage (gr ("Πάτησε το πετάλι για: ") + controlName (i));
     }
 
     void setMessage (const String& m) { message = m; messageTicks = 300; }
@@ -1158,8 +1519,16 @@ private:
     {
         const int sel = selected;
         const bool valid = isActive (sel);
+        const double t = Time::getMillisecondCounterHiRes() * 0.001;
 
-        vstTile.setIconColour (valid ? hobby::kOn : hobby::kIconGrey);
+        // κουμπιά plugin: πράσινο = αυτό που δείχνει τώρα ο editor. Τελείες: υπάρχει plugin / πόσα FX
+        const bool hasMfx = valid && engine.getMidiFx (sel) != nullptr;
+        const int nfx = valid ? engine.numFx (sel) : 0;
+        vstTile.setIconColour (valid && panelMode == panelInstrument ? hobby::kOn : hobby::kIconGrey);
+        mfxTile.setIconColour (hasMfx && panelMode == panelMidiFx ? hobby::kOn : hobby::kIconGrey);
+        mfxTile.setDots (hasMfx ? 1 : 0);
+        fxTile.setIconColour (nfx > 0 && panelMode == panelFx ? hobby::kOn : hobby::kIconGrey);
+        fxTile.setDots (jmin (nfx, 3));
 
         const int hold = valid ? engine.holdMode[(size_t) sel].load() : 0;
         holdTile.setDots (hold);
@@ -1170,7 +1539,6 @@ private:
         const int loop = valid ? engine.loopStateOut[(size_t) sel].load() : (int) flow::loopOff;
         const int mute = valid ? engine.loopMuteOut[(size_t) sel].load() : 0;
         const int taps = valid ? engine.loopTapsOut[(size_t) sel].load() : 0;
-        const double t = Time::getMillisecondCounterHiRes() * 0.001;
 
         Symbol recSymbol = Symbol::PadRecord;
         Colour recColour = hobby::kIconGrey;
@@ -1193,6 +1561,26 @@ private:
             case RecorderEngine::State::Error:     tapeTile.setIconColour (hobby::kCoral); break;
             default:                               tapeTile.setIconColour (hobby::kIconGrey); break;
         }
+
+        metroTile.setIconColour (engine.metroOn.load() ? hobby::kOn : hobby::kIconGrey);
+
+        // κεφαλίδα πάνελ
+        const bool master = panelMode == panelMaster;
+        String title;
+        if (master)            title = "MASTER FX";
+        else if (! valid)      title = "VST";
+        else if (panelMode == panelMidiFx) title = "BLOCK " + String (sel + 1) + " / MIDI FX";
+        else if (panelMode == panelFx)     title = "BLOCK " + String (sel + 1) + " / FX";
+        else                               title = "BLOCK " + String (sel + 1) + " / VST";
+        header.title = title;
+        header.accent = valid ? blockLight (sel) : hobby::kIconGrey;
+        header.masterMode = master;
+        header.numCircles = master ? engine.numFx (-1) : (valid ? engine.numFx (sel) : 0);
+        header.activeCircle = (master || panelMode == panelFx) ? panelIndex : -1;
+        header.canAdd = (master || valid) && header.numCircles < maxFxPerChain;
+        cpuSmooth = 0.85f * cpuSmooth + 0.15f * (float) deviceManager.getCpuUsage();
+        header.cpu = cpuSmooth;
+        header.repaint();
 
         loopsView.repaint();
         keyboardView.repaint();
@@ -1223,7 +1611,7 @@ private:
                         + pedalCodeText (engine.volLearnedCode.load()));
         }
 
-        // αλλαγές από πετάλια (hold, ένταση, αναθέσεις, ζώνες) και από το ποντίκι σώζονται άμεσα (με όριο ρυθμού)
+        // αλλαγές από πετάλια (hold, ένταση, αναθέσεις, ζώνες, tempo) και από το ποντίκι σώζονται άμεσα (με όριο ρυθμού)
         const int cc = engine.changeCount.load();
         if (cc != lastChange) { lastChange = cc; dirty = true; }
         if (dirty && Time::getMillisecondCounter() - lastSaveMs > 400)
@@ -1237,7 +1625,7 @@ private:
 
         refreshAll();
 
-        if (editor == nullptr && isActive (selected))
+        if (editor == nullptr && panelPlugin() != nullptr)
             updateEditor();
     }
 
@@ -1250,7 +1638,9 @@ private:
 
     Typeface::Ptr typeface;
     int selected = 0;
+    int panelMode = panelInstrument, panelIndex = 0;
     bool layouting = false;
+    static constexpr int headerH = 34;
     int winW = 992, winH = 700;
     float editorScale = 1.0f;
     Rectangle<int> loopsBezel, pluginBezel, stripBezel, keysBezel;
@@ -1260,15 +1650,21 @@ private:
     bool dirty = false;
     uint32 lastSaveMs = 0;
     Array<int> loadingSlots;
+    int pendingLoads = 0;
+    bool loadFailed = false;
+    int pendingSelect = -1;
+    float cpuSmooth = 0.0f;
+    String metroSamplePath;
+    std::map<const AudioPluginInstance*, String> stateCache;
 
-    std::array<PluginDescription, flow::numBlocks> descriptions;
     std::unique_ptr<AudioProcessorEditor> editor;
-    int editorBlock = -1;
+    AudioPluginInstance* editorPlugin = nullptr;
     std::unique_ptr<FileChooser> chooser;
 
     LoopsView loopsView;
     KeyboardView keyboardView;
-    ValueTile vstTile, holdTile, recTile, undoTile, stopTile, tapeTile, folderTile;
+    PanelHeader header;
+    ValueTile vstTile, mfxTile, fxTile, holdTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
@@ -1278,7 +1674,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.3.0"; }
+    const String getApplicationVersion() override { return "0.4.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

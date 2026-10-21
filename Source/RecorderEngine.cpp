@@ -61,7 +61,7 @@ private:
 };
 
 // ---------------------------------------------------------------- RecorderEngine
-RecorderEngine::RecorderEngine() : juce::Thread ("TapeRecorderWriter") {}
+RecorderEngine::RecorderEngine() : juce::Thread ("FlowRecorderWriter") {}
 
 RecorderEngine::~RecorderEngine()
 {
@@ -70,7 +70,7 @@ RecorderEngine::~RecorderEngine()
 }
 
 void RecorderEngine::startWorker() { startThread (juce::Thread::Priority::normal); }
-void RecorderEngine::stopWorker()  { stopThread (3000); }
+void RecorderEngine::stopWorker()  { stopThread (30000); }
 
 void RecorderEngine::prepare (double sr)
 {
@@ -81,15 +81,16 @@ void RecorderEngine::prepare (double sr)
     if (wasPrepared && writer != nullptr) { finishTake (false); resetArmed(); }   // άλλαξε το sample rate μέσα σε λήψη
 
     sampleRate = sr;
-    const int cap = (int) std::ceil (8.0 * sr);
+    const int cap = (int) std::ceil (4.0 * sr);
     fifo.setTotalSize (cap);
     fifo.reset();
-    fifoBuf.setSize (2, cap);
+    fifoBuf.setSize (kChannels, cap);
+    fifoBuf.clear();
     preRollLen = (int) std::ceil (kPreRollSeconds * sr);
-    preRoll.setSize (2, preRollLen);
+    preRoll.setSize (kChannels, preRollLen);
     preRoll.clear();
     preRollPos = preRollFilled = 0;
-    chunk.setSize (2, 4096);
+    chunk.setSize (kChannels, 4096);
     maxFrames = (int64_t) std::llround (kMaxTakeSeconds * sr);
     thresholdLin = (float) std::pow (10.0, kThresholdDb / 20.0);
     if (getState() == State::Armed) { framesWritten = 0; }
@@ -98,11 +99,11 @@ void RecorderEngine::prepare (double sr)
     startWorker();
 }
 
-void RecorderEngine::release() {}   // το αρχείο κλείνει μόνο με stop, TAPE FULL ή καταστροφή του plugin
+void RecorderEngine::release() {}   // το αρχείο κλείνει μόνο με stop, TAPE FULL ή καταστροφή
 
 static void raisePeak (std::atomic<float>& a, float v) { if (v > a.load (std::memory_order_relaxed)) a.store (v, std::memory_order_relaxed); }
 
-void RecorderEngine::process (const juce::AudioBuffer<float>& buffer)
+void RecorderEngine::process (const juce::AudioBuffer<float>& buffer, const juce::AudioBuffer<float>& stems, uint32_t stemMask)
 {
     if (! prepared.load (std::memory_order_acquire)) return;
     const int n = buffer.getNumSamples(), nCh = buffer.getNumChannels();
@@ -111,14 +112,29 @@ void RecorderEngine::process (const juce::AudioBuffer<float>& buffer)
     const int chR = nCh > 1 ? 1 : 0;
     raisePeak (peakL, buffer.getMagnitude (0, 0, n));
     raisePeak (peakR, buffer.getMagnitude (chR, 0, n));
+    stemMaskNow.store (stemMask, std::memory_order_relaxed);
 
     int s1, n1, s2, n2;
     fifo.prepareToWrite (n, s1, n1, s2, n2);
     if (n1 + n2 < n) { dropped.fetch_add (n); return; }                     // γεμάτο FIFO (π.χ. κόλλησε ο δίσκος)
-    const float* l = buffer.getReadPointer (0);
-    const float* r = buffer.getReadPointer (chR);
-    if (n1 > 0) { fifoBuf.copyFrom (0, s1, l, n1);      fifoBuf.copyFrom (1, s1, r, n1); }
-    if (n2 > 0) { fifoBuf.copyFrom (0, s2, l + n1, n2); fifoBuf.copyFrom (1, s2, r + n1, n2); }
+
+    auto put = [&] (int dstCh, const float* src)
+    {
+        if (n1 > 0) fifoBuf.copyFrom (dstCh, s1, src, n1);
+        if (n2 > 0) fifoBuf.copyFrom (dstCh, s2, src + n1, n2);
+    };
+    put (0, buffer.getReadPointer (0));
+    put (1, buffer.getReadPointer (chR));
+    const int sc = juce::jmin (stems.getNumChannels(), 2 * kStems);
+    for (int c = 0; c < 2 * kStems; ++c)
+    {
+        if (c < sc && stems.getNumSamples() >= n) put (2 + c, stems.getReadPointer (c));
+        else
+        {
+            if (n1 > 0) fifoBuf.clear (2 + c, s1, n1);
+            if (n2 > 0) fifoBuf.clear (2 + c, s2, n2);
+        }
+    }
     fifo.finishedWrite (n1 + n2);
 }
 
@@ -127,12 +143,12 @@ juce::File RecorderEngine::getFolder() const          { const juce::ScopedLock s
 juce::File RecorderEngine::getCurrentFile() const     { const juce::ScopedLock sl (fileLock); return currentFile; }
 void RecorderEngine::pressButton()                    { pressRequested = true; notify(); }
 
-juce::File RecorderEngine::makeTakeFile (const juce::File& dir, juce::Time t)
+juce::File RecorderEngine::makeTakeBase (const juce::File& dir, juce::Time t)
 {
-    const auto base = "Tape_" + t.formatted ("%Y-%m-%d_%H-%M");
-    auto f = dir.getChildFile (base + ".wav");
-    for (int i = 2; f.exists() && i < 1000; ++i)
-        f = dir.getChildFile (base + "_" + juce::String (i).paddedLeft ('0', 2) + ".wav");
+    const auto base = "Flow_" + t.formatted ("%Y-%m-%d_%H-%M");
+    auto f = dir.getChildFile (base);
+    for (int i = 2; (f.withFileExtension ("zip").exists() || f.withFileExtension ("wav").exists()) && i < 1000; ++i)
+        f = dir.getChildFile (base + "_" + juce::String (i).paddedLeft ('0', 2));
     return f;
 }
 
@@ -156,14 +172,56 @@ void RecorderEngine::resetArmed()
 
 void RecorderEngine::enterError()
 {
-    { const juce::ScopedLock sl (fileLock); writer.reset(); }
+    writer.reset();
+    for (auto& w : stemWriter) w.reset();
     state = (int) State::Error;
+}
+
+void RecorderEngine::closeWriters (bool& ok)
+{
+    if (writer != nullptr) { ok = writer->sync() && ok; writer.reset(); }
+    for (auto& w : stemWriter)
+        if (w != nullptr) { w->sync(); w.reset(); }
+}
+
+void RecorderEngine::packZip()
+{
+    zipping = true;
+    juce::ZipFile::Builder builder;
+    builder.addFile (masterFile, 0, "Master.wav");
+    for (int b = 0; b < kStems; ++b)
+        if ((takeMask >> b) & 1u && stemFile[b].existsAsFile())
+            builder.addFile (stemFile[b], 0, "Block " + juce::String (b + 1).paddedLeft ('0', 2) + ".wav");
+
+    bool ok = false;
+    {
+        juce::FileOutputStream out (zipFile);
+        if (out.openedOk())
+        {
+            out.setPosition (0);
+            out.truncate();
+            ok = builder.writeToStream (out, nullptr);
+            out.flush();
+        }
+    }
+
+    if (ok)
+    {
+        masterFile.deleteFile();
+        for (int b = 0; b < kStems; ++b) stemFile[b].deleteFile();
+    }
+    {
+        const juce::ScopedLock sl (fileLock);
+        currentFile = ok ? zipFile : masterFile;
+    }
+    zipping = false;
 }
 
 void RecorderEngine::finishTake (bool full)
 {
     bool ok = true;
-    if (writer != nullptr) { ok = writer->sync(); writer.reset(); }
+    closeWriters (ok);
+    if (ok) packZip();
     tapeFull = full;
     state = (int) (ok ? State::Stopped : State::Error);
 }
@@ -172,15 +230,39 @@ void RecorderEngine::startTake()
 {
     juce::File dir = getFolder();
     if (! dir.createDirectory().wasOk() || ! dir.hasWriteAccess()) { enterError(); return; }
-    const auto f = makeTakeFile (dir, juce::Time::getCurrentTime());
-    auto w = std::make_unique<WavWriter> (f, sampleRate.load());
+    const auto base = makeTakeBase (dir, juce::Time::getCurrentTime());
+    masterFile = base.withFileExtension ("wav");
+    zipFile = base.withFileExtension ("zip");
+
+    auto w = std::make_unique<WavWriter> (masterFile, sampleRate.load());
     if (! w->ok()) { enterError(); return; }
-    { const juce::ScopedLock sl (fileLock); currentFile = f; }
+
+    takeMask = stemMaskNow.load();
+    for (int b = 0; b < kStems; ++b)
+    {
+        if (! ((takeMask >> b) & 1u)) continue;
+        stemFile[b] = dir.getChildFile (base.getFileName() + "_block" + juce::String (b + 1).paddedLeft ('0', 2) + ".wav");
+        auto sw = std::make_unique<WavWriter> (stemFile[b], sampleRate.load());
+        if (sw->ok()) stemWriter[b] = std::move (sw);
+        else takeMask &= ~(1u << b);
+    }
+
+    { const juce::ScopedLock sl (fileLock); currentFile = masterFile; }
     writer = std::move (w);
     framesWritten = 0;
     framesSinceSync = 0;
     tapeFull = false;
     state = (int) State::Recording;
+}
+
+bool RecorderEngine::writeRange (const juce::AudioBuffer<float>& src, int start, int n)
+{
+    if (! writer->write (src.getReadPointer (0) + start, src.getReadPointer (1) + start, n)) return false;
+    for (int b = 0; b < kStems; ++b)
+        if (stemWriter[b] != nullptr)
+            if (! stemWriter[b]->write (src.getReadPointer (2 + 2 * b) + start, src.getReadPointer (3 + 2 * b) + start, n))
+                stemWriter[b].reset();   // ένα stem που απέτυχε δεν σταματά τη λήψη
+    return true;
 }
 
 void RecorderEngine::workerStep()
@@ -203,8 +285,11 @@ void RecorderEngine::workerStep()
         const int n = juce::jmin (ready, chunk.getNumSamples());
         int s1, n1, s2, n2;
         fifo.prepareToRead (n, s1, n1, s2, n2);
-        if (n1 > 0) { chunk.copyFrom (0, 0, fifoBuf, 0, s1, n1);  chunk.copyFrom (1, 0, fifoBuf, 1, s1, n1); }
-        if (n2 > 0) { chunk.copyFrom (0, n1, fifoBuf, 0, s2, n2); chunk.copyFrom (1, n1, fifoBuf, 1, s2, n2); }
+        for (int c = 0; c < kChannels; ++c)
+        {
+            if (n1 > 0) chunk.copyFrom (c, 0, fifoBuf, c, s1, n1);
+            if (n2 > 0) chunk.copyFrom (c, n1, fifoBuf, c, s2, n2);
+        }
         fifo.finishedRead (n1 + n2);
         const int cnt = n1 + n2;
         const float* l = chunk.getReadPointer (0);
@@ -220,7 +305,8 @@ void RecorderEngine::workerStep()
                 {
                     for (int i = 0; i < cnt; ++i)       // pre-roll: κυκλικό buffer 0.5 s
                     {
-                        preRoll.setSample (0, preRollPos, l[i]); preRoll.setSample (1, preRollPos, r[i]);
+                        for (int c = 0; c < kChannels; ++c)
+                            preRoll.setSample (c, preRollPos, chunk.getSample (c, i));
                         preRollPos = (preRollPos + 1) % preRollLen;
                         preRollFilled = juce::jmin (preRollFilled + 1, preRollLen);
                     }
@@ -233,9 +319,9 @@ void RecorderEngine::workerStep()
                 {
                     const int start = (preRollPos - preRollFilled + preRollLen) % preRollLen;
                     const int firstLen = juce::jmin (preRollFilled, preRollLen - start);
-                    bool ok = writer->write (preRoll.getReadPointer (0) + start, preRoll.getReadPointer (1) + start, firstLen);
+                    bool ok = writeRange (preRoll, start, firstLen);
                     if (ok && preRollFilled > firstLen)
-                        ok = writer->write (preRoll.getReadPointer (0), preRoll.getReadPointer (1), preRollFilled - firstLen);
+                        ok = writeRange (preRoll, 0, preRollFilled - firstLen);
                     if (! ok) { enterError(); break; }
                     framesWritten += preRollFilled;
                     framesSinceSync += preRollFilled;
@@ -250,7 +336,7 @@ void RecorderEngine::workerStep()
                 const int todo = (int) juce::jmin<int64_t> (cnt, remaining);
                 if (todo > 0)
                 {
-                    if (! writer->write (l, r, todo)) { enterError(); break; }
+                    if (! writeRange (chunk, 0, todo)) { enterError(); break; }
                     framesWritten += todo;
                     framesSinceSync += todo;
                 }
@@ -258,7 +344,9 @@ void RecorderEngine::workerStep()
                 if (framesSinceSync >= (int64_t) (kSyncSeconds * sampleRate.load()))
                 {
                     framesSinceSync = 0;
-                    if (! writer->sync()) enterError();
+                    bool ok = writer->sync();
+                    for (auto& w : stemWriter) if (w != nullptr) w->sync();
+                    if (! ok) enterError();
                 }
                 break;
             }

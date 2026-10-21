@@ -294,6 +294,15 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (p, 1.7f);
             break;
         }
+        case Symbol::Fx:
+        {
+            juce::Path p;
+            p.startNewSubPath (-10.0f, 0.0f);
+            p.cubicTo (-6.0f, -11.0f, -2.0f, -11.0f, 0.0f, 0.0f);
+            p.cubicTo (2.0f, 11.0f, 6.0f, 11.0f, 10.0f, 0.0f);
+            stroke (p, 1.9f);
+            break;
+        }
     }
 }
 
