@@ -359,7 +359,7 @@ public:
             if (notice.isNotEmpty())
             {
                 g.setColour (noticeColour);
-                g.drawText (notice, (int) cx - 150, (int) sy, 300, (int) sh, Justification::centred, true);
+                g.drawText (notice, (int) cx - 140, (int) sy, 165, (int) sh, Justification::centred, true);
             }
             else
             {
@@ -374,6 +374,74 @@ public:
                 g.fillRoundedRectangle (bar.withWidth (jmax (2.0f, bar.getWidth() * jlimit (0.0f, 1.0f, cpu))), 2.0f);
                 g.setColour (hot ? hobby::kRed : hobby::kIconGrey);
                 g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (cx + 26.0f, sy, 40.0f, sh), Justification::centredLeft, false);
+            }
+            // φωτάκια ρυθμίσεων looper: A = ανίχνευση, ≈ = αναμονή πατημάτων, # = snap νοτών
+            {
+                const float ly = sy + sh * 0.5f;
+                const bool showVals = w >= 800;
+                const int sel = jlimit (0, flow::numBlocks - 1, selected);
+                const int mode = engine.autoLoop.load();
+                const bool paused = engine.autoPausedOut[(size_t) sel].load() != 0;
+                const bool ready = mode != 0 && ! paused && engine.autoReadyOut[(size_t) sel].load() != 0;
+                const int snap = engine.snapQ.load();
+                float lx = cx + 46.0f;
+
+                auto lamp = [&] (float x, bool on, Colour c, std::function<void (Rectangle<float>, Colour)> glyph)
+                {
+                    const Rectangle<float> r (x - 11.0f, ly - 11.0f, 22.0f, 22.0f);
+                    g.setColour (on ? c : Colour (0xff3a3430));
+                    g.fillEllipse (r);
+                    glyph (r, on ? Colour (0xff262220) : Colour (0xff6b625a));
+                };
+
+                const bool aOn = mode != 0 && ! paused;
+                const double pul = ready ? hobby::pulse (Time::getMillisecondCounterHiRes() * 0.001 * 1.5) : 0.0;
+                lamp (lx, aOn, mode == 2 ? hobby::mix (hobby::kLilac, Colours::white, (float) pul * 0.6f) : hobby::kOn,
+                      [&] (Rectangle<float> r, Colour c)
+                      {
+                          g.setColour (c);
+                          g.setFont (hobby::makeFont (typeface, 14.0f));
+                          g.drawText ("A", r, Justification::centred, false);
+                      });
+                lx += 34.0f;
+
+                lamp (lx, true, hobby::kPeach,
+                      [&] (Rectangle<float> r, Colour c)
+                      {
+                          g.setColour (c);
+                          for (float dy : { -2.8f, 2.8f })
+                          {
+                              Path p;
+                              p.startNewSubPath (r.getCentreX() - 6.0f, r.getCentreY() + dy);
+                              p.cubicTo (r.getCentreX() - 3.0f, r.getCentreY() + dy - 3.0f, r.getCentreX() - 1.5f, r.getCentreY() + dy - 3.0f, r.getCentreX(), r.getCentreY() + dy);
+                              p.cubicTo (r.getCentreX() + 1.5f, r.getCentreY() + dy + 3.0f, r.getCentreX() + 3.0f, r.getCentreY() + dy + 3.0f, r.getCentreX() + 6.0f, r.getCentreY() + dy);
+                              g.strokePath (p, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
+                          }
+                      });
+                if (showVals)
+                {
+                    g.setColour (hobby::kIconGrey);
+                    g.setFont (hobby::makeFont (typeface, 12.0f));
+                    g.drawText (String ((double) engine.tapMs.load() / 1000.0, 1) + "s", (int) lx + 15, (int) sy, 40, (int) sh, Justification::centredLeft, false);
+                }
+                lx += showVals ? 66.0f : 34.0f;
+
+                lamp (lx, snap != 0, hobby::kLilac,
+                      [&] (Rectangle<float> r, Colour c)
+                      {
+                          g.setColour (c);
+                          const float a = 3.0f, b = 6.0f;
+                          g.fillRect (r.getCentreX() - a - 0.8f, r.getCentreY() - b, 1.6f, 2.0f * b);
+                          g.fillRect (r.getCentreX() + a - 0.8f, r.getCentreY() - b, 1.6f, 2.0f * b);
+                          g.fillRect (r.getCentreX() - b, r.getCentreY() - a - 0.8f, 2.0f * b, 1.6f);
+                          g.fillRect (r.getCentreX() - b, r.getCentreY() + a - 0.8f, 2.0f * b, 1.6f);
+                      });
+                if (showVals)
+                {
+                    g.setColour (hobby::kIconGrey);
+                    g.setFont (hobby::makeFont (typeface, 12.0f));
+                    g.drawText (snap == 0 ? String ("Off") : snap == 1 ? String ("1/8") : String ("1/16"), (int) lx + 15, (int) sy, 40, (int) sh, Justification::centredLeft, false);
+                }
             }
             g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
             g.fillEllipse ((float) w - 24.0f, sy + sh * 0.5f - 3.5f, 7.0f, 7.0f);
@@ -542,10 +610,9 @@ public:
             {
                 chordRect[(size_t) b] = { x, cy, D, D };
                 const auto cr = chordRect[(size_t) b];
-                g.setColour (col.withMultipliedAlpha (alpha * 0.28f));
+                g.setColour (col.withMultipliedAlpha (alpha * 0.4f));
                 g.fillEllipse (cr);
                 g.setColour (col.withMultipliedAlpha (alpha));
-                g.drawEllipse (cr.reduced (0.75f), 1.5f);
                 static const char* names[] = { "maj", "min", "7", "maj7", "m7", "sus4", "dim" };
                 String txt;
                 if (cmode == 1) txt = names[jlimit (0, flow::numChordTypes - 1, engine.chordType[(size_t) b].load())];
@@ -560,18 +627,14 @@ public:
             {
                 holdRect[(size_t) b] = { x, cy, D, D };
                 const auto hr = holdRect[(size_t) b];
-                if (hold != 0)
-                {
-                    g.setColour (col.withMultipliedAlpha (alpha * 0.28f));
-                    g.fillEllipse (hr);
-                }
+                g.setColour (col.withMultipliedAlpha (alpha * (hold != 0 ? 0.4f : 0.16f)));
+                g.fillEllipse (hr);
                 Colour holdCol = col;
                 if (hold == 3)   // AL Capture: αναβοσβήνει πορτοκαλί
                     holdCol = col.interpolatedWith (Colour (0xffe8883a), hobby::pulse (Time::getMillisecondCounterHiRes() * 0.001 * 1.5));
                 else if (hold == 4)
                     holdCol = Colour (0xffe8883a);
-                g.setColour (holdCol.withMultipliedAlpha (hold != 0 ? alpha : 0.4f));
-                g.drawEllipse (hr.reduced (0.75f), 1.5f);
+                g.setColour (holdCol.withMultipliedAlpha (hold != 0 ? alpha : 0.5f));
                 g.setFont (smallFont);
                 g.drawText (hold == 1 ? "LM" : hold == 2 ? "LP" : hold >= 3 ? "AL" : "H", hr, Justification::centred, false);
                 x += D + gap;
@@ -583,8 +646,6 @@ public:
                 const auto br = curveRect[(size_t) b];
                 g.setGradientFill (ColourGradient (Colour (0xff46403b), 0.0f, br.getY(), Colour (0xff2a2623), 0.0f, br.getBottom(), false));
                 g.fillEllipse (br);
-                g.setColour (Colour (0xff1c1917));
-                g.drawEllipse (br.reduced (0.5f), 1.0f);
                 g.setColour (col);
                 g.strokePath (curvePath (engine.curveMode[(size_t) b].load(), br), PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
                 x += D + gap;
@@ -594,13 +655,9 @@ public:
             {
                 trRect[(size_t) b] = { x, cy, D, D };
                 const auto tr2 = trRect[(size_t) b];
-                if (tr != 0)
-                {
-                    g.setColour (col.withMultipliedAlpha (alpha * 0.28f));
-                    g.fillEllipse (tr2);
-                }
-                g.setColour (col.withMultipliedAlpha (tr != 0 ? alpha : 0.4f));
-                g.drawEllipse (tr2.reduced (0.75f), 1.5f);
+                g.setColour (col.withMultipliedAlpha (alpha * (tr != 0 ? 0.4f : 0.16f)));
+                g.fillEllipse (tr2);
+                g.setColour (col.withMultipliedAlpha (tr != 0 ? alpha : 0.5f));
                 g.setFont (smallFont);
                 g.drawText (tr > 0 ? "+" + String (tr / 12) : String (tr / 12), tr2, Justification::centred, false);
                 x += D + gap;
@@ -612,9 +669,9 @@ public:
                 const auto xr = xRect[(size_t) b];
                 const bool armed = armedBlock == b && Time::getMillisecondCounter() < armedUntil;
                 const Colour xc = armed ? hobby::kRed : col.withMultipliedAlpha (0.4f);
-                if (armed) { g.setColour (xc.withAlpha (0.25f)); g.fillEllipse (xr); }
+                g.setColour (xc.withAlpha (armed ? 0.3f : 0.14f));
+                g.fillEllipse (xr);
                 g.setColour (xc);
-                g.drawEllipse (xr.reduced (0.75f), 1.5f);
                 Path xp;
                 xp.startNewSubPath (xr.getCentreX() - 3.5f, xr.getCentreY() - 3.5f); xp.lineTo (xr.getCentreX() + 3.5f, xr.getCentreY() + 3.5f);
                 xp.startNewSubPath (xr.getCentreX() + 3.5f, xr.getCentreY() - 3.5f); xp.lineTo (xr.getCentreX() - 3.5f, xr.getCentreY() + 3.5f);
@@ -794,17 +851,21 @@ public:
         const float y = (h - D) * 0.5f;
 
         circles.clear();
+        auto disc = [&] (Rectangle<float> r, Colour fill, const String& txt, Colour tc)
+        {
+            g.setColour (fill);
+            g.fillEllipse (r);
+            g.setColour (tc);
+            g.setFont (hobby::makeFont (typeface, 13.0f));
+            g.drawText (txt, r, Justification::centred, false);
+        };
         for (int i = 0; i < n; ++i)
         {
             const Rectangle<float> r (x, y, D, D);
             circles.push_back (r);
             const bool on = i == activeCircle;
             const Colour col = masterMode ? hobby::kPeach : accent;
-            g.setColour (on ? col : col.withAlpha (0.3f));
-            if (on) g.fillEllipse (r); else g.drawEllipse (r.reduced (0.75f), 1.5f);
-            g.setColour (on ? hobby::kScreen : col);
-            g.setFont (hobby::makeFont (typeface, 13.0f));
-            g.drawText (String (i + 1), r, Justification::centred, false);
+            disc (r, on ? col.darker (0.45f) : col.withAlpha (0.35f), String (i + 1), on ? Colours::white : col.darker (0.6f));
             x += D + gap;
         }
 
@@ -812,24 +873,21 @@ public:
         if (canAdd)
         {
             plusRect = { x, y, D, D };
-            g.setColour (hobby::kIconGrey);
-            g.drawEllipse (plusRect.reduced (0.75f), 1.5f);
-            g.fillRect (plusRect.getCentreX() - 5.0f, plusRect.getCentreY() - 0.75f, 10.0f, 1.5f);
-            g.fillRect (plusRect.getCentreX() - 0.75f, plusRect.getCentreY() - 5.0f, 1.5f, 10.0f);
+            g.setColour (Colour (0xffd9d0c4));
+            g.fillEllipse (plusRect);
+            g.setColour (Colour (0xff6b625a));
+            g.fillRect (plusRect.getCentreX() - 5.0f, plusRect.getCentreY() - 0.9f, 10.0f, 1.8f);
+            g.fillRect (plusRect.getCentreX() - 0.9f, plusRect.getCentreY() - 5.0f, 1.8f, 10.0f);
             x += D;
         }
 
         x += 12.0f;
-        g.setColour (hobby::kGridLine);
+        g.setColour (Colour (0xffc9bfb3));
         g.fillRect (x, y + 2.0f, 1.0f, D - 4.0f);
         x += 13.0f;
 
         masterRect = { x, y, D, D };
-        g.setColour (masterMode ? hobby::kPeach : hobby::kPeach.withAlpha (0.45f));
-        if (masterMode) g.fillEllipse (masterRect); else g.drawEllipse (masterRect.reduced (0.75f), 1.5f);
-        g.setColour (masterMode ? hobby::kScreen : hobby::kPeach);
-        g.setFont (hobby::makeFont (typeface, 13.0f));
-        g.drawText ("M", masterRect, Justification::centred, false);
+        disc (masterRect, masterMode ? hobby::kPeach.darker (0.3f) : hobby::kPeach.withAlpha (0.55f), "M", masterMode ? Colours::white : Colour (0xff8a4f1c));
     }
 
     void mouseDown (const MouseEvent& e) override

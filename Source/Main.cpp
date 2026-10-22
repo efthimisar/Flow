@@ -31,7 +31,7 @@ public:
           recTile (Symbol::PadRecord, typeface),
           undoTile (Symbol::Cancel, typeface),
           stopTile (Symbol::Mute, typeface),
-          tapeTile (Symbol::Stop, typeface),
+          tapeTile (Symbol::Tape, typeface),
           metroTile (Symbol::Tempo, typeface),
           folderTile (Symbol::Folder, typeface)
     {
@@ -202,10 +202,9 @@ public:
     {
         hobby::drawBody (g, getLocalBounds());
         hobby::drawBrandMark (g, typeface, getWidth());
+        hobby::drawEmbossedText (g, typeface, "Flow", (float) sideM + 8.0f);
 
         hobby::drawBezel (g, loopsBezel.toFloat(), loopsBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
-        hobby::drawBezel (g, pluginBezel.toFloat(), pluginBezel.reduced (5).toFloat(), hobby::kScreen, 14.0f);
-        hobby::drawBezel (g, stripBezel.toFloat(), stripBezel.reduced (5).toFloat(), hobby::kStripScreen, 15.0f);
         hobby::drawBezel (g, keysBezel.toFloat(), keysBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
 
         for (auto* t : tiles())
@@ -362,9 +361,9 @@ private:
     void showSceneMenu()
     {
         PopupMenu menu;
-        menu.addItem (1, gr ("Επόμενη σκηνή: ανάθεση πεταλιού"));
-        menu.addItem (2, gr ("Προηγούμενη σκηνή: ανάθεση πεταλιού"));
-        menu.addItem (3, gr ("Αφαίρεση αναθέσεων"), engine.mapCode[flow::ctlSceneNext].load() != 0 || engine.mapCode[flow::ctlScenePrev].load() != 0);
+        menu.addItem (1, gr ("\xe2\x97\x8e  \xe2\x96\xb6"));
+        menu.addItem (2, gr ("\xe2\x97\x8e  \xe2\x97\x80"));
+        menu.addItem (3, gr ("\xe2\x9c\x95"), engine.mapCode[flow::ctlSceneNext].load() != 0 || engine.mapCode[flow::ctlScenePrev].load() != 0);
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardView),
                             [safe = SafePointer<MainComponent> (this)] (int r)
         {
@@ -748,8 +747,8 @@ private:
     {
         PopupMenu menu;
         const bool v = isActive (selected);
-        menu.addItem (2, v ? gr ("Αντικατάσταση instrument του block ") + String (selected + 1) + "…" : gr ("Αντικατάσταση instrument"), v);
-        menu.addItem (3, v ? gr ("Αφαίρεση block ") + String (selected + 1) : gr ("Αφαίρεση block"), v);
+        menu.addItem (2, gr ("\xe2\x87\x84"), v);
+        menu.addItem (3, gr ("\xe2\x9c\x95"), v);
 
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&vstTile),
                             [safe = SafePointer<MainComponent> (this)] (int result)
@@ -765,8 +764,8 @@ private:
         const bool v = isActive (selected);
         const bool has = v && engine.getMidiFx (selected) != nullptr;
         PopupMenu menu;
-        menu.addItem (1, has ? gr ("Αντικατάσταση MIDI FX…") : gr ("Φόρτωση MIDI FX…"), v);
-        menu.addItem (2, gr ("Αφαίρεση MIDI FX"), has);
+        menu.addItem (1, gr ("\xe2\x87\x84"), v);
+        menu.addItem (2, gr ("\xe2\x9c\x95"), has);
 
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&mfxTile),
                             [safe = SafePointer<MainComponent> (this)] (int result)
@@ -781,8 +780,8 @@ private:
     {
         const bool v = isActive (selected);
         PopupMenu menu;
-        menu.addItem (1, gr ("Προσθήκη FX στο block…"), v && engine.numFx (selected) < maxFxPerChain);
-        menu.addItem (2, gr ("Αφαίρεση όλων των FX του block"), v && engine.numFx (selected) > 0);
+        menu.addItem (1, gr ("+"), v && engine.numFx (selected) < maxFxPerChain);
+        menu.addItem (2, gr ("\xe2\x9c\x95"), v && engine.numFx (selected) > 0);
 
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&fxTile),
                             [safe = SafePointer<MainComponent> (this)] (int result)
@@ -798,9 +797,9 @@ private:
         const int target = panelMode == panelMaster ? -1 : selected;
         const int n = engine.numFx (target);
         PopupMenu menu;
-        menu.addItem (1, gr ("Αφαίρεση"));
-        menu.addItem (2, gr ("Μετακίνηση αριστερά"), i > 0);
-        menu.addItem (3, gr ("Μετακίνηση δεξιά"), i < n - 1);
+        menu.addItem (1, gr ("\xe2\x9c\x95"));
+        menu.addItem (2, gr ("\xe2\x97\x80"), i > 0);
+        menu.addItem (3, gr ("\xe2\x96\xb6"), i < n - 1);
 
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&header),
                             [safe = SafePointer<MainComponent> (this), i, target] (int result)
@@ -1117,10 +1116,10 @@ private:
     void showZoneMenu (int b)
     {
         PopupMenu menu;
-        menu.addItem (1, gr ("Ορισμός ζώνης ξανά"));
-        menu.addItem (2, gr ("Transpose +1 οκτάβα"));
-        menu.addItem (3, gr ("Transpose -1 οκτάβα"));
-        menu.addItem (4, gr ("Transpose 0"));
+        menu.addItem (1, gr ("\xe2\x9f\xb2"));
+        menu.addItem (2, gr ("\xe2\x96\xb2  +1"));
+        menu.addItem (3, gr ("\xe2\x96\xbc  -1"));
+        menu.addItem (4, gr ("0"));
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardView),
                             [safe = SafePointer<MainComponent> (this), b] (int result)
         {
@@ -1145,8 +1144,8 @@ private:
         const int code = engine.volMap[(size_t) b].load();
 
         PopupMenu menu;
-        menu.addItem (1, gr ("Ανάθεση πεταλιού έντασης (MIDI learn)"));
-        menu.addItem (2, gr ("Αφαίρεση ανάθεσης"), code != 0);
+        menu.addItem (1, gr ("\xe2\x97\x8e"));
+        menu.addItem (2, gr ("\xe2\x9c\x95"), code != 0);
         if (code != 0)
             menu.addItem (3, gr ("Τώρα: ") + pedalCodeText (code), false);
 
@@ -1175,33 +1174,33 @@ private:
         const int sq = engine.startQ.load(), lq = engine.lengthQ.load(), nq = engine.snapQ.load();
 
         PopupMenu startMenu, lenMenu, snapMenu;
-        startMenu.addItem (10, "Off", true, sq == 0);
-        startMenu.addItem (11, "Beat", true, sq == 1);
-        startMenu.addItem (12, "Bar", true, sq == 2);
-        lenMenu.addItem (20, "Off", true, lq == 0);
-        lenMenu.addItem (21, "Beat", true, lq == 1);
-        lenMenu.addItem (22, "Bar", true, lq == 2);
-        snapMenu.addItem (30, "Off", true, nq == 0);
+        startMenu.addItem (10, gr ("\xe2\x8a\x98"), true, sq == 0);
+        startMenu.addItem (11, gr ("\xe2\x99\xa9"), true, sq == 1);
+        startMenu.addItem (12, gr ("\xe2\x99\xa9\xe2\x99\xa9\xe2\x99\xa9\xe2\x99\xa9"), true, sq == 2);
+        lenMenu.addItem (20, gr ("\xe2\x8a\x98"), true, lq == 0);
+        lenMenu.addItem (21, gr ("\xe2\x99\xa9"), true, lq == 1);
+        lenMenu.addItem (22, gr ("\xe2\x99\xa9\xe2\x99\xa9\xe2\x99\xa9\xe2\x99\xa9"), true, lq == 2);
+        snapMenu.addItem (30, gr ("\xe2\x8a\x98"), true, nq == 0);
         snapMenu.addItem (31, "1/8", true, nq == 1);
         snapMenu.addItem (32, "1/16", true, nq == 2);
 
         PopupMenu menu;
-        menu.addSubMenu (gr ("Start quantize (η αρχή του Rec MIDI loop)"), startMenu);
-        menu.addSubMenu (gr ("Length quantize (το μήκος του loop)"), lenMenu);
-        menu.addSubMenu (gr ("Snap νοτών"), snapMenu);
+        menu.addSubMenu (gr ("\xe2\x96\xb6|"), startMenu);
+        menu.addSubMenu (gr ("\xe2\x86\x94"), lenMenu);
+        menu.addSubMenu (gr ("\xe2\x99\xaf"), snapMenu);
         PopupMenu autoMenu;
-        autoMenu.addItem (70, gr ("Off"), true, engine.autoLoop.load() == 0);
-        autoMenu.addItem (71, gr ("Auto: ξεκινά μόνη μετά από 4 μέτρα"), true, engine.autoLoop.load() == 1);
-        autoMenu.addItem (72, gr ("Με πάτημα: ετοιμάζεται και ξεκινά με το Rec MIDI loop"), true, engine.autoLoop.load() == 2);
-        menu.addSubMenu (gr ("Ανίχνευση επανάληψης (αυτόματη λούπα)"), autoMenu);
+        autoMenu.addItem (70, gr ("\xe2\x8a\x98"), true, engine.autoLoop.load() == 0);
+        autoMenu.addItem (71, gr ("A"), true, engine.autoLoop.load() == 1);
+        autoMenu.addItem (72, gr ("A  \xe2\x97\x8f"), true, engine.autoLoop.load() == 2);
+        menu.addSubMenu (gr ("A"), autoMenu);
         PopupMenu tapMenu;
         tapMenu.addItem (60, "0.5 s", true, engine.tapMs.load() == 500);
         tapMenu.addItem (61, "0.7 s", true, engine.tapMs.load() == 700);
         tapMenu.addItem (62, "1.0 s", true, engine.tapMs.load() == 1000);
-        menu.addSubMenu (gr ("Αναμονή πατημάτων πεταλιού (mute / σβήσιμο)"), tapMenu);
+        menu.addSubMenu (gr ("\xe2\x89\x88"), tapMenu);
         menu.addSeparator();
-        menu.addItem (40, gr ("Ανάθεση πεταλιού (MIDI learn)"));
-        menu.addItem (41, gr ("Αφαίρεση ανάθεσης"), code != 0);
+        menu.addItem (40, gr ("\xe2\x97\x8e"));
+        menu.addItem (41, gr ("\xe2\x9c\x95"), code != 0);
         if (code != 0) menu.addItem (42, gr ("Τώρα: ") + pedalCodeText (code), false);
 
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&recTile),
@@ -1235,13 +1234,13 @@ private:
             outMenu.addItem (100 + c, gr ("Έξοδος ") + String (c + 1), true, c == cur);
 
         PopupMenu menu;
-        menu.addItem (1, gr ("Διάλεξε δικό μου ήχο (sample)…"));
-        menu.addItem (2, gr ("Προεπιλεγμένος ήχος"), metroSamplePath.isNotEmpty());
-        menu.addSubMenu (gr ("Ένταση"), levelMenu);
-        menu.addSubMenu (gr ("Έξοδος ακουστικών"), outMenu);
+        menu.addItem (1, gr ("\xe2\x99\xaa"));
+        menu.addItem (2, gr ("\xe2\x86\xba"), metroSamplePath.isNotEmpty());
+        menu.addSubMenu (gr ("\xe2\x96\x82\xe2\x96\x84\xe2\x96\x86"), levelMenu);
+        menu.addSubMenu (gr ("\xe2\x87\xa8"), outMenu);
         menu.addSeparator();
-        menu.addItem (40, gr ("Ανάθεση πλήκτρου ή πεταλιού (MIDI learn)"));
-        menu.addItem (41, gr ("Αφαίρεση ανάθεσης"), code != 0);
+        menu.addItem (40, gr ("\xe2\x97\x8e"));
+        menu.addItem (41, gr ("\xe2\x9c\x95"), code != 0);
         if (code != 0) menu.addItem (42, gr ("Τώρα: ") + pedalCodeText (code), false);
 
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&metroTile),
@@ -1840,8 +1839,8 @@ private:
         const int code = engine.mapCode[(size_t) i].load();
 
         PopupMenu menu;
-        menu.addItem (1, gr ("Ανάθεση πεταλιού (MIDI learn)"));
-        menu.addItem (2, gr ("Αφαίρεση ανάθεσης"), code != 0);
+        menu.addItem (1, gr ("\xe2\x97\x8e"));
+        menu.addItem (2, gr ("\xe2\x9c\x95"), code != 0);
         if (code != 0)
             menu.addItem (3, gr ("Τώρα: ") + pedalCodeText (code), false);
 
@@ -1949,8 +1948,8 @@ private:
         const int stopTaps = engine.tapsMuteOut.load();
         const int delTaps = engine.tapsDelOut.load();
         if (message.isNotEmpty())  { header.notice = message; header.noticeColour = hobby::kCoral; }
-        else if (stopTaps > 0)     { header.notice = "MUTE x" + String (stopTaps); header.noticeColour = hobby::kLilac; }
-        else if (delTaps > 0)      { header.notice = "DEL x" + String (delTaps); header.noticeColour = hobby::kCoral; }
+        else if (stopTaps > 0)     { header.notice = stopTaps == 1 ? String ("LOOP OFF") : String ("LOOP ON"); header.noticeColour = hobby::kLilac; }
+        else if (delTaps > 0)      { header.notice = delTaps == 1 ? String ("RE-REC") : String ("DEL"); header.noticeColour = hobby::kCoral; }
         else if (valid && engine.autoLoop.load() == 2 && engine.autoReadyOut[(size_t) sel].load() != 0) { header.notice = "REC = LOOP"; header.noticeColour = hobby::kLilac; }
         else                       header.notice = String();
         header.accent = valid ? blockLight (sel) : hobby::kIconGrey;
@@ -2091,7 +2090,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.16.2"; }
+    const String getApplicationVersion() override { return "0.17.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

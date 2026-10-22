@@ -52,6 +52,20 @@ namespace hobby
         }
     }
 
+    void drawEmbossedText (juce::Graphics& g, const juce::Typeface::Ptr& typeface, const juce::String& text, float x)
+    {
+        const auto f = makeFont (typeface, 15.0f);
+        g.setFont (f);
+        for (int pass = 0; pass < 3; ++pass)
+        {
+            const float off = pass == 0 ? -1.0f : 1.0f;
+            const juce::Rectangle<float> r (x + (pass == 2 ? 0.0f : off), 9.0f + (pass == 2 ? 0.0f : off), 120.0f, 16.0f);
+            g.setColour (pass == 0 ? juce::Colours::white.withAlpha (0.75f)
+                                   : pass == 1 ? juce::Colour (0xffddd3c6) : juce::Colour (0xfff1ebe2));
+            g.drawText (text, r, juce::Justification::centredLeft, false);
+        }
+    }
+
     void drawTileShadow (juce::Graphics& g, juce::Rectangle<float> tile)
     {
         juce::Path tp;
@@ -140,6 +154,16 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
         {
             juce::Path p; p.addRoundedRectangle (-8.0f, -8.0f, 16.0f, 16.0f, 2.5f);
             fill (p, col);
+            break;
+        }
+        case Symbol::Tape:   // κασέτα: σώμα, δύο τροχοί και η λωρίδα κάτω
+        {
+            juce::Path body; body.addRoundedRectangle (-10.0f, -7.5f, 20.0f, 15.0f, 2.5f);
+            stroke (body, 1.8f);
+            juce::Path r1; r1.addEllipse (-6.4f, -3.4f, 5.2f, 5.2f);
+            juce::Path r2; r2.addEllipse (1.2f, -3.4f, 5.2f, 5.2f);
+            stroke (r1, 1.5f); stroke (r2, 1.5f);
+            stroke (line (-5.5f, 4.6f, 5.5f, 4.6f), 1.5f);
             break;
         }
         case Symbol::Cancel:
@@ -376,8 +400,6 @@ void ValueTile::paintButton (juce::Graphics& g, bool, bool isDown)
                                              juce::Colour (isDown ? 0xff24211f : 0xff2a2623), 0.0f, r.getBottom(), false));
     const float corner = round ? r.getWidth() * 0.5f : 9.0f;
     g.fillRoundedRectangle (r, corner);
-    g.setColour (juce::Colour (0xff1c1917));
-    g.drawRoundedRectangle (r, corner, 1.0f);
     g.setColour (juce::Colours::white.withAlpha (isDown ? 0.08f : 0.18f));
     g.drawLine (r.getX() + (round ? 14.0f : 7.0f), r.getY() + 1.5f, r.getRight() - (round ? 14.0f : 7.0f), r.getY() + 1.5f, 1.0f);
 

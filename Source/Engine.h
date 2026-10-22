@@ -91,7 +91,7 @@ namespace flow
             {
                 active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
                 lo[b] = lowestNote; hi[b] = lowestNote;
-                holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0; swBits[(size_t) b * 2] = 0; swBits[(size_t) b * 2 + 1] = 0; autoReadyOut[(size_t) b] = 0;
+                holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0; swBits[(size_t) b * 2] = 0; swBits[(size_t) b * 2 + 1] = 0; autoReadyOut[(size_t) b] = 0; autoPausedOut[(size_t) b] = 0;
                 blockOff[b] = 0; chordMode[b] = 0; chordType[b] = 0; chordMinor[b] = 0; chordTonic[b] = -1; pcMaskOut[b] = 0; bassOut[b] = -1;
                 arpMode[b] = 0;
                 curveMode[b] = 0;
@@ -130,6 +130,7 @@ namespace flow
         std::atomic<int> tapMs { 500 };                         // αναμονή μετά το τελευταίο πάτημα
         std::atomic<int> autoLoop { 2 };                        // ανίχνευση επανάληψης: 0 = Off, 1 = Auto (ξεκινά μόνη), 2 = ξεκινά με πάτημα του Rec MIDI loop
         std::atomic<bool> tempoUserSet { false };               // το tempo το όρισες εσύ (κουτί, tap, Link, set): η ανίχνευση δεν το αλλάζει
+        std::array<std::atomic<int>, numBlocks> autoPausedOut;   // 1 = η αυτόματη ανίχνευση του block είναι σε παύση (μετά από διαγραφή)
         std::array<std::atomic<int>, numBlocks> autoReadyOut;   // 1 = το block είναι έτοιμο για λούπα (για την κεφαλίδα)
         std::atomic<int> changeCount { 0 };     // ανεβαίνει όταν αλλάζει κάτι που πρέπει να αποθηκευτεί
         std::atomic<double> beatPosOut { 0.0 };
@@ -304,7 +305,23 @@ namespace flow
                 B.prevGain = -1.0f;
                 B.seenMain = cmdMain[(size_t) b].load();
                 B.seenUndo = cmdUndo[(size_t) b].load();
-                B.seenStop = cmdStop[(size_t) b].load();
+                if (pedalAct[b] != 0)
+            {
+                const int act = pedalAct[b];
+                pedalAct[b] = 0;
+                if ((act == 1 || act == 2) && B.loopState == loopPlay && B.nLayers > 0)
+                {
+                    if (act == 1) B.muteMask |= 1u; else B.muteMask &= ~1u;
+                    cutLoopNotes (B);
+                }
+                else if (act == 3 || act == 4)
+                {
+                    loopUndo (B);
+                    B.hist.clear(); B.autoReady = false; B.lastDetect = 0;
+                    B.autoPaused = act == 4;
+                }
+            }
+            B.seenStop = cmdStop[(size_t) b].load();
                 B.seenMute = cmdMute[(size_t) b].load();
                 loopStateOut[b] = loopOff;
                 loopBeatsOut[b] = 0.0;
@@ -696,6 +713,7 @@ namespace flow
             std::vector<HistEv> hist;       // πρόσφατες νότες για την ανίχνευση επανάληψης
             int64_t lastDetect = 0;
             bool autoReady = false;
+            bool autoPaused = false;   // μετά από διαγραφή: καμία ανίχνευση μέχρι νέο re-record
             AutoHit autoHit;
             std::array<std::vector<LoopEvent>, maxLayers> layerEv;
             std::array<double, maxLayers> layerBeats {};
@@ -725,7 +743,7 @@ namespace flow
                 lpGroup.reset(); lpSingle.reset(); lpOpen = false; lpEnd = 0;
                 for (auto& c : alChord) c.reset();
                 alSwitch.reset(); alGroup.reset(); alPending.reset(); alMute.reset(); alOpen = false; alHavePending = false; alEnd = 0;
-                hist.clear(); lastDetect = 0; autoReady = false; autoHit = AutoHit();
+                hist.clear(); lastDetect = 0; autoReady = false; autoPaused = false; autoHit = AutoHit();
                 vel.fill (0);
                 outNote.fill (0); loopOut.fill (0); chordCount.fill (0);
                 lastLatched = -1; prevHold = 0; prevArp = 0; arpIndex = 0;
@@ -1292,6 +1310,12 @@ namespace flow
         // pos: θέση μέσα στο block ήχου. Το transpose εφαρμόζεται εδώ, πριν από το MIDI FX και το instrument.
         void emitNote (Block& B, int b, int pos, bool on, int note, int vel)
         {
+            // όσο υπάρχει λούπα, το block μένει σιωπηλό στο live: ακούγεται μόνο η λούπα
+            if (B.loopState == loopPlay && B.nLayers > 0)
+            {
+                if (on || ! B.sounding[(size_t) note]) return;
+            }
+
             if (on)
             {
                 B.outNote[(size_t) note] = (uint8_t) juce::jlimit (0, 127, note + transpose[(size_t) b].load());
@@ -1655,6 +1679,7 @@ namespace flow
         double forceGridBeats = 0.0;
         bool tempoAdopted = false;
 
+        int pedalAct[numBlocks] = {};   // 1 σίγαση, 2 ενεργοποίηση, 3 re-record, 4 διαγραφή (από πετάλι, στο τελευταίο block που έπαιξες)
         int seenPM = 0, seenPD = 0, tapsM = 0, tapsD = 0;
         int64_t lastTapM = 0, lastTapD = 0;
 
@@ -1674,11 +1699,13 @@ namespace flow
                 }
                 if (taps > 0 && gs - lastTap > win)
                 {
-                    const int blk = taps - 1;
-                    if (blk < numBlocks && active[(size_t) blk].load() != 0 && loopStateOut[(size_t) blk].load() != loopOff)
+                    const int blk = lastPlayed.load();
+                    if (blk >= 0 && blk < numBlocks && active[(size_t) blk].load() != 0)
                     {
-                        if (del) ++cmdUndo[(size_t) blk];
-                        else     ++cmdMute[(size_t) blk];
+                        if (del)
+                            pedalAct[blk] = taps == 1 ? 3 : 4;
+                        else if (loopStateOut[(size_t) blk].load() != loopOff)
+                            pedalAct[blk] = taps == 1 ? 1 : 2;
                     }
                     taps = 0;
                 }
@@ -1753,6 +1780,17 @@ namespace flow
                     seg[(size_t) juce::jlimit (0, 3, (int) std::floor ((t - ws) / D))].push_back (t);
                 }
                 if (seg[0].empty() || seg[1].empty() || seg[2].empty() || seg[3].empty()) continue;
+
+                // μόνο γρήγορο παίξιμο: τυπικό διάστημα ανάμεσα στις νότες το πολύ 1/8 (D/8), με μικρή ανοχή
+                {
+                    std::vector<double> w;
+                    for (double t : on) if (t >= ws - tol && t <= tL) w.push_back (t);
+                    std::vector<double> gaps;
+                    for (size_t i = 1; i < w.size(); ++i) gaps.push_back (w[i] - w[i - 1]);
+                    if (gaps.empty()) continue;
+                    std::sort (gaps.begin(), gaps.end());
+                    if (gaps[gaps.size() / 2] > D / 8.0 * 1.3) continue;
+                }
 
                 int fT = 0, fOk = 0, bT = 0, bOk = 0;
                 for (size_t k = 1; k < 4; ++k)
@@ -1867,6 +1905,7 @@ namespace flow
             const bool ok = commitLayer (B, bStartFinal + len, len);
             forceGridBeats = 0.0;
 
+            offAll (B, b, 0);   // οι νότες που ακούγονται στο block σβήνουν: από εδώ και πέρα παίζει μόνο η λούπα
             B.hist.clear();
             B.autoReady = false;
             autoReadyOut[(size_t) b] = 0;
@@ -1997,6 +2036,7 @@ namespace flow
             for (int cm = cmdMain[(size_t) b].load(); B.seenMain != cm; )
             {
                 ++B.seenMain;
+                if (B.autoPaused) { B.autoPaused = false; B.hist.clear(); B.lastDetect = 0; }
                 if (autoLoop.load() == 2 && B.loopState == loopOff && B.autoReady)
                     commitAuto (B, b, B.autoHit, gs, sr, beat0);   // "ξεκινά με πάτημα": το Rec MIDI loop παίρνει την ετοιμασμένη λούπα
                 else
@@ -2007,6 +2047,7 @@ namespace flow
             {
                 ++B.seenUndo;
                 loopUndo (B);    // σβήσιμο της λούπας του block
+                B.hist.clear(); B.autoReady = false; B.autoPaused = true;
             }
 
             for (int cm = cmdMute[(size_t) b].load(); B.seenMute != cm; )
@@ -2206,7 +2247,7 @@ namespace flow
             if (hold == 3 && B.alOpen && B.alEnd < ge)
                 alClose (B, b, (int) juce::jlimit<int64_t> (0, numSamples - 1, B.alEnd - gs), hold, arp);
 
-            if (autoLoop.load() != 0 && B.loopState == loopOff && arp == 0)
+            if (autoLoop.load() != 0 && B.loopState == loopOff && arp == 0 && ! B.autoPaused)
                 autoLoopStep (B, b, gs + numSamples, sr, beat1);
             else
             {
@@ -2215,6 +2256,7 @@ namespace flow
                 autoReadyOut[(size_t) b] = 0;
             }
 
+            autoPausedOut[(size_t) b] = B.autoPaused ? 1 : 0;
             loopStateOut[b] = B.loopState;
             loopBeatsOut[b] = (B.loopState == loopPlay || B.loopState == loopOver) ? B.loopBeats : 0.0;
             loopLayersOut[b] = B.nLayers;
