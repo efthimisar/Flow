@@ -181,6 +181,8 @@ public:
     ~MainComponent() override
     {
         stopTimer();
+        dockTimer.stopTimer();
+        if (dockedTop != nullptr) dockedTop->removeComponentListener (this);
         if (pendingLoads == 0) saveSettings (true);
         deviceManager.removeMidiInputDeviceCallback (String(), &engine.incoming);
         deviceManager.removeAudioCallback (&engine);
@@ -519,7 +521,23 @@ private:
         repaint();
     }
 
-    void parentHierarchyChanged() override { refreshSize(); }
+    void parentHierarchyChanged() override
+    {
+        refreshSize();
+        // το μαγνητικό παράθυρο ακολουθεί το Flow αμέσως σε κάθε κίνηση, χωρίς να περιμένει το timer
+        auto* top = getTopLevelComponent();
+        if (top != dockedTop)
+        {
+            if (dockedTop != nullptr) dockedTop->removeComponentListener (this);
+            dockedTop = top;
+            if (dockedTop != nullptr) dockedTop->addComponentListener (this);
+        }
+    }
+
+    void componentMovedOrResized (Component& c, bool, bool) override
+    {
+        if (&c == dockedTop) updateDock();
+    }
 
     //==========================================================================
     // κάθε plugin (instrument, MIDI FX, FX, master FX) ανοίγει σε δικό του ελεύθερο παράθυρο, στο δικό του μέγεθος
@@ -2047,6 +2065,7 @@ private:
 
     std::map<AudioPluginInstance*, std::unique_ptr<PluginWindow>> pluginWindows;
     bool docked = true;
+    Component* dockedTop = nullptr;
     Point<int> lastWinPos;
     Rectangle<int> lastTopBounds;
     struct DockTimer : public Timer
@@ -2069,7 +2088,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.16.1"; }
+    const String getApplicationVersion() override { return "0.16.2"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
