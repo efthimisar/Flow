@@ -205,6 +205,12 @@ public:
     std::function<void (int)> onSelect;
     TempoBox& getTempoBox() { return tempoBox; }
 
+    // ενδείξεις κάτω (χωρίς πλαίσιο): block, συγχορδία, μήνυμα ή CPU, τελεία MIDI
+    bool midiActive = false;
+    String title, chordName, notice;
+    Colour noticeColour { Colour (0xffe8837a) };
+    float cpu = 0.0f;
+
     void resized() override
     {
         tempoBox.setBounds (getWidth() / 2 - 58, 12, 116, 28);
@@ -254,7 +260,7 @@ public:
         const auto list = activeBlocks (engine);
         const int count = list.size();
         const int top = 48;
-        const int room = jmax (40, getHeight() - top - 12);   // το ύψος της οθόνης loops αλλάζει με το plugin
+        const int room = jmax (40, getHeight() - top - 12 - 26);   // το ύψος της οθόνης loops αλλάζει με το plugin
         const int step = count > 0 ? jmin (44, room / count) : 44;
         const int laneH = jmax (6, step - 6);
         const float laneX = 42.0f, laneW = (float) (w - 14) - laneX;
@@ -337,6 +343,41 @@ public:
         const float hx = laneX + laneW * (float) (std::fmod (now, axisBeats) / axisBeats);
         g.setColour (Colours::white);
         g.fillRect (hx - 1.0f, (float) (top - 8), 2.0f, (float) (gridBottom - top + 8));
+
+        // κάτω λωρίδα ενδείξεων
+        {
+            const float sh = 22.0f, sy = (float) getHeight() - sh - 6.0f;
+            g.setFont (hobby::makeFont (typeface, 16.0f));
+            g.setColour (hobby::kText);
+            g.drawText (title, 14, (int) sy, w / 2 - 150, (int) sh, Justification::centredLeft, false);
+            if (chordName.isNotEmpty())
+            {
+                g.setColour (hobby::kLilac);
+                g.drawText (chordName, 14 + (int) std::ceil (textWidth (g.getCurrentFont(), title)) + 14, (int) sy, 140, (int) sh, Justification::centredLeft, false);
+            }
+            const float cx = (float) w * 0.5f;
+            if (notice.isNotEmpty())
+            {
+                g.setColour (noticeColour);
+                g.drawText (notice, (int) cx - 150, (int) sy, 300, (int) sh, Justification::centred, true);
+            }
+            else
+            {
+                const bool hot = cpu >= 0.85f;
+                g.setFont (hobby::makeFont (typeface, 13.0f));
+                g.setColour (hobby::kIconGrey);
+                g.drawText ("CPU", Rectangle<float> (cx - 88.0f, sy, 32.0f, sh), Justification::centredRight, false);
+                const Rectangle<float> bar (cx - 50.0f, sy + sh * 0.5f - 2.0f, 70.0f, 4.0f);
+                g.setColour (Colour (0xff3a3430));
+                g.fillRoundedRectangle (bar, 2.0f);
+                g.setColour (hot ? hobby::kRed : hobby::kOn);
+                g.fillRoundedRectangle (bar.withWidth (jmax (2.0f, bar.getWidth() * jlimit (0.0f, 1.0f, cpu))), 2.0f);
+                g.setColour (hot ? hobby::kRed : hobby::kIconGrey);
+                g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (cx + 26.0f, sy, 40.0f, sh), Justification::centredLeft, false);
+            }
+            g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
+            g.fillEllipse ((float) w - 24.0f, sy + sh * 0.5f - 3.5f, 7.0f, 7.0f);
+        }
     }
 
     void mouseDown (const MouseEvent& e) override
@@ -744,41 +785,6 @@ public:
     void paint (Graphics& g) override
     {
         const float h = (float) getHeight();
-        g.setFont (hobby::makeFont (typeface, 18.0f));
-        g.setColour (hobby::kText);
-        g.drawText (title, 12, 0, getWidth() / 2 - 150, getHeight(), Justification::centredLeft, false);
-
-        // συγχορδία δίπλα στον τίτλο
-        if (chordName.isNotEmpty())
-        {
-            g.setColour (hobby::kLilac);
-            g.drawText (chordName, 12 + (int) std::ceil (textWidthOf (g.getCurrentFont(), title)) + 16, 0, 140, getHeight(), Justification::centredLeft, false);
-        }
-
-        // μήνυμα ή STOP xN: στη θέση του CPU
-        if (notice.isNotEmpty())
-        {
-            g.setFont (hobby::makeFont (typeface, 16.0f));
-            g.setColour (noticeColour);
-            g.drawText (notice, getWidth() / 2 - 150, 0, 300, getHeight(), Justification::centred, true);
-        }
-
-        // CPU μικρό, στη μέση
-        if (notice.isEmpty())
-        {
-        const float cx = (float) getWidth() * 0.5f;
-        const bool hot = cpu >= 0.85f;
-        g.setFont (hobby::makeFont (typeface, 13.0f));
-        g.setColour (hobby::kIconGrey);
-        g.drawText ("CPU", Rectangle<float> (cx - 88.0f, 0.0f, 32.0f, h), Justification::centredRight, false);
-        const Rectangle<float> bar (cx - 50.0f, h * 0.5f - 2.0f, 70.0f, 4.0f);
-        g.setColour (Colour (0xff3a3430));
-        g.fillRoundedRectangle (bar, 2.0f);
-        g.setColour (hot ? hobby::kRed : hobby::kOn);
-        g.fillRoundedRectangle (bar.withWidth (jmax (2.0f, bar.getWidth() * jlimit (0.0f, 1.0f, cpu))), 2.0f);
-        g.setColour (hot ? hobby::kRed : hobby::kIconGrey);
-        g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (cx + 26.0f, 0.0f, 40.0f, h), Justification::centredLeft, false);
-        }
 
         // δεξιά: M | + 3 2 1  (η σειρά: 1 2 3 + | M)
         constexpr float D = 22.0f, gap = 5.0f;
@@ -786,9 +792,6 @@ public:
         const float total = (float) n * (D + gap) + (canAdd ? D : 0.0f) + 12.0f + 1.0f + 12.0f + D;
         float x = (float) getWidth() - 12.0f - total;
         const float y = (h - D) * 0.5f;
-
-        g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
-        g.fillEllipse (x - 20.0f, h * 0.5f - 3.5f, 7.0f, 7.0f);
 
         circles.clear();
         for (int i = 0; i < n; ++i)

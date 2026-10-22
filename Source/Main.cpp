@@ -1961,6 +1961,8 @@ private:
         cpuSmooth = 0.85f * cpuSmooth + 0.15f * (float) deviceManager.getCpuUsage();
         header.cpu = cpuSmooth;
         header.repaint();
+        loopsView.title = header.title; loopsView.chordName = header.chordName; loopsView.notice = header.notice;
+        loopsView.noticeColour = header.noticeColour; loopsView.cpu = cpuSmooth;
 
         loopsView.repaint();
         keyboardView.repaint();
@@ -1990,6 +1992,7 @@ private:
         const int mc = engine.midiCount.load();
         if (mc != lastMidiCount) { lastMidiCount = mc; lastMidiMs = Time::getMillisecondCounter(); }
         header.midiActive = Time::getMillisecondCounter() - lastMidiMs < 250;
+        loopsView.midiActive = header.midiActive;
 
         if (messageTicks > 0 && --messageTicks == 0)
         {
