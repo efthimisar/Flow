@@ -127,8 +127,8 @@ namespace flow
         std::atomic<int> lastPlayed { -1 };     // το block που έπαιξες τελευταίο: εκεί γράφει το Rec MIDI loop από πετάλι
         std::atomic<int> pedalMute { 0 }, pedalDel { 0 };       // πατήματα πεταλιού (mute / σβήσιμο): ο αριθμός πατημάτων = αριθμός block
         std::atomic<int> tapsMuteOut { 0 }, tapsDelOut { 0 };   // πατήματα που μετρήθηκαν τώρα (για την κεφαλίδα)
-        std::atomic<int> tapMs { 700 };                         // αναμονή μετά το τελευταίο πάτημα
-        std::atomic<int> autoLoop { 1 };                        // ανίχνευση επανάληψης: 0 = Off, 1 = Auto (ξεκινά μόνη), 2 = ξεκινά με πάτημα του Rec MIDI loop
+        std::atomic<int> tapMs { 500 };                         // αναμονή μετά το τελευταίο πάτημα
+        std::atomic<int> autoLoop { 2 };                        // ανίχνευση επανάληψης: 0 = Off, 1 = Auto (ξεκινά μόνη), 2 = ξεκινά με πάτημα του Rec MIDI loop
         std::atomic<bool> tempoUserSet { false };               // το tempo το όρισες εσύ (κουτί, tap, Link, set): η ανίχνευση δεν το αλλάζει
         std::array<std::atomic<int>, numBlocks> autoReadyOut;   // 1 = το block είναι έτοιμο για λούπα (για την κεφαλίδα)
         std::atomic<int> changeCount { 0 };     // ανεβαίνει όταν αλλάζει κάτι που πρέπει να αποθηκευτεί
@@ -137,7 +137,7 @@ namespace flow
 
         // tempo και quantize (global)
         std::atomic<double> tempo { 98.0 };
-        std::atomic<int> startQ { 0 }, lengthQ { 0 }, snapQ { 0 };   // startQ/lengthQ: 0 Off, 1 Beat, 2 Bar. snapQ: 0 Off, 1 = 1/8, 2 = 1/16
+        std::atomic<int> startQ { 1 }, lengthQ { 2 }, snapQ { 2 };   // startQ/lengthQ: 0 Off, 1 Beat, 2 Bar. snapQ: 0 Off, 1 = 1/8, 2 = 1/16
         std::atomic<int> tapRequest { 0 };
         std::atomic<int> afterFirst { 0 };      // μετά το πρώτο loop: 0 = Play, 1 = Overdub
         std::atomic<int> midiCount { 0 };       // μετρά τα μηνύματα MIDI που έρχονται (για την ένδειξη στην κεφαλίδα)

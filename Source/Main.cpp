@@ -1570,11 +1570,11 @@ private:
         clearEverything();
 
         engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 98.0));
-        engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 0));
-        engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 0));
-        engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 0));
-        engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 700));
-        engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 1));
+        engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 1));
+        engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 2));
+        engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 2));
+        engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 500));
+        engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 2));
         engine.tempoUserSet = root.getIntAttribute ("tempoManual", engine.tempo.load() != 120.0 ? 1 : 0) != 0;
         pendingSelect = root.getIntAttribute ("selected", 0);
 
