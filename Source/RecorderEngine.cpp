@@ -273,8 +273,8 @@ void RecorderEngine::workerStep()
         {
             case State::Recording: finishTake (false); break;
             case State::Stopped:
-            case State::Error:     resetArmed();       break;   // νέο take: περιμένει ήχο
-            case State::Armed:     break;
+            case State::Error:     resetArmed(); startTake(); break;   // νέο take: ξεκινά αμέσως στο πάτημα
+            case State::Armed:     startTake();        break;          // ξεκινά αμέσως στο πάτημα, όχι με τον πρώτο ήχο
         }
     }
 
@@ -298,37 +298,7 @@ void RecorderEngine::workerStep()
         switch (getState())
         {
             case State::Armed:
-            {
-                bool loud = false;
-                for (int i = 0; i < cnt && ! loud; ++i) loud = std::abs (l[i]) > thresholdLin || std::abs (r[i]) > thresholdLin;
-                if (! loud)
-                {
-                    for (int i = 0; i < cnt; ++i)       // pre-roll: κυκλικό buffer 0.5 s
-                    {
-                        for (int c = 0; c < kChannels; ++c)
-                            preRoll.setSample (c, preRollPos, chunk.getSample (c, i));
-                        preRollPos = (preRollPos + 1) % preRollLen;
-                        preRollFilled = juce::jmin (preRollFilled + 1, preRollLen);
-                    }
-                    break;
-                }
-                startTake();
-                if (getState() != State::Recording) break;
-                // πρώτα το pre-roll με χρονολογική σειρά
-                if (preRollFilled > 0)
-                {
-                    const int start = (preRollPos - preRollFilled + preRollLen) % preRollLen;
-                    const int firstLen = juce::jmin (preRollFilled, preRollLen - start);
-                    bool ok = writeRange (preRoll, start, firstLen);
-                    if (ok && preRollFilled > firstLen)
-                        ok = writeRange (preRoll, 0, preRollFilled - firstLen);
-                    if (! ok) { enterError(); break; }
-                    framesWritten += preRollFilled;
-                    framesSinceSync += preRollFilled;
-                    preRollFilled = preRollPos = 0;
-                }
-                [[fallthrough]];
-            }
+                break;   // δεν ξεκινά μόνο του: περιμένει το πάτημα
             case State::Recording:
             {
                 if (writer == nullptr) break;

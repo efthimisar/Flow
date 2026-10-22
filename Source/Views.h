@@ -554,7 +554,7 @@ public:
                 g.setColour (col.withMultipliedAlpha (tr != 0 ? alpha : 0.4f));
                 g.drawEllipse (tr2.reduced (0.75f), 1.5f);
                 g.setFont (smallFont);
-                g.drawText (tr > 0 ? "+" + String (tr) : String (tr), tr2, Justification::centred, false);
+                g.drawText (tr > 0 ? "+" + String (tr / 12) : String (tr / 12), tr2, Justification::centred, false);
                 x += D + gap;
             }
 

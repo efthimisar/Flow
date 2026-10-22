@@ -22,6 +22,7 @@ public:
           loopsView (engine, selected, typeface),
           keyboardView (engine, selected, message, typeface),
           header (typeface),
+          blockTile (Symbol::Block, typeface),
           vstTile (Symbol::Vst, typeface),
           mfxTile (Symbol::Thru, typeface),
           fxTile (Symbol::Fx, typeface),
@@ -52,7 +53,8 @@ public:
         for (auto* t : { &recTile, &undoTile, &stopTile, &tapeTile })
             t->setRound (true);
 
-        vstTile.setTooltip (gr ("VST: δείχνει το instrument του block. Δεξί κλικ: νέο block, αντικατάσταση, αφαίρεση"));
+        blockTile.setTooltip (gr ("Block: φορτώνει νέο plugin σε νέο block"));
+        vstTile.setTooltip (gr ("VST: ανοίγει / κλείνει το παράθυρο του instrument (πράσινο = το block έχει VST). Δεξί κλικ: αντικατάσταση, αφαίρεση"));
         mfxTile.setTooltip (gr ("MIDI FX: MIDI effect (π.χ. Stepic) πριν από το instrument. Αν δεν έχει plugin, ανοίγει επιλογή αρχείου. Δεξί κλικ: αντικατάσταση, αφαίρεση"));
         fxTile.setTooltip (gr ("FX: αλυσίδα audio effects μετά το instrument. Τα κυκλάκια 1, 2, 3 και το + είναι στην κεφαλίδα του πάνελ. Δεξί κλικ: προσθήκη"));
         folderTile.setTooltip (gr ("Φάκελος αποθήκευσης των Rec Audio (zip με master και stems)"));
@@ -66,6 +68,7 @@ public:
         addAndMakeVisible (keyboardView);
         addAndMakeVisible (header);
 
+        blockTile.onClick = [this] { chooseAndLoadPlugin(); };
         vstTile.onClick = [this] { onVstClick(); };
         vstTile.onRightClick = [this] { showVstMenu(); };
         mfxTile.onClick = [this] { onMidiFxClick(); };
@@ -107,7 +110,7 @@ public:
         keyboardView.onTranspose = [this] (int b, int dir)
         {
             auto& t = engine.transpose[(size_t) b];
-            t = dir == 0 ? 0 : jlimit (-48, 48, t.load() + dir);
+            t = dir == 0 ? 0 : jlimit (-48, 48, t.load() + dir * 12);   // ανά οκτάβα, ±4
             saveNow();
             refreshAll();
         };
@@ -246,7 +249,7 @@ private:
     //==========================================================================
     std::array<ValueTile*, 11> tiles()
     {
-        return { &vstTile, &mfxTile, &fxTile, &holdTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
+        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
     }
 
     bool isActive (int b) const { return b >= 0 && b < flow::numBlocks && engine.active[(size_t) b].load() != 0; }
@@ -442,7 +445,7 @@ private:
     String emptyPanelText() const
     {
         if (panelMode == panelMaster) return gr ("Master FX: πάτα το + για να φορτώσεις effect στο τελικό μίγμα");
-        if (! isActive (selected))    return gr ("Πάτα VST για να φορτώσεις το πρώτο plugin");
+        if (! isActive (selected))    return gr ("Πάτα Block για να φορτώσεις το πρώτο plugin");
         return gr ("Αυτό το plugin δεν έχει editor");
     }
 
@@ -486,7 +489,7 @@ private:
         const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);
 
         int x = leftX;
-        for (auto* t : { &vstTile, &mfxTile, &fxTile, &holdTile, &chordTile })
+        for (auto* t : { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile })
         {
             t->setBounds (x, ty, 52, 52);
             x += 60;
@@ -690,7 +693,6 @@ private:
     {
         PopupMenu menu;
         const bool v = isActive (selected);
-        menu.addItem (1, gr ("Φόρτωση plugin (νέο block)…"));
         menu.addItem (2, v ? gr ("Αντικατάσταση instrument του block ") + String (selected + 1) + "…" : gr ("Αντικατάσταση instrument"), v);
         menu.addItem (3, v ? gr ("Αφαίρεση block ") + String (selected + 1) : gr ("Αφαίρεση block"), v);
 
@@ -698,7 +700,6 @@ private:
                             [safe = SafePointer<MainComponent> (this)] (int result)
         {
             if (safe == nullptr) return;
-            if (result == 1) safe->chooseAndLoadPlugin();
             if (result == 2) safe->replaceInstrument();
             if (result == 3) safe->removeBlock (safe->selected);
         });
@@ -1562,7 +1563,10 @@ private:
             engine.chordTonic[(size_t) slot] = jlimit (-1, 11, e->getIntAttribute ("ctonic", -1));
             engine.volPos[(size_t) slot]    = (float) jlimit (0.0, 1.0, e->getDoubleAttribute ("vol", 1.0));
             engine.volMap[(size_t) slot]    = e->getIntAttribute ("vmap", 0);
-            engine.transpose[(size_t) slot] = jlimit (-48, 48, e->getIntAttribute ("tr", 0));
+            {
+                const int trLoaded = jlimit (-48, 48, e->getIntAttribute ("tr", 0));
+                engine.transpose[(size_t) slot] = ((trLoaded + (trLoaded >= 0 ? 6 : -6)) / 12) * 12;   // παλιά sets: στρογγυλοποίηση στην πλησιέστερη οκτάβα
+            }
 
             const bool hasZone = e->getIntAttribute ("zone", 0) != 0;
             engine.setZone (slot, e->getIntAttribute ("lo", flow::lowestNote), e->getIntAttribute ("hi", flow::lowestNote),
@@ -1818,7 +1822,7 @@ private:
         // κουμπιά plugin: πράσινο = αυτό που δείχνει τώρα ο editor. Τελείες: υπάρχει plugin / πόσα FX
         const bool hasMfx = valid && engine.getMidiFx (sel) != nullptr;
         const int nfx = valid ? engine.numFx (sel) : 0;
-        vstTile.setIconColour (valid && hasWindow (engine.getPlugin (sel)) ? hobby::kOn : hobby::kIconGrey);
+        vstTile.setIconColour (valid ? hobby::kOn : hobby::kIconGrey);   // πράσινο = το block έχει VST
         mfxTile.setIconColour (hasMfx && hasWindow (engine.getMidiFx (sel)) ? hobby::kOn : hobby::kIconGrey);
         mfxTile.setDots (hasMfx ? 1 : 0);
         bool anyFxOpen = false;
@@ -1994,7 +1998,7 @@ private:
     LoopsView loopsView;
     KeyboardView keyboardView;
     PanelHeader header;
-    ValueTile vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
+    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
@@ -2004,7 +2008,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.12.3"; }
+    const String getApplicationVersion() override { return "0.13.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
