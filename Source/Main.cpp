@@ -571,20 +571,29 @@ private:
         auto* top = getTopLevelComponent();
         if (top == nullptr) return;
         auto* w = pluginWindows.begin()->second.get();
+        if (! docked) return;
 
-        const auto topBounds = top->getBounds();
-        if (topBounds != lastTopBounds)
+        const bool mouseDown = ModifierKeys::currentModifiers.isLeftButtonDown();
+
+        // το τράβηξες με το χέρι: κουνήθηκε το plugin ενώ το ποντίκι είναι πατημένο και το Flow έμεινε
+        if (mouseDown && top->getBounds() == lastTopBounds && (w->getPosition() - lastWinPos).getDistanceFromOrigin() > 4)
         {
-            lastTopBounds = topBounds;
-            if (docked)
-            {
-                w->setTopLeftPosition (dockPos (*w));
-                lastWinPos = w->getPosition();
-            }
+            docked = false;
+            flow::flowLog ("dock: ξεκόλλησε με το χέρι στο " + String (w->getX()) + "," + String (w->getY()));
+            return;
         }
-        else if (docked && (w->getPosition() - lastWinPos).getDistanceFromOrigin() > 4)
+
+        // αλλιώς: ακολουθεί το Flow (μετακίνηση ή αλλαγή μεγέθους)
+        lastTopBounds = top->getBounds();
+        const auto expected = dockPos (*w);
+        if ((w->getPosition() - expected).getDistanceFromOrigin() > 1)
         {
-            docked = false;   // το τράβηξες με το χέρι
+            w->setTopLeftPosition (expected);
+            lastWinPos = w->getPosition();
+        }
+        else
+        {
+            lastWinPos = w->getPosition();
         }
     }
 
@@ -616,6 +625,7 @@ private:
         w->toFront (true);
         lastWinPos = w->getPosition();
         if (auto* top = getTopLevelComponent()) lastTopBounds = top->getBounds();
+        flow::flowLog ("dock: άνοιξε στο " + String (lastWinPos.x) + "," + String (lastWinPos.y) + " (Flow " + String (lastTopBounds.getX()) + "," + String (lastTopBounds.getY()) + " " + String (lastTopBounds.getWidth()) + "x" + String (lastTopBounds.getHeight()) + ")");
         pluginWindows[p] = std::move (w);
     }
 
@@ -2059,11 +2069,12 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.16.0"; }
+    const String getApplicationVersion() override { return "0.16.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
     {
+        flow::flowLog ("Flow " + getApplicationVersion() + " ξεκίνησε");
         mainWindow = std::make_unique<MainWindow> (getApplicationName());
     }
 
