@@ -1161,6 +1161,11 @@ private:
         menu.addSubMenu (gr ("Start quantize (η αρχή του Rec MIDI loop)"), startMenu);
         menu.addSubMenu (gr ("Length quantize (το μήκος του loop)"), lenMenu);
         menu.addSubMenu (gr ("Snap νοτών"), snapMenu);
+        PopupMenu autoMenu;
+        autoMenu.addItem (70, gr ("Off"), true, engine.autoLoop.load() == 0);
+        autoMenu.addItem (71, gr ("Auto: ξεκινά μόνη μετά από 4 μέτρα"), true, engine.autoLoop.load() == 1);
+        autoMenu.addItem (72, gr ("Με πάτημα: ετοιμάζεται και ξεκινά με το Rec MIDI loop"), true, engine.autoLoop.load() == 2);
+        menu.addSubMenu (gr ("Ανίχνευση επανάληψης (αυτόματη λούπα)"), autoMenu);
         PopupMenu tapMenu;
         tapMenu.addItem (60, "0.5 s", true, engine.tapMs.load() == 500);
         tapMenu.addItem (61, "0.7 s", true, engine.tapMs.load() == 700);
@@ -1179,6 +1184,7 @@ private:
             if (r >= 10 && r <= 12) e.startQ = r - 10;
             if (r >= 20 && r <= 22) e.lengthQ = r - 20;
             if (r >= 30 && r <= 32) e.snapQ = r - 30;
+            if (r >= 70 && r <= 72) e.autoLoop = r - 70;
             if (r >= 60 && r <= 62) e.tapMs = r == 60 ? 500 : r == 61 ? 700 : 1000;
             if (r == 40) safe->startPedalLearn (flow::ctlRec);
             if (r == 41) e.mapCode[flow::ctlRec] = 0;
@@ -1428,6 +1434,8 @@ private:
         root->setAttribute ("lengthQ", engine.lengthQ.load());
         root->setAttribute ("snapQ", engine.snapQ.load());
         root->setAttribute ("tapMs", engine.tapMs.load());
+        root->setAttribute ("autoLoop", engine.autoLoop.load());
+        root->setAttribute ("tempoManual", engine.tempoUserSet.load() ? 1 : 0);
         root->setAttribute ("selected", selected);
 
         for (int b = 0; b < flow::numBlocks; ++b)
@@ -1538,6 +1546,8 @@ private:
         engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 0));
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 0));
         engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 700));
+        engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 1));
+        engine.tempoUserSet = root.getIntAttribute ("tempoManual", engine.tempo.load() != 120.0 ? 1 : 0) != 0;
         pendingSelect = root.getIntAttribute ("selected", 0);
 
         for (auto& sc : scenes) sc = Scene();
@@ -1913,6 +1923,7 @@ private:
         if (message.isNotEmpty())  { header.notice = message; header.noticeColour = hobby::kCoral; }
         else if (stopTaps > 0)     { header.notice = "MUTE x" + String (stopTaps); header.noticeColour = hobby::kLilac; }
         else if (delTaps > 0)      { header.notice = "DEL x" + String (delTaps); header.noticeColour = hobby::kCoral; }
+        else if (valid && engine.autoLoop.load() == 2 && engine.autoReadyOut[(size_t) sel].load() != 0) { header.notice = "REC = LOOP"; header.noticeColour = hobby::kLilac; }
         else                       header.notice = String();
         header.accent = valid ? blockLight (sel) : hobby::kIconGrey;
         header.masterMode = master;
@@ -2048,7 +2059,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.15.0"; }
+    const String getApplicationVersion() override { return "0.16.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

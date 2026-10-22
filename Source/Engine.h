@@ -91,7 +91,7 @@ namespace flow
             {
                 active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
                 lo[b] = lowestNote; hi[b] = lowestNote;
-                holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0; swBits[(size_t) b * 2] = 0; swBits[(size_t) b * 2 + 1] = 0;
+                holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0; swBits[(size_t) b * 2] = 0; swBits[(size_t) b * 2 + 1] = 0; autoReadyOut[(size_t) b] = 0;
                 blockOff[b] = 0; chordMode[b] = 0; chordType[b] = 0; chordMinor[b] = 0; chordTonic[b] = -1; pcMaskOut[b] = 0; bassOut[b] = -1;
                 arpMode[b] = 0;
                 curveMode[b] = 0;
@@ -128,6 +128,9 @@ namespace flow
         std::atomic<int> pedalMute { 0 }, pedalDel { 0 };       // πατήματα πεταλιού (mute / σβήσιμο): ο αριθμός πατημάτων = αριθμός block
         std::atomic<int> tapsMuteOut { 0 }, tapsDelOut { 0 };   // πατήματα που μετρήθηκαν τώρα (για την κεφαλίδα)
         std::atomic<int> tapMs { 700 };                         // αναμονή μετά το τελευταίο πάτημα
+        std::atomic<int> autoLoop { 1 };                        // ανίχνευση επανάληψης: 0 = Off, 1 = Auto (ξεκινά μόνη), 2 = ξεκινά με πάτημα του Rec MIDI loop
+        std::atomic<bool> tempoUserSet { false };               // το tempo το όρισες εσύ (κουτί, tap, Link, set): η ανίχνευση δεν το αλλάζει
+        std::array<std::atomic<int>, numBlocks> autoReadyOut;   // 1 = το block είναι έτοιμο για λούπα (για την κεφαλίδα)
         std::atomic<int> changeCount { 0 };     // ανεβαίνει όταν αλλάζει κάτι που πρέπει να αποθηκευτεί
         std::atomic<double> beatPosOut { 0.0 };
         std::atomic<int> axisBarsOut { 4 };
@@ -179,6 +182,7 @@ namespace flow
         {
             bpm = juce::jlimit (40.0, 240.0, bpm);
             tempo = bpm;
+            tempoUserSet = true;
             if (link.isEnabled()) link.setTempo (bpm);
             ++changeCount;
         }
@@ -648,8 +652,9 @@ namespace flow
             const double bars = longest / beatsPerBar;
             axisBarsOut = bars <= 4.0 + 1e-6 ? 4 : bars <= 8.0 + 1e-6 ? 8 : 16;
 
-            beatPos = beat1;
-            beatPosOut = beat1;
+            beatPos = beat1 + pendingBeatShift;
+            pendingBeatShift = 0.0;
+            beatPosOut = beatPos;
             globalPos += numSamples;
         }
 
@@ -670,6 +675,9 @@ namespace flow
             int d2 = 0;
         };
 
+        struct HistEv { int64_t t; bool on; int note; int vel; };
+        struct AutoHit { double D = 0.0; int64_t tStart = 0; };
+
         struct Block
         {
             PluginPtr plugin, midiFx;
@@ -685,6 +693,10 @@ namespace flow
             std::bitset<128> alSwitch, alGroup, alPending, alMute;
             bool alOpen = false, alHavePending = false;
             int64_t alEnd = 0;
+            std::vector<HistEv> hist;       // πρόσφατες νότες για την ανίχνευση επανάληψης
+            int64_t lastDetect = 0;
+            bool autoReady = false;
+            AutoHit autoHit;
             std::array<std::vector<LoopEvent>, maxLayers> layerEv;
             std::array<double, maxLayers> layerBeats {};
             int nLayers = 0;
@@ -713,6 +725,7 @@ namespace flow
                 lpGroup.reset(); lpSingle.reset(); lpOpen = false; lpEnd = 0;
                 for (auto& c : alChord) c.reset();
                 alSwitch.reset(); alGroup.reset(); alPending.reset(); alMute.reset(); alOpen = false; alHavePending = false; alEnd = 0;
+                hist.clear(); lastDetect = 0; autoReady = false; autoHit = AutoHit();
                 vel.fill (0);
                 outNote.fill (0); loopOut.fill (0); chordCount.fill (0);
                 lastLatched = -1; prevHold = 0; prevArp = 0; arpIndex = 0;
@@ -859,6 +872,7 @@ namespace flow
                 {
                     const double bpm = juce::jlimit (40.0, 240.0, 60.0 / avg);
                     tempo = bpm;
+                    tempoUserSet = true;
                     if (link.isEnabled()) link.setTempo (bpm);
                     ++changeCount;
                 }
@@ -1289,6 +1303,12 @@ namespace flow
             }
             B.sounding.set ((size_t) note, on);
 
+            if (autoLoop.load() != 0 && B.loopState == loopOff)
+            {
+                B.hist.push_back ({ curGs + pos, on, note, vel });
+                if (B.hist.size() > 3000) B.hist.erase (B.hist.begin(), B.hist.begin() + 1000);
+            }
+
             if (B.loopState == loopRec || B.loopState == loopOver)
             {
                 B.rec.push_back ({ blkBeat0 + (double) pos * blkBps, on, note, vel });
@@ -1463,7 +1483,7 @@ namespace flow
                     B.rec.push_back ({ B.recStart + elapsed - 1.0e-4, false, n, 0 });
 
             const int sq = snapQ.load();
-            const double grid = sq == 1 ? 0.5 : sq == 2 ? 0.25 : 0.0;
+            const double grid = forceGridBeats > 0.0 ? forceGridBeats : (sq == 1 ? 0.5 : sq == 2 ? 0.25 : 0.0);
             std::array<double, 128> shift {};
             std::bitset<128> hasShift;
 
@@ -1625,7 +1645,15 @@ namespace flow
             if (B.loopState == loopOff) return;
             cutLoopNotes (B);
             stopLoop (B);
+            bool any = false;
+            for (const auto& o : blocks) if (o.nLayers > 0) any = true;
+            if (! any) tempoAdopted = false;   // χωρίς λούπες, το επόμενο loop μπορεί να ορίσει νέο πλέγμα
         }
+
+        int64_t curGs = 0;
+        double pendingBeatShift = 0.0;
+        double forceGridBeats = 0.0;
+        bool tempoAdopted = false;
 
         int seenPM = 0, seenPD = 0, tapsM = 0, tapsD = 0;
         int64_t lastTapM = 0, lastTapD = 0;
@@ -1661,6 +1689,218 @@ namespace flow
             handle (pedalDel,  seenPD, tapsD, lastTapD, true,  tapsDelOut);
         }
 
+
+        //==================== ανίχνευση επανάληψης (αυτόματη λούπα) ====================
+        static bool hasNear (const std::vector<double>& v, double t, double tol)
+        {
+            for (double x : v)
+                if (std::abs (x - t) <= tol) return true;
+            return false;
+        }
+
+        // Ψάχνει αν οι τελευταίες νότες του block επαναλαμβάνονται σε σταθερό "μέτρο" D για 4 μέτρα.
+        // Συγκρίνει μόνο τους χρόνους των νοτών (όχι το ύψος): μπάσο LM που αλλάζει νότα κάθε μέτρο είναι σταθερός ρυθμός.
+        bool detectLoop (Block& B, int64_t nowS, double sr, AutoHit& out)
+        {
+            std::vector<double> on;
+            for (const auto& e : B.hist)
+            {
+                if (! e.on) continue;
+                const double t = (double) e.t / sr;
+                if (on.empty() || t - on.back() > 0.035) on.push_back (t);   // συγχορδία = ένα onset
+            }
+            if (on.size() < 4) return false;
+
+            const double now = (double) nowS / sr;
+            const double tL = on.back();
+            if (now - tL > 1.5) return false;                                // δεν παίζεις πια
+
+            std::vector<double> iois;
+            for (size_t i = 1; i < on.size(); ++i) iois.push_back (on[i] - on[i - 1]);
+            std::sort (iois.begin(), iois.end());
+            const double medIoi = iois[iois.size() / 2];
+
+            const bool linkActive = linkWanted.load() && link.isEnabled();
+            const bool known = tempoUserSet.load() || tempoAdopted || linkActive;
+            const double D0 = 240.0 / juce::jlimit (40.0, 240.0, tempo.load());
+            const double Dref = known ? D0 : 2.0;
+
+            std::vector<double> cands;
+            if (known)
+            {
+                for (double m : { 0.5, 1.0, 2.0 })
+                    for (int i = -8; i <= 8; ++i)
+                        cands.push_back (D0 * m * (1.0 + 0.015 * (double) i));
+            }
+            else
+            {
+                for (double D = 0.9; D <= 6.0; D *= 1.015) cands.push_back (D);
+            }
+
+            std::vector<char> pass (cands.size(), 0);
+
+            for (size_t ci = 0; ci < cands.size(); ++ci)
+            {
+                const double D = cands[ci];
+                const double tol = std::min (0.06 * D + 0.03, std::max (0.03, 0.4 * medIoi));
+                if (on.front() > tL - 3.0 * D + tol) continue;               // δεν υπάρχουν δεδομένα για 4 μέτρα
+
+                const double ws = tL - 4.0 * D;
+                std::array<std::vector<double>, 4> seg;
+                for (double t : on)
+                {
+                    if (t < ws - tol || t >= ws + 4.0 * D - tol) continue;
+                    seg[(size_t) juce::jlimit (0, 3, (int) std::floor ((t - ws) / D))].push_back (t);
+                }
+                if (seg[0].empty() || seg[1].empty() || seg[2].empty() || seg[3].empty()) continue;
+
+                int fT = 0, fOk = 0, bT = 0, bOk = 0;
+                for (size_t k = 1; k < 4; ++k)
+                    for (double t : seg[k]) { ++fT; if (hasNear (seg[k - 1], t - D, tol)) ++fOk; }
+                for (size_t k = 0; k < 3; ++k)
+                    for (double t : seg[k]) { ++bT; if (hasNear (seg[k + 1], t + D, tol)) ++bOk; }
+
+                const double score = std::min ((double) fOk / (double) std::max (1, fT), (double) bOk / (double) std::max (1, bT));
+                pass[ci] = score >= 0.85 ? 1 : 0;
+            }
+
+            // ομάδες διαδοχικών υποψηφίων που περνούν: κρατάμε την κοντινότερη στο αναμενόμενο μέτρο
+            double bestD = 0.0, bestDist = 1.0e9;
+            for (size_t i = 0; i < cands.size();)
+            {
+                if (! pass[i]) { ++i; continue; }
+                size_t j = i;
+                double sum = 0.0;
+                while (j < cands.size() && pass[j] && (j == i || std::abs (cands[j] / cands[j - 1] - 1.0) < 0.03)) { sum += cands[j]; ++j; }
+                const double centre = sum / (double) (j - i);
+                const double dist = std::abs (std::log (centre / Dref));
+                if (dist < bestDist) { bestDist = dist; bestD = centre; }
+                i = j;
+            }
+            if (bestD <= 0.0) return false;
+
+            // πρώτο πλήκτρο του μέτρου: η φάση μετά το μεγαλύτερο κενό
+            const double D = bestD;
+            const double tol = std::min (0.06 * D + 0.03, std::max (0.03, 0.4 * medIoi));
+            const double ws = tL - 4.0 * D;
+            std::vector<double> ph;
+            for (double t : on)
+            {
+                if (t < ws - tol || t >= ws + 4.0 * D - tol) continue;
+                double p = std::fmod (t - ws, D);
+                if (p < 0.0) p += D;
+                ph.push_back (p / D);
+            }
+            if (ph.empty()) return false;
+            std::sort (ph.begin(), ph.end());
+            double bestGap = ph.front() + 1.0 - ph.back();
+            double dbPhase = ph.front();
+            for (size_t i = 1; i < ph.size(); ++i)
+                if (ph[i] - ph[i - 1] > bestGap) { bestGap = ph[i] - ph[i - 1]; dbPhase = ph[i]; }
+
+            const double tDown = ws + dbPhase * D;
+            const int k = (int) std::floor ((now + 0.06 - 4.0 * D - tDown) / D);
+            if (k < 0) return false;
+
+            out.D = D;
+            out.tStart = (int64_t) std::llround ((tDown + (double) k * D) * sr);
+            return true;
+        }
+
+        // φτιάχνει τη λούπα από τις τελευταίες 4 μέρες νοτών. Αν το tempo είναι ελεύθερο, το tempo και το πλέγμα προσαρμόζονται στο παίξιμό σου (μία φορά).
+        void commitAuto (Block& B, int b, const AutoHit& hit, int64_t nowS, double sr, double beatAtNow)
+        {
+            const double D = hit.D;
+            bool otherLoops = false;
+            for (const auto& o : blocks)
+                if (&o != &B && o.nLayers > 0) otherLoops = true;
+
+            const bool linkActive = linkWanted.load() && link.isEnabled();
+            const bool adopt = ! tempoUserSet.load() && ! tempoAdopted && ! otherLoops && ! linkActive;
+
+            double clockBps = blkBps;   // beats ανά sample του ρολογιού μετά την όποια αλλαγή
+            if (adopt)
+            {
+                const double bpm = juce::jlimit (40.0, 240.0, 240.0 / D);
+                tempo = bpm;
+                tempoAdopted = true;
+                ++changeCount;
+                clockBps = bpm / (60.0 * sr);
+            }
+
+            // beat στο οποίο ξεκίνησε το μέτρο που διαλέξαμε
+            double bStart = beatAtNow - (double) (nowS - hit.tStart) * clockBps;
+            const double bAligned = std::round (bStart / beatsPerBar) * beatsPerBar;
+            const double delta = bAligned - bStart;
+            if (adopt) pendingBeatShift += delta;   // το ρολόι ευθυγραμμίζεται στο πρώτο σου πλήκτρο
+            const double bStartFinal = bAligned;
+
+            const double len = loopLengthFor (B, 4.0 * beatsPerBar);
+            const double winSec = (len / (4.0 * beatsPerBar)) * 4.0 * D;
+            const double tStartSec = (double) hit.tStart / sr;
+            const double beatsPerSec = (4.0 * beatsPerBar) / (4.0 * D);   // 16 beats ανά 4D
+            const double edge = 0.05;
+
+            B.rec.clear();
+            B.recOpen.reset();
+            std::bitset<128> open;
+            for (const auto& e : B.hist)
+            {
+                const double rel = (double) e.t / sr - tStartSec;
+                if (e.on)
+                {
+                    if (rel < -edge || rel >= winSec - edge) continue;
+                    B.rec.push_back ({ bStartFinal + rel * beatsPerSec, true, e.note, e.vel });
+                    open.set ((size_t) e.note);
+                }
+                else if (open[(size_t) e.note] && rel <= winSec)
+                {
+                    B.rec.push_back ({ bStartFinal + rel * beatsPerSec, false, e.note, 0 });
+                    open.reset ((size_t) e.note);
+                }
+            }
+            B.recOpen = open;
+            B.recStart = bStartFinal;
+
+            const int sq = snapQ.load();
+            forceGridBeats = sq == 1 ? 0.5 : 0.25;
+            const bool ok = commitLayer (B, bStartFinal + len, len);
+            forceGridBeats = 0.0;
+
+            B.hist.clear();
+            B.autoReady = false;
+            autoReadyOut[(size_t) b] = 0;
+            if (ok)
+                B.loopState = loopPlay;
+            else
+                stopLoop (B);
+
+            flowLog ("auto loop: block " + juce::String (b + 1) + " D=" + juce::String (D, 3) + " s, adopt=" + juce::String (adopt ? 1 : 0)
+                     + ", len=" + juce::String (len, 1) + " beats, ok=" + juce::String (ok ? 1 : 0));
+        }
+
+        void autoLoopStep (Block& B, int b, int64_t nowS, double sr, double beatAtNow)
+        {
+            if (nowS - B.lastDetect < (int64_t) (0.1 * sr)) return;
+            B.lastDetect = nowS;
+
+            const int64_t oldest = nowS - (int64_t) (25.0 * sr);
+            size_t cut = 0;
+            while (cut < B.hist.size() && B.hist[cut].t < oldest) ++cut;
+            if (cut > 0) B.hist.erase (B.hist.begin(), B.hist.begin() + (long) cut);
+
+            AutoHit hit;
+            const bool found = detectLoop (B, nowS, sr, hit);
+            B.autoReady = found;
+            autoReadyOut[(size_t) b] = found ? 1 : 0;
+            if (found)
+            {
+                B.autoHit = hit;
+                if (autoLoop.load() == 1)
+                    commitAuto (B, b, hit, nowS, sr, beatAtNow);
+            }
+        }
+
         void doPanic (Block& B, int b)
         {
             for (int n = 0; n < 128; ++n)
@@ -1681,6 +1921,7 @@ namespace flow
         {
             Block& B = blocks[(size_t) b];
             B.out.clear();
+            curGs = gs;
 
             const double beat0 = blkBeat0;
             const double beat1 = beat0 + (double) numSamples * blkBps;
@@ -1756,7 +1997,10 @@ namespace flow
             for (int cm = cmdMain[(size_t) b].load(); B.seenMain != cm; )
             {
                 ++B.seenMain;
-                loopMain (B, beat0);
+                if (autoLoop.load() == 2 && B.loopState == loopOff && B.autoReady)
+                    commitAuto (B, b, B.autoHit, gs, sr, beat0);   // "ξεκινά με πάτημα": το Rec MIDI loop παίρνει την ετοιμασμένη λούπα
+                else
+                    loopMain (B, beat0);
             }
 
             for (int cu = cmdUndo[(size_t) b].load(); B.seenUndo != cu; )
@@ -1961,6 +2205,15 @@ namespace flow
                 lpClose (B, b, (int) juce::jlimit<int64_t> (0, numSamples - 1, B.lpEnd - gs), hold, arp);
             if (hold == 3 && B.alOpen && B.alEnd < ge)
                 alClose (B, b, (int) juce::jlimit<int64_t> (0, numSamples - 1, B.alEnd - gs), hold, arp);
+
+            if (autoLoop.load() != 0 && B.loopState == loopOff && arp == 0)
+                autoLoopStep (B, b, gs + numSamples, sr, beat1);
+            else
+            {
+                if (! B.hist.empty()) B.hist.clear();
+                B.autoReady = false;
+                autoReadyOut[(size_t) b] = 0;
+            }
 
             loopStateOut[b] = B.loopState;
             loopBeatsOut[b] = (B.loopState == loopPlay || B.loopState == loopOver) ? B.loopBeats : 0.0;
