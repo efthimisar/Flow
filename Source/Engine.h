@@ -124,6 +124,10 @@ namespace flow
         std::atomic<int> volLearn { -1 }, volLearnedCount { 0 }, volLearnedBlock { -1 }, volLearnedCode { 0 };
         std::atomic<int> sceneRequest { -1 };   // από πετάλι: -2 = προηγούμενη, -3 = επόμενη (το διαβάζει το UI)
         std::atomic<int> selectedBlock { 0 };   // το block στο οποίο δρουν Hold και looper
+        std::atomic<int> lastPlayed { -1 };     // το block που έπαιξες τελευταίο: εκεί γράφει το Rec MIDI loop από πετάλι
+        std::atomic<int> pedalMute { 0 }, pedalDel { 0 };       // πατήματα πεταλιού (mute / σβήσιμο): ο αριθμός πατημάτων = αριθμός block
+        std::atomic<int> tapsMuteOut { 0 }, tapsDelOut { 0 };   // πατήματα που μετρήθηκαν τώρα (για την κεφαλίδα)
+        std::atomic<int> tapMs { 700 };                         // αναμονή μετά το τελευταίο πάτημα
         std::atomic<int> changeCount { 0 };     // ανεβαίνει όταν αλλάζει κάτι που πρέπει να αποθηκευτεί
         std::atomic<double> beatPosOut { 0.0 };
         std::atomic<int> axisBarsOut { 4 };
@@ -152,7 +156,19 @@ namespace flow
         juce::MidiMessageCollector incoming;  // register this as the MIDI input callback
 
         // εντολές looper για ένα block (από κουμπί ή πετάλι)
-        void pressMain (int b) { ++cmdMain[(size_t) b]; }
+        // ποιο block γράφει το Rec MIDI loop: όποιο ηχογραφεί ήδη, αλλιώς (πετάλι) το τελευταίο που έπαιξες, αλλιώς το επιλεγμένο
+        int recTarget (bool fromPedal) const
+        {
+            for (int b = 0; b < numBlocks; ++b)
+                if (active[(size_t) b].load() != 0 && loopStateOut[(size_t) b].load() == loopRec)
+                    return b;
+            const int lp = lastPlayed.load();
+            if (fromPedal && lp >= 0 && lp < numBlocks && active[(size_t) lp].load() != 0) return lp;
+            const int sel = selectedBlock.load();
+            return sel >= 0 && sel < numBlocks && active[(size_t) sel].load() != 0 ? sel : -1;
+        }
+
+        void pressMain (int b) { if (b >= 0) ++cmdMain[(size_t) b]; }
         void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
         void pressStop (int b) { ++cmdStop[(size_t) b]; }
         void pressMute (int b) { ++cmdMute[(size_t) b]; }
@@ -506,6 +522,7 @@ namespace flow
             }
 
             dispatchIncoming (numSamples, gs, sr);
+            processPedalTaps (gs, sr);
             tapActiveOut = (lastTapT > 0 && (double) (gs - lastTapT) < 3.0 * sr) ? 1 : 0;
 
             masterBuf.clear (0, numSamples);
@@ -953,6 +970,7 @@ namespace flow
                     if (b >= 0)
                     {
                         owner[(size_t) n] = b;
+                        lastPlayed = b;
                         Action a;
                         a.pos = pos; a.order = 1; a.kind = Kind::Live; a.note = n; a.vel = msg.getVelocity(); a.on = true;
                         inActions[(size_t) b].push_back (a);
@@ -1077,10 +1095,10 @@ namespace flow
                     switch (i)
                     {
                         case ctlHold:  if (ok) { holdMode[(size_t) sel] = (holdMode[(size_t) sel].load() + 1) % 5; ++changeCount; } break;
-                        case ctlRec:   if (ok) ++cmdMain[(size_t) sel]; break;
-                        case ctlUndo:  if (ok) ++cmdUndo[(size_t) sel]; break;
-                        case ctlStop:  if (ok) ++cmdStop[(size_t) sel]; break;
-                        case ctlMute:  if (ok) ++cmdMute[(size_t) sel]; break;
+                        case ctlRec:   { const int t = recTarget (true); if (t >= 0) ++cmdMain[(size_t) t]; } break;
+                        case ctlUndo:  ++pedalDel; break;     // σβήσιμο λούπας: πατήματα = αριθμός block
+                        case ctlStop:  ++pedalMute; break;    // mute / ενεργοποίηση: πατήματα = αριθμός block
+                        case ctlMute:  ++pedalMute; break;
                         case ctlTape:  recorder.pressButton(); break;
                         case ctlMetro: metroOn = ! metroOn.load(); break;
                         case ctlPanic: ++panicCount; break;
@@ -1512,23 +1530,48 @@ namespace flow
             return std::min (beats, maxLoopBars * beatsPerBar);
         }
 
+        // μήκος νέας λούπας: όλες οι λούπες πρέπει να χωράνε ακέραιες φορές στον κύκλο (τον μεγαλύτερο)
+        double loopLengthFor (const Block& self, double elapsed) const
+        {
+            double cycle = 0.0;
+            for (const auto& o : blocks)
+                if (&o != &self && o.nLayers > 0)
+                    cycle = std::max (cycle, o.loopBeats);
+
+            if (cycle <= 0.0) return quantizedLength (elapsed);   // πρώτη λούπα: ορίζει το πλέγμα
+
+            const int cBars = std::max (1, (int) std::lround (cycle / beatsPerBar));
+            const double barsE = elapsed / beatsPerBar;
+
+            if (barsE >= (double) cBars)       // μεγαλύτερη από τον κύκλο: ακέραιο πολλαπλάσιο του
+            {
+                const int maxN = std::max (1, maxLoopBars / cBars);
+                const int n = juce::jlimit (1, maxN, (int) std::lround (barsE / (double) cBars));
+                return (double) (n * cBars) * beatsPerBar;
+            }
+
+            int best = cBars;                  // μικρότερη: το κοντινότερο μήκος που χωράει ακριβώς στον κύκλο
+            double bestD = 1.0e9;
+            for (int d = cBars; d >= 1; --d)
+            {
+                if (cBars % d != 0) continue;
+                const double dd = std::abs ((double) d - barsE);
+                if (dd < bestD - 1.0e-9) { bestD = dd; best = d; }
+            }
+            return (double) best * beatsPerBar;
+        }
+
         void finishRecording (Block& B, double beatNow, bool allowOverdub = true)
         {
             const double elapsed = beatNow - B.recStart;
             if (elapsed <= 0.0) { stopLoop (B); return; }   // ακυρώθηκε πριν αρχίσει (start quantize)
 
-            const double beats = quantizedLength (elapsed);
+            const double beats = loopLengthFor (B, elapsed);
+            juce::ignoreUnused (allowOverdub);
 
             if (commitLayer (B, beatNow, beats))
             {
                 B.loopState = loopPlay;
-                if (allowOverdub && afterFirst.load() == 1)    // μετά το πρώτο loop: κατευθείαν overdub
-                {
-                    B.recStart = beatNow;
-                    B.rec.clear();
-                    B.recOpen.reset();
-                    B.loopState = loopOver;
-                }
             }
             else
             {
@@ -1560,7 +1603,7 @@ namespace flow
                 }
                 case loopRec:  finishRecording (B, beat); break;
                 case loopPlay:
-                    if (B.nLayers < maxLayers)
+                    if (false)   // μία λούπα ανά block: δεν υπάρχει overdub
                     {
                         const int sq2 = startQ.load();
                         B.recStart = sq2 == 1 ? std::floor (beat + 1.0e-9)
@@ -1576,28 +1619,46 @@ namespace flow
             }
         }
 
+        // σβήσιμο της λούπας του block (κάθε block έχει μία λούπα)
         void loopUndo (Block& B)
         {
-            if (B.loopState == loopRec)
+            if (B.loopState == loopOff) return;
+            cutLoopNotes (B);
+            stopLoop (B);
+        }
+
+        int seenPM = 0, seenPD = 0, tapsM = 0, tapsD = 0;
+        int64_t lastTapM = 0, lastTapD = 0;
+
+        // πετάλι mute / σβήσιμο: N γρήγορα πατήματα = block N. Δρα όταν περάσει η αναμονή από το τελευταίο πάτημα.
+        void processPedalTaps (int64_t gs, double sr)
+        {
+            const int64_t win = (int64_t) (sr * 0.001 * (double) tapMs.load());
+
+            auto handle = [&] (std::atomic<int>& counter, int& seen, int& taps, int64_t& lastTap, bool del, std::atomic<int>& out)
             {
-                stopLoop (B);
-            }
-            else if (B.loopState == loopOver)
-            {
-                B.rec.clear();
-                B.recOpen.reset();
-                B.loopState = loopPlay;
-            }
-            else if (B.loopState == loopPlay && B.nLayers > 0)
-            {
-                --B.nLayers;
-                B.layerEv[(size_t) B.nLayers].clear();
-                B.muteMask &= ~(1u << B.nLayers);
-                B.loopBeats = 0.0;                        // το μήκος γυρίζει σε αυτό του μεγαλύτερου layer που έμεινε
-                for (int l = 0; l < B.nLayers; ++l) B.loopBeats = std::max (B.loopBeats, B.layerBeats[(size_t) l]);
-                cutLoopNotes (B);
-                if (B.nLayers == 0) stopLoop (B);
-            }
+                for (int c = counter.load(); seen != c;)
+                {
+                    ++seen;
+                    if (gs - lastTap > win) taps = 0;
+                    ++taps;
+                    lastTap = gs;
+                }
+                if (taps > 0 && gs - lastTap > win)
+                {
+                    const int blk = taps - 1;
+                    if (blk < numBlocks && active[(size_t) blk].load() != 0 && loopStateOut[(size_t) blk].load() != loopOff)
+                    {
+                        if (del) ++cmdUndo[(size_t) blk];
+                        else     ++cmdMute[(size_t) blk];
+                    }
+                    taps = 0;
+                }
+                out = taps;
+            };
+
+            handle (pedalMute, seenPM, tapsM, lastTapM, false, tapsMuteOut);
+            handle (pedalDel,  seenPD, tapsD, lastTapD, true,  tapsDelOut);
         }
 
         void doPanic (Block& B, int b)
@@ -1701,28 +1762,20 @@ namespace flow
             for (int cu = cmdUndo[(size_t) b].load(); B.seenUndo != cu; )
             {
                 ++B.seenUndo;
-                loopUndo (B);
+                loopUndo (B);    // σβήσιμο της λούπας του block
             }
 
-            for (int cs = cmdStop[(size_t) b].load(); B.seenStop != cs; )
+            for (int cm = cmdMute[(size_t) b].load(); B.seenMute != cm; )
             {
-                ++B.seenStop;
-                if (gs - B.lastTap > tapWindow) B.taps = 0;
-                ++B.taps;
-                B.lastTap = gs;
-            }
-
-            if (B.taps > 0 && gs - B.lastTap > tapWindow)
-            {
-                // N πατήματα MUTE = σίγαση / επαναφορά του layer N
-                const int layer = B.taps - 1;
-                if (B.loopState == loopPlay && layer < B.nLayers)
+                ++B.seenMute;
+                if (B.loopState == loopPlay && B.nLayers > 0)
                 {
-                    B.muteMask ^= (1u << layer);
+                    B.muteMask ^= 1u;    // mute / ενεργοποίηση: η λούπα τρέχει σιωπηλά και γυρίζει συγχρονισμένη
                     cutLoopNotes (B);
                 }
-                B.taps = 0;
             }
+            B.seenStop = cmdStop[(size_t) b].load();
+            juce::ignoreUnused (tapWindow);
 
             if (B.loopState == loopRec && (beat0 - B.recStart) >= maxLoopBars * beatsPerBar)
                 finishRecording (B, beat0);

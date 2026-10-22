@@ -29,8 +29,8 @@ public:
           holdTile (Symbol::Hold, typeface),
           chordTile (Symbol::Chord, typeface),
           recTile (Symbol::PadRecord, typeface),
-          undoTile (Symbol::Undo, typeface),
-          stopTile (Symbol::Stop, typeface),
+          undoTile (Symbol::Cancel, typeface),
+          stopTile (Symbol::Mute, typeface),
           tapeTile (Symbol::Stop, typeface),
           metroTile (Symbol::Tempo, typeface),
           folderTile (Symbol::Folder, typeface)
@@ -58,9 +58,9 @@ public:
         mfxTile.setTooltip (gr ("MIDI FX: MIDI effect (π.χ. Stepic) πριν από το instrument. Αν δεν έχει plugin, ανοίγει επιλογή αρχείου. Δεξί κλικ: αντικατάσταση, αφαίρεση"));
         fxTile.setTooltip (gr ("FX: αλυσίδα audio effects μετά το instrument. Τα κυκλάκια 1, 2, 3 και το + είναι στην κεφαλίδα του πάνελ. Δεξί κλικ: προσθήκη"));
         folderTile.setTooltip (gr ("Φάκελος αποθήκευσης των Rec Audio (zip με master και stems)"));
-        recTile.setTooltip ("Rec MIDI loop / Play / Overdub: " + gr ("ηχογράφηση, αναπαραγωγή, overdub του MIDI loop. Δεξί κλικ: quantize και πετάλι"));
-        undoTile.setTooltip ("Undo: " + gr ("αφαιρεί το τελευταίο στρώμα του MIDI loop"));
-        stopTile.setTooltip ("Stop: " + gr ("πάτα N φορές γρήγορα για σίγαση ή επαναφορά του στρώματος N"));
+        recTile.setTooltip ("Rec MIDI loop: " + gr ("γράφει τη λούπα του block (από πετάλι: του block που έπαιξες τελευταίο). Πάτημα ξανά = τέλος. Δεξί κλικ: quantize και πετάλι"));
+        undoTile.setTooltip (gr ("Σβήσιμο λούπας: σβήνει τη λούπα του block. Πετάλι: πατήματα = αριθμός block (δύο πατήματα = block 2)"));
+        stopTile.setTooltip (gr ("Mute / ενεργοποίηση λούπας του block. Πετάλι: πατήματα = αριθμός block (δύο πατήματα = block 2)"));
         tapeTile.setTooltip ("Rec Audio: " + gr ("σταμάτημα ή νέο take (master και stems ανά block, σε zip)"));
         metroTile.setTooltip (gr ("Metronome (πλήκτρο M). Ακούγεται μονοφωνικά σε ξεχωριστή έξοδο. Δεξί κλικ: ήχος, ένταση, έξοδος, πλήκτρο/πετάλι"));
 
@@ -78,9 +78,9 @@ public:
 
         holdTile.onClick = [this] { cycleHold (selected); };
         chordTile.onClick = [this] { cycleChordMode (selected); };
-        recTile.onClick  = [this] { if (isActive (selected)) engine.pressMain (selected); };
+        recTile.onClick  = [this] { engine.pressMain (engine.recTarget (false)); };
         undoTile.onClick = [this] { if (isActive (selected)) engine.pressUndo (selected); };
-        stopTile.onClick = [this] { if (isActive (selected)) engine.pressStop (selected); };
+        stopTile.onClick = [this] { if (isActive (selected)) engine.pressMute (selected); };
         tapeTile.onClick = [this] { engine.recorder.pressButton(); };
         metroTile.onClick = [this] { toggleMetronome(); };
         folderTile.onClick = [this] { chooseTapeFolder(); };
@@ -495,7 +495,7 @@ private:
             x += 60;
         }
         x = midX;
-        for (auto* t : { &recTile, &undoTile, &stopTile, &tapeTile })
+        for (auto* t : { &recTile, &stopTile, &undoTile, &tapeTile })
         {
             t->setBounds (x, ty, 52, 52);
             x += 60;
@@ -1134,10 +1134,11 @@ private:
         menu.addSubMenu (gr ("Start quantize (η αρχή του Rec MIDI loop)"), startMenu);
         menu.addSubMenu (gr ("Length quantize (το μήκος του loop)"), lenMenu);
         menu.addSubMenu (gr ("Snap νοτών"), snapMenu);
-        PopupMenu afterMenu;
-        afterMenu.addItem (50, "Play", true, engine.afterFirst.load() == 0);
-        afterMenu.addItem (51, "Overdub", true, engine.afterFirst.load() == 1);
-        menu.addSubMenu (gr ("Μετά το πρώτο loop"), afterMenu);
+        PopupMenu tapMenu;
+        tapMenu.addItem (60, "0.5 s", true, engine.tapMs.load() == 500);
+        tapMenu.addItem (61, "0.7 s", true, engine.tapMs.load() == 700);
+        tapMenu.addItem (62, "1.0 s", true, engine.tapMs.load() == 1000);
+        menu.addSubMenu (gr ("Αναμονή πατημάτων πεταλιού (mute / σβήσιμο)"), tapMenu);
         menu.addSeparator();
         menu.addItem (40, gr ("Ανάθεση πεταλιού (MIDI learn)"));
         menu.addItem (41, gr ("Αφαίρεση ανάθεσης"), code != 0);
@@ -1151,7 +1152,7 @@ private:
             if (r >= 10 && r <= 12) e.startQ = r - 10;
             if (r >= 20 && r <= 22) e.lengthQ = r - 20;
             if (r >= 30 && r <= 32) e.snapQ = r - 30;
-            if (r == 50 || r == 51) e.afterFirst = r - 50;
+            if (r >= 60 && r <= 62) e.tapMs = r == 60 ? 500 : r == 61 ? 700 : 1000;
             if (r == 40) safe->startPedalLearn (flow::ctlRec);
             if (r == 41) e.mapCode[flow::ctlRec] = 0;
             safe->saveNow();
@@ -1399,7 +1400,7 @@ private:
         root->setAttribute ("startQ", engine.startQ.load());
         root->setAttribute ("lengthQ", engine.lengthQ.load());
         root->setAttribute ("snapQ", engine.snapQ.load());
-        root->setAttribute ("afterFirst", engine.afterFirst.load());
+        root->setAttribute ("tapMs", engine.tapMs.load());
         root->setAttribute ("selected", selected);
 
         for (int b = 0; b < flow::numBlocks; ++b)
@@ -1509,7 +1510,7 @@ private:
         engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 0));
         engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 0));
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 0));
-        engine.afterFirst = jlimit (0, 1, root.getIntAttribute ("afterFirst", 0));
+        engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 700));
         pendingSelect = root.getIntAttribute ("selected", 0);
 
         for (auto& sc : scenes) sc = Scene();
@@ -1758,7 +1759,7 @@ private:
     //==========================================================================
     static const char* controlName (int i)
     {
-        static const char* const names[flow::numControls] = { "Hold", "Rec MIDI loop / Play / Overdub", "Undo", "Stop", "Rec Audio", "Metronome", "Panic", "Προηγούμενη σκηνή", "Επόμενη σκηνή" };
+        static const char* const names[flow::numControls] = { "Hold", "Rec MIDI loop", "Σβήσιμο λούπας", "Mute λούπας", "Rec Audio", "Metronome", "Panic", "Προηγούμενη σκηνή", "Επόμενη σκηνή" };
         return names[i];
     }
 
@@ -1846,17 +1847,17 @@ private:
 
         const int loop = valid ? engine.loopStateOut[(size_t) sel].load() : (int) flow::loopOff;
         const int mute = valid ? engine.loopMuteOut[(size_t) sel].load() : 0;
-        const int taps = valid ? engine.loopTapsOut[(size_t) sel].load() : 0;
+        const int taps = engine.tapsMuteOut.load();
 
         Symbol recSymbol = Symbol::PadRecord;
         Colour recColour = hobby::kIconGrey;
         if (loop == flow::loopRec)       { recSymbol = Symbol::Play;       recColour = hobby::mix (hobby::kIconGrey, hobby::kRed,   hobby::pulse (t * 1.5)); }
-        else if (loop == flow::loopPlay) { recSymbol = Symbol::PadOverdub; recColour = hobby::kOn; }
+        else if (loop == flow::loopPlay) { recSymbol = Symbol::PadRecord;  recColour = hobby::kOn; }
         else if (loop == flow::loopOver) { recSymbol = Symbol::Play;       recColour = hobby::mix (hobby::kIconGrey, hobby::kPeach, hobby::pulse (t * 1.5)); }
         recTile.setSymbol (recSymbol);
         recTile.setIconColour (recColour);
 
-        undoTile.setIconColour (loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
+        undoTile.setIconColour (engine.tapsDelOut.load() > 0 ? hobby::kCoral : loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
 
         stopTile.setIconColour (taps > 0 ? hobby::kLilac
                                          : mute != 0 ? hobby::mix (hobby::kIconGrey, hobby::kLilac, 0.4f + 0.6f * hobby::pulse (t * 0.5))
@@ -1880,9 +1881,11 @@ private:
         else                   title = "BLOCK " + String (sel + 1);
         header.title = title;
         header.chordName = (valid && ! master) ? KeyboardView::chordNameFor (engine.pcMaskOut[(size_t) sel].load(), engine.bassOut[(size_t) sel].load()) : String();
-        const int stopTaps = valid ? engine.loopTapsOut[(size_t) sel].load() : 0;
+        const int stopTaps = engine.tapsMuteOut.load();
+        const int delTaps = engine.tapsDelOut.load();
         if (message.isNotEmpty())  { header.notice = message; header.noticeColour = hobby::kCoral; }
-        else if (stopTaps > 0)     { header.notice = "STOP x" + String (stopTaps); header.noticeColour = hobby::kLilac; }
+        else if (stopTaps > 0)     { header.notice = "MUTE x" + String (stopTaps); header.noticeColour = hobby::kLilac; }
+        else if (delTaps > 0)      { header.notice = "DEL x" + String (delTaps); header.noticeColour = hobby::kCoral; }
         else                       header.notice = String();
         header.accent = valid ? blockLight (sel) : hobby::kIconGrey;
         header.masterMode = master;
@@ -2010,7 +2013,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.13.1"; }
+    const String getApplicationVersion() override { return "0.14.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
