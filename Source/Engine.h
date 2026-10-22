@@ -1521,7 +1521,7 @@ namespace flow
 
                 if (e.isRaw)    // CC, pitch bend, aftertouch: χωρίς snap
                 {
-                    double rp = std::fmod (a, len);
+                    double rp = std::fmod (a - B.recStart, len);   // η λούπα ξεκινά πάντα στην αρχή του πλέγματος
                     if (rp < 0.0) rp += len;
                     dst.push_back ({ rp, true, e.note, e.vel, true, e.d2 });
                     continue;
@@ -1547,7 +1547,7 @@ namespace flow
                     }
                 }
 
-                double p = std::fmod (a, len);
+                double p = std::fmod (a - B.recStart, len);   // η λούπα ξεκινά πάντα στην αρχή του πλέγματος: έτσι όλες οι λούπες συγχρονίζονται
                 if (p < 0.0) p += len;
                 dst.push_back ({ p, e.on, e.note, e.vel });
             }
