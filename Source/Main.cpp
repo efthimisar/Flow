@@ -174,6 +174,8 @@ public:
         refreshAll();
         lastChange = engine.changeCount.load();
         startTimerHz (30);
+        dockTimer.f = [this] { updateDock(); };
+        dockTimer.startTimerHz (60);
     }
 
     ~MainComponent() override
@@ -550,6 +552,42 @@ private:
         return blk + name;
     }
 
+    // μαγνητικό παράθυρο: κολλάει δεξιά του Flow, ευθυγραμμισμένο με την κορυφή του, και ακολουθεί όταν μετακινείται το Flow.
+    // Αν το τραβήξεις με το χέρι ξεκολλάει. Το επόμενο plugin που ανοίγει κολλάει ξανά.
+    Point<int> dockPos (const Component& w) const
+    {
+        Point<int> at { 40, 60 };
+        if (auto* top = getTopLevelComponent())
+            at = { top->getRight(), top->getY() };
+        const auto total = Desktop::getInstance().getDisplays().getTotalBounds (true);
+        at.x = jlimit (total.getX(), jmax (total.getX(), total.getRight() - w.getWidth()), at.x);
+        at.y = jlimit (total.getY(), jmax (total.getY(), total.getBottom() - w.getHeight()), at.y);
+        return at;
+    }
+
+    void updateDock()
+    {
+        if (pluginWindows.empty()) { docked = true; return; }
+        auto* top = getTopLevelComponent();
+        if (top == nullptr) return;
+        auto* w = pluginWindows.begin()->second.get();
+
+        const auto topBounds = top->getBounds();
+        if (topBounds != lastTopBounds)
+        {
+            lastTopBounds = topBounds;
+            if (docked)
+            {
+                w->setTopLeftPosition (dockPos (*w));
+                lastWinPos = w->getPosition();
+            }
+        }
+        else if (docked && (w->getPosition() - lastWinPos).getDistanceFromOrigin() > 4)
+        {
+            docked = false;   // το τράβηξες με το χέρι
+        }
+    }
+
     bool hasWindow (AudioPluginInstance* p) const { return p != nullptr && pluginWindows.count (p) > 0; }
 
     void rememberWindowPos (PluginWindow& w)
@@ -564,31 +602,20 @@ private:
         if (e == nullptr)
             e = new GenericAudioProcessorEditor (*p);
 
+        // ένα παράθυρο plugin τη φορά: το νέο αντικαθιστά το προηγούμενο και κολλάει στη δεξιά πλευρά του Flow
+        for (auto& kv : pluginWindows)
+            rememberWindowPos (*kv.second);
+        pluginWindows.clear();
+
         const String key = "pwpos_" + p->getName();
         auto w = std::make_unique<PluginWindow> (*this, p, windowTitle (p), e, key);
 
-        Point<int> at;
-        const String saved = properties.getUserSettings()->getValue (key);
-        if (saved.containsChar (' '))
-        {
-            at = { saved.upToFirstOccurrenceOf (" ", false, false).getIntValue(),
-                   saved.fromFirstOccurrenceOf (" ", false, false).getIntValue() };
-        }
-        else
-        {
-            const int n = (int) pluginWindows.size();
-            if (auto* top = getTopLevelComponent())
-                at = { top->getRight() + 12 + 28 * n, top->getY() + 28 * n };
-            else
-                at = { 40 + 28 * n, 60 + 28 * n };
-        }
-
-        const auto total = Desktop::getInstance().getDisplays().getTotalBounds (true);
-        at.x = jlimit (total.getX(), jmax (total.getX(), total.getRight() - w->getWidth()), at.x);
-        at.y = jlimit (total.getY(), jmax (total.getY(), total.getBottom() - w->getHeight()), at.y);
-        w->setTopLeftPosition (at);
+        docked = true;
+        w->setTopLeftPosition (dockPos (*w));
         w->setVisible (true);
         w->toFront (true);
+        lastWinPos = w->getPosition();
+        if (auto* top = getTopLevelComponent()) lastTopBounds = top->getBounds();
         pluginWindows[p] = std::move (w);
     }
 
@@ -1998,6 +2025,14 @@ private:
     std::map<const AudioPluginInstance*, String> stateCache;
 
     std::map<AudioPluginInstance*, std::unique_ptr<PluginWindow>> pluginWindows;
+    bool docked = true;
+    Point<int> lastWinPos;
+    Rectangle<int> lastTopBounds;
+    struct DockTimer : public Timer
+    {
+        std::function<void()> f;
+        void timerCallback() override { if (f) f(); }
+    } dockTimer;
     std::unique_ptr<FileChooser> chooser;
 
     LoopsView loopsView;
@@ -2013,7 +2048,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.14.0"; }
+    const String getApplicationVersion() override { return "0.15.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
