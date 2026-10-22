@@ -28,7 +28,7 @@ public:
           holdTile (Symbol::Hold, typeface),
           chordTile (Symbol::Chord, typeface),
           recTile (Symbol::PadRecord, typeface),
-          undoTile (Symbol::Mute, typeface),
+          undoTile (Symbol::Undo, typeface),
           stopTile (Symbol::Stop, typeface),
           tapeTile (Symbol::Stop, typeface),
           metroTile (Symbol::Tempo, typeface),
@@ -57,8 +57,8 @@ public:
         fxTile.setTooltip (gr ("FX: αλυσίδα audio effects μετά το instrument. Τα κυκλάκια 1, 2, 3 και το + είναι στην κεφαλίδα του πάνελ. Δεξί κλικ: προσθήκη"));
         folderTile.setTooltip (gr ("Φάκελος αποθήκευσης των Rec Audio (zip με master και stems)"));
         recTile.setTooltip ("Rec MIDI loop / Play / Overdub: " + gr ("ηχογράφηση, αναπαραγωγή, overdub του MIDI loop. Δεξί κλικ: quantize και πετάλι"));
-        undoTile.setTooltip ("Mute: " + gr ("πάτα N φορές για σίγαση ή επαναφορά του στρώματος N του MIDI loop"));
-        stopTile.setTooltip ("Stop: " + gr ("σταματά το MIDI loop (το Rec MIDI loop το ξαναρχίζει). Δύο φορές γρήγορα = Undo, αφαιρεί το τελευταίο στρώμα"));
+        undoTile.setTooltip ("Undo: " + gr ("αφαιρεί το τελευταίο στρώμα του MIDI loop"));
+        stopTile.setTooltip ("Stop: " + gr ("πάτα N φορές γρήγορα για σίγαση ή επαναφορά του στρώματος N"));
         tapeTile.setTooltip ("Rec Audio: " + gr ("σταμάτημα ή νέο take (master και stems ανά block, σε zip)"));
         metroTile.setTooltip (gr ("Metronome (πλήκτρο M). Ακούγεται μονοφωνικά σε ξεχωριστή έξοδο. Δεξί κλικ: ήχος, ένταση, έξοδος, πλήκτρο/πετάλι"));
 
@@ -76,7 +76,7 @@ public:
         holdTile.onClick = [this] { cycleHold (selected); };
         chordTile.onClick = [this] { cycleChordMode (selected); };
         recTile.onClick  = [this] { if (isActive (selected)) engine.pressMain (selected); };
-        undoTile.onClick = [this] { if (isActive (selected)) engine.pressMute (selected); };
+        undoTile.onClick = [this] { if (isActive (selected)) engine.pressUndo (selected); };
         stopTile.onClick = [this] { if (isActive (selected)) engine.pressStop (selected); };
         tapeTile.onClick = [this] { engine.recorder.pressButton(); };
         metroTile.onClick = [this] { toggleMetronome(); };
@@ -85,7 +85,7 @@ public:
         // δεξί κλικ: ανάθεση σε πετάλι / ρυθμίσεις
         holdTile.onRightClick = [this] { showPedalMenu (flow::ctlHold); };
         recTile.onRightClick  = [this] { showRecMenu(); };
-        undoTile.onRightClick = [this] { showPedalMenu (flow::ctlMute); };
+        undoTile.onRightClick = [this] { showPedalMenu (flow::ctlUndo); };
         stopTile.onRightClick = [this] { showPedalMenu (flow::ctlStop); };
         tapeTile.onRightClick = [this] { showPedalMenu (flow::ctlTape); };
         metroTile.onRightClick = [this] { showMetroMenu(); };
@@ -1423,6 +1423,11 @@ private:
             {
                 auto* l = e->createNewChildElement ("Loop");
                 l->setAttribute ("beats", snap.beats);
+                {
+                    StringArray lb;
+                    for (auto v : snap.layerBeats) lb.add (String (v, 4));
+                    l->setAttribute ("layerBeats", lb.joinIntoString (" "));
+                }
                 l->setAttribute ("mute", (int) snap.mute);
                 for (auto& layer : snap.layers)
                     l->createNewChildElement ("Layer")->addTextElement (loopToText (layer));
@@ -1607,6 +1612,12 @@ private:
             snap.mute = (unsigned) l->getIntAttribute ("mute", 0);
             for (auto* layer : l->getChildWithTagNameIterator ("Layer"))
                 snap.layers.push_back (loopFromText (layer->getAllSubText()));
+            {
+                StringArray lb;
+                lb.addTokens (l->getStringAttribute ("layerBeats"), " ", "");
+                lb.removeEmptyStrings();
+                for (auto& s : lb) snap.layerBeats.push_back (s.getDoubleValue());
+            }
             if (snap.beats > 0.0 && ! snap.layers.empty())
                 engine.setLoop (slot, snap);
         }
@@ -1770,8 +1781,7 @@ private:
         {
             case flow::ctlHold:  return &holdTile;
             case flow::ctlRec:   return &recTile;
-            case flow::ctlUndo:  return &stopTile;
-            case flow::ctlMute:  return &undoTile;
+            case flow::ctlUndo:  return &undoTile;
             case flow::ctlStop:  return &stopTile;
             case flow::ctlMetro: return &metroTile;
             case flow::ctlScenePrev:
@@ -1833,12 +1843,11 @@ private:
         recTile.setSymbol (recSymbol);
         recTile.setIconColour (recColour);
 
-        undoTile.setIconColour (taps > 0 ? hobby::kLilac
+        undoTile.setIconColour (loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
+
+        stopTile.setIconColour (taps > 0 ? hobby::kLilac
                                          : mute != 0 ? hobby::mix (hobby::kIconGrey, hobby::kLilac, 0.4f + 0.6f * hobby::pulse (t * 0.5))
                                                      : hobby::kIconGrey);
-
-        const bool loopStopped = valid && engine.loopStoppedOut[(size_t) sel].load() != 0;
-        stopTile.setIconColour (loopStopped ? hobby::kPeach : hobby::kIconGrey);
 
         switch (engine.recorder.getState())
         {
@@ -1860,7 +1869,7 @@ private:
         header.chordName = (valid && ! master) ? KeyboardView::chordNameFor (engine.pcMaskOut[(size_t) sel].load(), engine.bassOut[(size_t) sel].load()) : String();
         const int stopTaps = valid ? engine.loopTapsOut[(size_t) sel].load() : 0;
         if (message.isNotEmpty())  { header.notice = message; header.noticeColour = hobby::kCoral; }
-        else if (stopTaps > 0)     { header.notice = "MUTE x" + String (stopTaps); header.noticeColour = hobby::kLilac; }
+        else if (stopTaps > 0)     { header.notice = "STOP x" + String (stopTaps); header.noticeColour = hobby::kLilac; }
         else                       header.notice = String();
         header.accent = valid ? blockLight (sel) : hobby::kIconGrey;
         header.masterMode = master;
@@ -1988,7 +1997,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.12.0"; }
+    const String getApplicationVersion() override { return "0.12.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

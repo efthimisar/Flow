@@ -67,6 +67,7 @@ namespace flow
     struct LoopSnapshot
     {
         double beats = 0.0;
+        std::vector<double> layerBeats;   // μήκος κάθε layer (το loop είναι το μεγαλύτερο, τα άλλα επαναλαμβάνονται)
         unsigned mute = 0;
         std::vector<std::vector<LoopEvent>> layers;
     };
@@ -315,7 +316,7 @@ namespace flow
             snap.beats = B.loopBeats;
             snap.mute = B.muteMask;
             snap.layers.clear();
-            for (int l = 0; l < B.nLayers; ++l) snap.layers.push_back (B.layerEv[(size_t) l]);
+            for (int l = 0; l < B.nLayers; ++l) { snap.layers.push_back (B.layerEv[(size_t) l]); snap.layerBeats.push_back (B.layerBeats[(size_t) l]); }
             return true;
         }
 
@@ -329,7 +330,14 @@ namespace flow
             for (auto& l : B.layerEv) l.clear();
             B.nLayers = juce::jmin ((int) snap.layers.size(), maxLayers);
             for (int l = 0; l < B.nLayers; ++l) B.layerEv[(size_t) l] = snap.layers[(size_t) l];
-            B.loopBeats = snap.beats;
+            B.loopBeats = 0.0;
+            for (int l = 0; l < B.nLayers; ++l)
+            {
+                const double lb = (size_t) l < snap.layerBeats.size() && snap.layerBeats[(size_t) l] > 0.0 ? snap.layerBeats[(size_t) l] : snap.beats;
+                B.layerBeats[(size_t) l] = lb;
+                B.loopBeats = std::max (B.loopBeats, lb);
+            }
+            if (B.nLayers == 0) B.loopBeats = snap.beats;
             B.muteMask = snap.mute;
             B.loopState = B.nLayers > 0 ? loopPlay : loopOff;
         }
@@ -598,6 +606,7 @@ namespace flow
             juce::MidiBuffer out;
             std::bitset<128> pressed, latched, sounding, loopSounding, recOpen;
             std::array<std::vector<LoopEvent>, maxLayers> layerEv;
+            std::array<double, maxLayers> layerBeats {};
             int nLayers = 0;
             unsigned muteMask = 0;
             int seenMain = 0, seenUndo = 0, seenStop = 0, seenMute = 0, seenPanic = 0, taps = 0;
@@ -1289,9 +1298,8 @@ namespace flow
         }
 
         // κλείνει το layer που ηχογραφείται (rec) και το προσθέτει στο loop. Επιστρέφει true αν είχε νότες.
-        bool commitLayer (Block& B, double beatNow)
+        bool commitLayer (Block& B, double beatNow, double len)
         {
-            const double len = B.loopBeats;
             const double elapsed = std::max (1.0e-6, std::min (len, beatNow - B.recStart));
 
             for (int n = 0; n < 128; ++n)    // νότες που κρατιούνται όταν τελειώνει η ηχογράφηση σταματούν στο τέλος
@@ -1348,8 +1356,22 @@ namespace flow
             B.recOpen.reset();
 
             if (dst.empty()) return false;
+            B.layerBeats[(size_t) B.nLayers] = len;
             ++B.nLayers;
+            B.loopBeats = 0.0;
+            for (int l = 0; l < B.nLayers; ++l) B.loopBeats = std::max (B.loopBeats, B.layerBeats[(size_t) l]);
             return true;
+        }
+
+        // μήκος ενός layer από τον χρόνο που ηχογραφήθηκε, με το Length quantize
+        double quantizedLength (double elapsed) const
+        {
+            const int lq = lengthQ.load();
+            double beats;
+            if (lq == 1)      beats = std::max (1.0, std::round (elapsed));
+            else if (lq == 2) beats = std::max (1.0, std::round (elapsed / beatsPerBar)) * beatsPerBar;
+            else              beats = std::max (1.0, std::ceil (elapsed / beatsPerBar - 1.0e-9)) * beatsPerBar;
+            return std::min (beats, maxLoopBars * beatsPerBar);
         }
 
         void finishRecording (Block& B, double beatNow, bool allowOverdub = true)
@@ -1357,14 +1379,9 @@ namespace flow
             const double elapsed = beatNow - B.recStart;
             if (elapsed <= 0.0) { stopLoop (B); return; }   // ακυρώθηκε πριν αρχίσει (start quantize)
 
-            const int lq = lengthQ.load();
-            double beats;
-            if (lq == 1)      beats = std::max (1.0, std::round (elapsed));
-            else if (lq == 2) beats = std::max (1.0, std::round (elapsed / beatsPerBar)) * beatsPerBar;
-            else              beats = std::max (1.0, std::ceil (elapsed / beatsPerBar - 1.0e-9)) * beatsPerBar;
-            B.loopBeats = std::min (beats, maxLoopBars * beatsPerBar);
+            const double beats = quantizedLength (elapsed);
 
-            if (commitLayer (B, beatNow))
+            if (commitLayer (B, beatNow, beats))
             {
                 B.loopState = loopPlay;
                 if (allowOverdub && afterFirst.load() == 1)    // μετά το πρώτο loop: κατευθείαν overdub
@@ -1381,9 +1398,10 @@ namespace flow
             }
         }
 
+        // κάθε layer έχει δικό του ελεύθερο μήκος: αν είναι μεγαλύτερο από το loop, το loop μεγαλώνει και τα άλλα επαναλαμβάνονται
         void finishOverdub (Block& B, double beatNow)
         {
-            commitLayer (B, beatNow);
+            commitLayer (B, beatNow, quantizedLength (std::max (0.0, beatNow - B.recStart)));
             B.loopState = loopPlay;
         }
 
@@ -1394,9 +1412,9 @@ namespace flow
                 case loopOff:
                 {
                     const int sq = startQ.load();
-                    if (sq == 1)      B.recStart = std::ceil (beat - 1.0e-9);
-                    else if (sq == 2) B.recStart = std::ceil (beat / beatsPerBar - 1.0e-9) * beatsPerBar;
-                    else              B.recStart = std::floor (beat / beatsPerBar) * beatsPerBar;   // από την αρχή του μέτρου που πατήθηκε
+                    // η ηχογράφηση ξεκινά αμέσως στο πάτημα. Το Start quantize κουμπώνει την αρχή προς τα πίσω.
+                    if (sq == 1)      B.recStart = std::floor (beat + 1.0e-9);
+                    else              B.recStart = std::floor (beat / beatsPerBar + 1.0e-9) * beatsPerBar;   // από την αρχή του μέτρου που πατήθηκε
                     B.rec.clear();
                     B.recOpen.reset();
                     B.loopState = loopRec;
@@ -1404,10 +1422,12 @@ namespace flow
                 }
                 case loopRec:  finishRecording (B, beat); break;
                 case loopPlay:
-                    if (B.stopped) { B.stopped = false; break; }   // μετά από Stop: ξαναπαίζει
                     if (B.nLayers < maxLayers)
                     {
-                        B.recStart = beat;
+                        const int sq2 = startQ.load();
+                        B.recStart = sq2 == 1 ? std::floor (beat + 1.0e-9)
+                                   : sq2 == 2 ? std::floor (beat / beatsPerBar + 1.0e-9) * beatsPerBar
+                                              : beat;
                         B.rec.clear();
                         B.recOpen.reset();
                         B.loopState = loopOver;
@@ -1415,19 +1435,6 @@ namespace flow
                     break;
                 case loopOver: finishOverdub (B, beat); break;
                 default: break;
-            }
-        }
-
-        // Stop: ολοκληρώνει ό,τι ηχογραφείται και σταματά την αναπαραγωγή. Το Rec MIDI loop την ξαναρχίζει.
-        void loopStop (Block& B, double beat)
-        {
-            if (B.loopState == loopRec)       finishRecording (B, beat, false);
-            else if (B.loopState == loopOver) finishOverdub (B, beat);
-
-            if (B.loopState == loopPlay && ! B.stopped)
-            {
-                B.stopped = true;
-                cutLoopNotes (B);
             }
         }
 
@@ -1448,6 +1455,8 @@ namespace flow
                 --B.nLayers;
                 B.layerEv[(size_t) B.nLayers].clear();
                 B.muteMask &= ~(1u << B.nLayers);
+                B.loopBeats = 0.0;                        // το μήκος γυρίζει σε αυτό του μεγαλύτερου layer που έμεινε
+                for (int l = 0; l < B.nLayers; ++l) B.loopBeats = std::max (B.loopBeats, B.layerBeats[(size_t) l]);
                 cutLoopNotes (B);
                 if (B.nLayers == 0) stopLoop (B);
             }
@@ -1542,26 +1551,9 @@ namespace flow
                 loopUndo (B);
             }
 
-            const int64_t doubleTapWindow = (int64_t) (sr * 0.4);
             for (int cs = cmdStop[(size_t) b].load(); B.seenStop != cs; )
             {
                 ++B.seenStop;
-                if (B.stopTapValid && gs - B.lastStopTap <= doubleTapWindow)
-                {
-                    loopUndo (B);               // Stop δύο φορές γρήγορα = Undo
-                    B.stopTapValid = false;
-                }
-                else
-                {
-                    loopStop (B, beat0);
-                    B.lastStopTap = gs;
-                    B.stopTapValid = true;
-                }
-            }
-
-            for (int cm2 = cmdMute[(size_t) b].load(); B.seenMute != cm2; )
-            {
-                ++B.seenMute;
                 if (gs - B.lastTap > tapWindow) B.taps = 0;
                 ++B.taps;
                 B.lastTap = gs;
@@ -1581,7 +1573,7 @@ namespace flow
 
             if (B.loopState == loopRec && (beat0 - B.recStart) >= maxLoopBars * beatsPerBar)
                 finishRecording (B, beat0);
-            else if (B.loopState == loopOver && (beat0 - B.recStart) >= B.loopBeats)
+            else if (B.loopState == loopOver && (beat0 - B.recStart) >= maxLoopBars * beatsPerBar)
                 finishOverdub (B, beat0);
 
             // ---- collect everything that happens in this block
@@ -1611,10 +1603,11 @@ namespace flow
 
             if ((B.loopState == loopPlay || B.loopState == loopOver) && B.loopBeats > 0.0 && ! B.stopped)
             {
-                const double L = B.loopBeats;
+                const double L0 = B.loopBeats;
                 for (int layer = 0; layer < B.nLayers; ++layer)
                 {
                     if ((B.muteMask >> layer) & 1u) continue;
+                    const double L = B.layerBeats[(size_t) layer] > 0.0 ? B.layerBeats[(size_t) layer] : L0;
 
                     for (const auto& e : B.layerEv[(size_t) layer])
                     {
