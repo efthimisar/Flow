@@ -1569,7 +1569,7 @@ private:
     {
         clearEverything();
 
-        engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 120.0));
+        engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 98.0));
         engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 0));
         engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 0));
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 0));
@@ -1817,7 +1817,7 @@ private:
         std::unique_ptr<XmlElement> xml (properties.getUserSettings()->getXmlValue ("sessionBackup"));
         if (xml == nullptr || ! xml->hasTagName ("FlowSet")) return;
         applySet (*xml, startupCrashed);
-        engine.tempo = jlimit (40.0, 240.0, xml->getDoubleAttribute ("tempo", 120.0));
+        engine.tempo = jlimit (40.0, 240.0, xml->getDoubleAttribute ("tempo", 98.0));
         saveNow();
     }
 

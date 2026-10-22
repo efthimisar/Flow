@@ -136,7 +136,7 @@ namespace flow
         std::atomic<int> axisBarsOut { 4 };
 
         // tempo και quantize (global)
-        std::atomic<double> tempo { 120.0 };
+        std::atomic<double> tempo { 98.0 };
         std::atomic<int> startQ { 0 }, lengthQ { 0 }, snapQ { 0 };   // startQ/lengthQ: 0 Off, 1 Beat, 2 Bar. snapQ: 0 Off, 1 = 1/8, 2 = 1/16
         std::atomic<int> tapRequest { 0 };
         std::atomic<int> afterFirst { 0 };      // μετά το πρώτο loop: 0 = Play, 1 = Overdub
