@@ -19,6 +19,14 @@ namespace flow
     constexpr int numBlocks   = 16;
     constexpr int lowestNote  = 21;     // A0
     constexpr int highestNote = 108;    // C8
+    // καταγραφή βημάτων σε αρχείο (Music/Flow/Flow-log.txt) για να φαίνεται πού σταματά ένα crash
+    inline void flowLog (const juce::String& s)
+    {
+        auto dir = juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Flow");
+        dir.createDirectory();
+        dir.getChildFile ("Flow-log.txt").appendText (juce::Time::getCurrentTime().formatted ("%H:%M:%S ") + s + "\n");
+    }
+
     constexpr int maxLoopBars = 16;     // μέγιστο μήκος MIDI loop
     constexpr double beatsPerBar = 4.0;
 
@@ -252,7 +260,10 @@ namespace flow
         {
             if (fresh != nullptr)
             {
+                flowLog ("setMidiFx: prepare start, in=" + juce::String (fresh->getTotalNumInputChannels()) + " out=" + juce::String (fresh->getTotalNumOutputChannels())
+                         + " buses in/out=" + juce::String (fresh->getBusCount (true)) + "/" + juce::String (fresh->getBusCount (false)));
                 prepare (*fresh);
+                flowLog ("setMidiFx: prepare done, in=" + juce::String (fresh->getTotalNumInputChannels()) + " out=" + juce::String (fresh->getTotalNumOutputChannels()));
                 fresh->setPlayHead (&head);
             }
             const juce::ScopedLock sl (lock);
@@ -262,7 +273,9 @@ namespace flow
             if (B.midiFx != nullptr)
                 B.mfxScratch.setSize (juce::jmax (1, juce::jmax (B.midiFx->getTotalNumInputChannels(), B.midiFx->getTotalNumOutputChannels())),
                                       juce::jmax (blockSize, 4096));
+            B.mfxLogged = false;
             B.panicPending = true;
+            flowLog ("setMidiFx: installed");
             return old;
         }
 
@@ -482,7 +495,9 @@ namespace flow
                         B.mfxScratch.setSize (B.mfxScratch.getNumChannels(), numSamples, false, false, true);
                     B.mfxScratch.clear();
                     juce::AudioBuffer<float> mview (B.mfxScratch.getArrayOfWritePointers(), B.mfxScratch.getNumChannels(), numSamples);
+                    if (! B.mfxLogged) flowLog ("midiFx first processBlock: start, channels=" + juce::String (mview.getNumChannels()) + " samples=" + juce::String (numSamples));
                     B.midiFx->processBlock (mview, B.out);
+                    if (! B.mfxLogged) { B.mfxLogged = true; flowLog ("midiFx first processBlock: done"); }
                 }
 
                 if (B.panicPending)
@@ -610,7 +625,7 @@ namespace flow
             int nLayers = 0;
             unsigned muteMask = 0;
             int seenMain = 0, seenUndo = 0, seenStop = 0, seenMute = 0, seenPanic = 0, taps = 0;
-            bool stopped = false, stopTapValid = false;
+            bool stopped = false, stopTapValid = false, mfxLogged = false;
             int64_t lastStopTap = 0;
             unsigned loopSusMask = 0, loopBendMask = 0;
             int64_t lastTap = 0;

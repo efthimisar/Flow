@@ -556,6 +556,7 @@ private:
 
     void openWindowFor (AudioPluginInstance* p)
     {
+        flow::flowLog ("openWindowFor: " + p->getName());
         AudioProcessorEditor* e = p->hasEditor() ? p->createEditorIfNeeded() : nullptr;
         if (e == nullptr)
             e = new GenericAudioProcessorEditor (*p);
@@ -901,6 +902,7 @@ private:
     // aux plugin (MIDI FX / FX): φορτώνεται και παραδίδεται στο done
     void loadAux (const PluginDescription& d, const MemoryBlock& state, const String& token, std::function<void (PluginPtr)> done)
     {
+        flow::flowLog ("loadAux: " + d.name + " (" + d.pluginFormatName + ") token=" + token);
         setLoading (token, true);
         ++pendingLoads;
         SafePointer<MainComponent> safe (this);
@@ -917,8 +919,10 @@ private:
                     safe->setMessage (gr ("Αποτυχία φόρτωσης: ") + error);
                     return;
                 }
+                flow::flowLog ("loadAux: instance created: " + inst->getName());
                 if (state.getSize() > 0)
                     inst->setStateInformation (state.getData(), (int) state.getSize());
+                flow::flowLog ("loadAux: handing over to engine");
                 done (std::move (inst));
             });
     }
@@ -931,8 +935,11 @@ private:
             loadAux (d, MemoryBlock(), "b" + String (block) + "m", [this, block] (PluginPtr p)
             {
                 if (! isActive (block)) return;
+                flow::flowLog ("loadMidiFxInto: closeEditor");
                 closeEditor();
+                flow::flowLog ("loadMidiFxInto: setMidiFx");
                 auto old = engine.setMidiFx (block, std::move (p));
+                flow::flowLog ("loadMidiFxInto: installed, opening window");
                 if (old != nullptr) stateCache.erase (old.get());
                 old.reset();
                 selected = block;
@@ -1997,7 +2004,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.12.1"; }
+    const String getApplicationVersion() override { return "0.12.2"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
