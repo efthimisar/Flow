@@ -620,6 +620,9 @@ namespace flow
             juce::AudioBuffer<float> scratch, mfxScratch;
             juce::MidiBuffer out;
             std::bitset<128> pressed, latched, sounding, loopSounding, recOpen;
+            std::bitset<128> lpGroup, lpSingle;   // LP: νότες που μαζεύονται στο παράθυρο συγχορδίας / μονές νότες που παίζουν όσο πατιούνται
+            bool lpOpen = false;
+            int64_t lpEnd = 0;
             std::array<std::vector<LoopEvent>, maxLayers> layerEv;
             std::array<double, maxLayers> layerBeats {};
             int nLayers = 0;
@@ -645,6 +648,7 @@ namespace flow
             void resetState()
             {
                 pressed.reset(); latched.reset(); sounding.reset(); loopSounding.reset(); recOpen.reset();
+                lpGroup.reset(); lpSingle.reset(); lpOpen = false; lpEnd = 0;
                 vel.fill (0);
                 outNote.fill (0); loopOut.fill (0); chordCount.fill (0);
                 lastLatched = -1; prevHold = 0; prevArp = 0; arpIndex = 0;
@@ -1229,9 +1233,42 @@ namespace flow
         }
 
         // brings the sounding notes in line with what should sound now
+        static std::bitset<128> targetSet (const Block& B, int hold)
+        {
+            if (hold == 0) return B.pressed;
+            if (hold == 2) return B.latched | (B.lpSingle & B.pressed);
+            return B.latched;
+        }
+
+        // LP: κλείνει το παράθυρο συγχορδίας. 2+ νότες = νέα συγχορδία (ίδιες νότες με την κρατημένη = σβήνει),
+        // 1 νότα = παίζει όσο πατιέται, χωρίς να κρατιέται.
+        void lpClose (Block& B, int b, int pos, int hold, int arp)
+        {
+            B.lpOpen = false;
+            if (B.lpGroup.count() >= 2)
+            {
+                if (B.lpGroup == B.latched)
+                {
+                    B.latched.reset();
+                    B.lastLatched = -1;
+                }
+                else
+                {
+                    B.latched = B.lpGroup;
+                    B.lastLatched = highestSet (B.lpGroup);
+                }
+            }
+            else
+            {
+                B.lpSingle |= B.lpGroup;
+            }
+            B.lpGroup.reset();
+            updateOutput (B, b, pos, hold, arp);
+        }
+
         void updateOutput (Block& B, int b, int pos, int hold, int arp)
         {
-            const auto& target = hold == 0 ? B.pressed : B.latched;
+            const std::bitset<128> target = targetSet (B, hold);
 
             if (arp == 0)
             {
@@ -1252,7 +1289,7 @@ namespace flow
 
         void arpStep (Block& B, int b, int pos, int hold, int arp)
         {
-            const auto& target = hold == 0 ? B.pressed : B.latched;
+            const std::bitset<128> target = targetSet (B, hold);
             if (target.none()) return;
 
             offAll (B, b, pos);
@@ -1486,6 +1523,7 @@ namespace flow
             B.sounding.reset();
             B.pressed.reset();
             B.latched.reset();
+            B.lpGroup.reset(); B.lpSingle.reset(); B.lpOpen = false;
             B.lastLatched = -1;
             B.arpIndex = 0;
             B.panicPending = true;
@@ -1516,6 +1554,11 @@ namespace flow
 
             // ---- mode changes
             bool changed = false;
+
+            if (hold != 2 && (B.lpOpen || B.lpSingle.any()))
+            {
+                B.lpOpen = false; B.lpGroup.reset(); B.lpSingle.reset();
+            }
 
             if (hold != B.prevHold)
             {
@@ -1646,22 +1689,32 @@ namespace flow
             });
 
             // ---- run them in time order
+            const int64_t lpWindow = (int64_t) (sr * 0.030);
+
             for (const auto& a : actions)
             {
+                // LP: αν το παράθυρο συγχορδίας έχει λήξει πριν από αυτό το γεγονός, κλείνει πρώτα
+                if (hold == 2 && B.lpOpen && gs + a.pos >= B.lpEnd)
+                    lpClose (B, b, (int) std::max<int64_t> (0, B.lpEnd - gs), hold, arp);
+
                 switch (a.kind)
                 {
                     case Kind::Live:
                         if (a.on)
                         {
-                            const bool firstFinger = B.pressed.none();
                             B.pressed.set ((size_t) a.note);
                             B.vel[(size_t) a.note] = (uint8_t) a.vel;
 
-                            if (hold == 2)   // LP: κρατιέται όποια συγχορδία παίξεις, νέα συγχορδία ξεπατάει την προηγούμενη
+                            if (hold == 2)   // LP: οι νότες που πατιούνται μέσα σε 30 ms γίνονται μία συγχορδία (2+ νότες), η παλιά μένει ώσπου να είναι έτοιμη η νέα
                             {
-                                if (firstFinger) B.latched.reset();
-                                B.latched.set ((size_t) a.note);
-                                B.lastLatched = a.note;
+                                if (! B.lpOpen)
+                                {
+                                    B.lpOpen = true;
+                                    B.lpGroup.reset();
+                                    B.lpEnd = gs + a.pos + lpWindow;
+                                }
+                                B.lpGroup.set ((size_t) a.note);
+                                B.lpSingle.reset ((size_t) a.note);
                             }
                             else if (hold == 1)
                             {
@@ -1725,6 +1778,9 @@ namespace flow
                         break;
                 }
             }
+
+            if (hold == 2 && B.lpOpen && B.lpEnd < ge)
+                lpClose (B, b, (int) juce::jlimit<int64_t> (0, numSamples - 1, B.lpEnd - gs), hold, arp);
 
             loopStateOut[b] = B.loopState;
             loopBeatsOut[b] = (B.loopState == loopPlay || B.loopState == loopOver) ? B.loopBeats : 0.0;
