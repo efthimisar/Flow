@@ -91,7 +91,7 @@ namespace flow
             {
                 active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
                 lo[b] = lowestNote; hi[b] = lowestNote;
-                holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0;
+                holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0; swBits[(size_t) b * 2] = 0; swBits[(size_t) b * 2 + 1] = 0;
                 blockOff[b] = 0; chordMode[b] = 0; chordType[b] = 0; chordMinor[b] = 0; chordTonic[b] = -1; pcMaskOut[b] = 0; bassOut[b] = -1;
                 arpMode[b] = 0;
                 curveMode[b] = 0;
@@ -112,6 +112,7 @@ namespace flow
         }
 
         //==================== controls and read-outs (message thread) ====================
+        std::array<std::atomic<uint64_t>, numBlocks * 2> swBits;      // AL: πλήκτρα που είναι key switch (πορτοκαλί), για την οθόνη
         std::array<std::atomic<uint64_t>, numBlocks * 2> latchBits;   // πλήκτρα που κρατιούνται από το Latch (και νότες συγχορδίας), για την οθόνη
         std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, blockOff, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
                                                 volMap, loopStateOut, loopLayersOut, loopMuteOut, loopTapsOut,
@@ -171,6 +172,45 @@ namespace flow
 
         // ζώνη block: το επόμενο ζευγάρι πλήκτρων που θα πατηθούν την ορίζει
         void startZone (int b)          { zoneFirst[b] = 0; zoneState[b] = 1; }
+        // AL: συγχορδίες key switch ως κείμενο "πλήκτρο=νότα,νότα,νότα;..." (για αποθήκευση στο set)
+        juce::String getAlText (int b)
+        {
+            const juce::ScopedLock sl (lock);
+            const auto& B = blocks[(size_t) b];
+            juce::String out;
+            for (int k = 0; k < 128; ++k)
+            {
+                if (! B.alSwitch[(size_t) k]) continue;
+                juce::StringArray notes;
+                for (int n = 0; n < 128; ++n)
+                    if (B.alChord[(size_t) k][(size_t) n]) notes.add (juce::String (n));
+                if (out.isNotEmpty()) out << ";";
+                out << k << "=" << notes.joinIntoString (",");
+            }
+            return out;
+        }
+
+        void setAlText (int b, const juce::String& text)
+        {
+            const juce::ScopedLock sl (lock);
+            auto& B = blocks[(size_t) b];
+            for (auto& c : B.alChord) c.reset();
+            B.alSwitch.reset();
+            for (const auto& item : juce::StringArray::fromTokens (text, ";", ""))
+            {
+                const int eq = item.indexOfChar ('=');
+                if (eq < 1) continue;
+                const int k = item.substring (0, eq).getIntValue();
+                if (k < 0 || k > 127) continue;
+                for (const auto& t : juce::StringArray::fromTokens (item.substring (eq + 1), ",", ""))
+                {
+                    const int n = t.getIntValue();
+                    if (n >= 0 && n < 128) B.alChord[(size_t) k].set ((size_t) n);
+                }
+                if (B.alChord[(size_t) k].any()) B.alSwitch.set ((size_t) k);
+            }
+        }
+
         void setZone (int b, int l, int h, int seq = -1)
         {
             lo[b] = juce::jmin (l, h);
@@ -623,6 +663,11 @@ namespace flow
             std::bitset<128> lpGroup, lpSingle;   // LP: νότες που μαζεύονται στο παράθυρο συγχορδίας / μονές νότες που παίζουν όσο πατιούνται
             bool lpOpen = false;
             int64_t lpEnd = 0;
+            // AL (Advanced Latch): key switches → συγχορδίες
+            std::array<std::bitset<128>, 128> alChord;
+            std::bitset<128> alSwitch, alGroup, alPending, alMute;
+            bool alOpen = false, alHavePending = false;
+            int64_t alEnd = 0;
             std::array<std::vector<LoopEvent>, maxLayers> layerEv;
             std::array<double, maxLayers> layerBeats {};
             int nLayers = 0;
@@ -649,6 +694,8 @@ namespace flow
             {
                 pressed.reset(); latched.reset(); sounding.reset(); loopSounding.reset(); recOpen.reset();
                 lpGroup.reset(); lpSingle.reset(); lpOpen = false; lpEnd = 0;
+                for (auto& c : alChord) c.reset();
+                alSwitch.reset(); alGroup.reset(); alPending.reset(); alMute.reset(); alOpen = false; alHavePending = false; alEnd = 0;
                 vel.fill (0);
                 outNote.fill (0); loopOut.fill (0); chordCount.fill (0);
                 lastLatched = -1; prevHold = 0; prevArp = 0; arpIndex = 0;
@@ -1029,7 +1076,7 @@ namespace flow
 
                     switch (i)
                     {
-                        case ctlHold:  if (ok) { holdMode[(size_t) sel] = (holdMode[(size_t) sel].load() + 1) % 3; ++changeCount; } break;
+                        case ctlHold:  if (ok) { holdMode[(size_t) sel] = (holdMode[(size_t) sel].load() + 1) % 5; ++changeCount; } break;
                         case ctlRec:   if (ok) ++cmdMain[(size_t) sel]; break;
                         case ctlUndo:  if (ok) ++cmdUndo[(size_t) sel]; break;
                         case ctlStop:  if (ok) ++cmdStop[(size_t) sel]; break;
@@ -1184,6 +1231,12 @@ namespace flow
             }
             latchBits[(size_t) b * 2] = lb[0];
             latchBits[(size_t) b * 2 + 1] = lb[1];
+
+            uint64_t sb[2] { 0, 0 };
+            for (int n = 0; n < 128; ++n)
+                if (B.alSwitch[(size_t) n]) sb[n >> 6] |= (uint64_t) 1 << (n & 63);
+            swBits[(size_t) b * 2] = sb[0];
+            swBits[(size_t) b * 2 + 1] = sb[1];
         }
 
         void pushRaw (int b, int pos, const juce::MidiMessage& msg)
@@ -1237,7 +1290,40 @@ namespace flow
         {
             if (hold == 0) return B.pressed;
             if (hold == 2) return B.latched | (B.lpSingle & B.pressed);
+            if (hold == 3)   // AL Capture: ακούς ό,τι παίζεις (εκτός από το πλήκτρο που μπορεί να γίνει key switch) και τη συγχορδία που μόλις ανατέθηκε
+            {
+                std::bitset<128> p = B.pressed & ~B.alMute;
+                if (B.alOpen && B.alHavePending) p &= ~B.alGroup;
+                return p | B.latched;
+            }
+            if (hold == 4) return B.latched | (B.pressed & ~B.alSwitch);   // AL: τα key switches δεν ηχούν οι ίδιοι, τα άλλα πλήκτρα παίζουν κανονικά
             return B.latched;
+        }
+
+        // AL Capture: κλείνει το παράθυρο. 2+ νότες = συγχορδία που περιμένει, 1 νότα μετά από συγχορδία = key switch
+        void alClose (Block& B, int b, int pos, int hold, int arp)
+        {
+            B.alOpen = false;
+            const std::bitset<128> g = B.alGroup;
+            B.alGroup.reset();
+            if (g.count() >= 2)
+            {
+                B.alPending = g;
+                B.alHavePending = true;
+            }
+            else if (g.count() == 1 && B.alHavePending)
+            {
+                const int sw = highestSet (g);
+                B.alChord[(size_t) sw] = B.alPending;
+                B.alSwitch.set ((size_t) sw);
+                B.alMute.set ((size_t) sw);
+                B.alHavePending = false;
+                B.latched = B.alChord[(size_t) sw];
+                B.lastLatched = highestSet (B.latched);
+                for (int n = 0; n < 128; ++n)
+                    if (B.latched[(size_t) n]) B.vel[(size_t) n] = B.vel[(size_t) sw] > 0 ? B.vel[(size_t) sw] : (uint8_t) 100;
+            }
+            updateOutput (B, b, pos, hold, arp);
         }
 
         // LP: κλείνει το παράθυρο συγχορδίας. 2+ νότες = νέα συγχορδία (ίδιες νότες με την κρατημένη = σβήνει),
@@ -1559,12 +1645,21 @@ namespace flow
             {
                 B.lpOpen = false; B.lpGroup.reset(); B.lpSingle.reset();
             }
+            if (hold != 3 && (B.alOpen || B.alHavePending || B.alMute.any()))
+            {
+                B.alOpen = false; B.alGroup.reset(); B.alHavePending = false; B.alPending.reset(); B.alMute.reset();
+            }
 
             if (hold != B.prevHold)
             {
                 if (hold == 0)
                 {
                     B.latched.reset();
+                    B.lastLatched = -1;
+                }
+                else if (hold >= 3)
+                {
+                    B.latched.reset();   // AL: ξεκινά χωρίς κρατημένες νότες
                     B.lastLatched = -1;
                 }
                 else if (B.prevHold == 0)
@@ -1696,6 +1791,8 @@ namespace flow
                 // LP: αν το παράθυρο συγχορδίας έχει λήξει πριν από αυτό το γεγονός, κλείνει πρώτα
                 if (hold == 2 && B.lpOpen && gs + a.pos >= B.lpEnd)
                     lpClose (B, b, (int) std::max<int64_t> (0, B.lpEnd - gs), hold, arp);
+                if (hold == 3 && B.alOpen && gs + a.pos >= B.alEnd)
+                    alClose (B, b, (int) std::max<int64_t> (0, B.alEnd - gs), hold, arp);
 
                 switch (a.kind)
                 {
@@ -1716,6 +1813,33 @@ namespace flow
                                 B.lpGroup.set ((size_t) a.note);
                                 B.lpSingle.reset ((size_t) a.note);
                             }
+                            else if (hold == 3)   // AL Capture
+                            {
+                                if (! B.alOpen)
+                                {
+                                    B.alOpen = true;
+                                    B.alGroup.reset();
+                                    B.alEnd = gs + a.pos + lpWindow;
+                                    B.latched.reset();   // τέλος της "ακρόασης" της προηγούμενης ανάθεσης
+                                }
+                                B.alGroup.set ((size_t) a.note);
+                            }
+                            else if (hold == 4 && B.alSwitch[(size_t) a.note])   // AL: key switch
+                            {
+                                const auto& chord = B.alChord[(size_t) a.note];
+                                if (B.latched == chord)
+                                {
+                                    B.latched.reset();
+                                    B.lastLatched = -1;
+                                }
+                                else
+                                {
+                                    B.latched = chord;
+                                    B.lastLatched = highestSet (chord);
+                                    for (int n = 0; n < 128; ++n)
+                                        if (chord[(size_t) n]) B.vel[(size_t) n] = (uint8_t) a.vel;
+                                }
+                            }
                             else if (hold == 1)
                             {
                                 const bool onlyThis = B.latched.count() == 1 && B.latched[(size_t) a.note];
@@ -1727,6 +1851,7 @@ namespace flow
                         else
                         {
                             B.pressed.reset ((size_t) a.note);
+                            B.alMute.reset ((size_t) a.note);
                         }
                         updateOutput (B, b, a.pos, hold, arp);
                         break;
@@ -1781,6 +1906,8 @@ namespace flow
 
             if (hold == 2 && B.lpOpen && B.lpEnd < ge)
                 lpClose (B, b, (int) juce::jlimit<int64_t> (0, numSamples - 1, B.lpEnd - gs), hold, arp);
+            if (hold == 3 && B.alOpen && B.alEnd < ge)
+                alClose (B, b, (int) juce::jlimit<int64_t> (0, numSamples - 1, B.alEnd - gs), hold, arp);
 
             loopStateOut[b] = B.loopState;
             loopBeatsOut[b] = (B.loopState == loopPlay || B.loopState == loopOver) ? B.loopBeats : 0.0;

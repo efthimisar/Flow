@@ -420,19 +420,21 @@ public:
 
             const bool isFirst = n == firstKey;
             const float alpha = 1.0f;
+            const bool switchKey = b >= 0 && ((engine.swBits[(size_t) b * 2 + (size_t) (n >> 6)].load() >> (n & 63)) & 1) != 0;
+            const Colour switchOrange (0xffe8883a);
             const bool latchedKey = b >= 0 && engine.blockOff[(size_t) b].load() == 0
                                     && ((engine.latchBits[(size_t) b * 2 + (size_t) (n >> 6)].load() >> (n & 63)) & 1) != 0;
 
             if (black)
             {
                 blackRects.push_back ({ l, keysY, r - l, 34.0f });
-                Colour c = latchedKey ? Colours::white : (b >= 0 ? keyDeep (b) : (isFirst ? blockDeep (cb) : freeBlack));
+                Colour c = latchedKey ? Colours::white : switchKey ? switchOrange.darker (0.25f) : (b >= 0 ? keyDeep (b) : (isFirst ? blockDeep (cb) : freeBlack));
                 blackCols.push_back (c.withMultipliedAlpha (alpha));
             }
             else
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                Colour c = latchedKey ? Colours::white : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
+                Colour c = latchedKey ? Colours::white : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
                 g.setColour (c.withMultipliedAlpha (alpha));
                 g.fillRoundedRectangle (kr, 3.0f);
                 g.setColour (hobby::kScreen);
@@ -522,10 +524,15 @@ public:
                     g.setColour (col.withMultipliedAlpha (alpha * 0.28f));
                     g.fillEllipse (hr);
                 }
-                g.setColour (col.withMultipliedAlpha (hold != 0 ? alpha : 0.4f));
+                Colour holdCol = col;
+                if (hold == 3)   // AL Capture: αναβοσβήνει πορτοκαλί
+                    holdCol = col.interpolatedWith (Colour (0xffe8883a), hobby::pulse (Time::getMillisecondCounterHiRes() * 0.001 * 1.5));
+                else if (hold == 4)
+                    holdCol = Colour (0xffe8883a);
+                g.setColour (holdCol.withMultipliedAlpha (hold != 0 ? alpha : 0.4f));
                 g.drawEllipse (hr.reduced (0.75f), 1.5f);
                 g.setFont (smallFont);
-                g.drawText (hold == 1 ? "LM" : hold == 2 ? "LP" : "H", hr, Justification::centred, false);
+                g.drawText (hold == 1 ? "LM" : hold == 2 ? "LP" : hold >= 3 ? "AL" : "H", hr, Justification::centred, false);
                 x += D + gap;
             }
 

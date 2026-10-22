@@ -404,7 +404,7 @@ private:
     void cycleHold (int b)
     {
         if (! isActive (b)) return;
-        engine.holdMode[(size_t) b] = (engine.holdMode[(size_t) b].load() + 1) % 3;
+        engine.holdMode[(size_t) b] = (engine.holdMode[(size_t) b].load() + 1) % 5;
         saveNow();
         refreshAll();
     }
@@ -1412,6 +1412,7 @@ private:
             e->setAttribute ("seq", engine.zoneSeq[(size_t) b].load());
             e->setAttribute ("zone", engine.zoneState[(size_t) b].load() == 0 ? 1 : 0);
             e->setAttribute ("hold", engine.holdMode[(size_t) b].load());
+            e->setAttribute ("al", engine.getAlText (b));
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
             e->setAttribute ("chord", engine.chordMode[(size_t) b].load());
@@ -1528,7 +1529,7 @@ private:
                     if (bs < 0 || bs >= flow::numBlocks) continue;
                     auto& x = sc.b[(size_t) bs];
                     x.off = jlimit (0, 1, be->getIntAttribute ("off", 0));
-                    x.hold = jlimit (0, 2, be->getIntAttribute ("hold", 0));
+                    x.hold = jlimit (0, 4, be->getIntAttribute ("hold", 0));
                     x.cmode = jlimit (0, 2, be->getIntAttribute ("cm", 0));
                     x.ctype = jlimit (0, flow::numChordTypes - 1, be->getIntAttribute ("ct", 0));
                     x.cminor = jlimit (0, 1, be->getIntAttribute ("cn", 0));
@@ -1554,7 +1555,8 @@ private:
                 continue;
             }
 
-            engine.holdMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("hold", 0));
+            engine.holdMode[(size_t) slot]  = jlimit (0, 4, e->getIntAttribute ("hold", 0));
+            engine.setAlText (slot, e->getStringAttribute ("al"));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
             engine.chordMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("chord", 0));
@@ -1840,7 +1842,7 @@ private:
         holdTile.setDots (hold);
         holdTile.setIconColour (hold == 0 ? hobby::kIconGrey : hobby::kOn);
         holdTile.setTooltip (gr ("Hold (επιλεγμένο block): πάτημα = Off / LM Mono Latch (μία νότα) / LP Poly Latch (συγχορδία). Τώρα: ")
-                             + (hold == 0 ? "Off" : hold == 1 ? "LM" : "LP"));
+                             + (hold == 0 ? "Off" : hold == 1 ? "LM" : hold == 2 ? "LP" : hold == 3 ? "AL Capture" : "AL"));
 
         const int loop = valid ? engine.loopStateOut[(size_t) sel].load() : (int) flow::loopOff;
         const int mute = valid ? engine.loopMuteOut[(size_t) sel].load() : 0;
@@ -2008,7 +2010,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.13.0"; }
+    const String getApplicationVersion() override { return "0.13.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
