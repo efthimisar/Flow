@@ -1573,7 +1573,7 @@ private:
         engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 2));
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 2));
         engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 500));
-        engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 2));
+        engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 0));
         engine.tempoUserSet = root.getIntAttribute ("tempoManual", engine.tempo.load() != 120.0 ? 1 : 0) != 0;
         pendingSelect = root.getIntAttribute ("selected", 0);
 
@@ -2090,7 +2090,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.17.1"; }
+    const String getApplicationVersion() override { return "0.17.2"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

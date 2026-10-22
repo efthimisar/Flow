@@ -128,7 +128,7 @@ namespace flow
         std::atomic<int> pedalMute { 0 }, pedalDel { 0 };       // πατήματα πεταλιού (mute / σβήσιμο): ο αριθμός πατημάτων = αριθμός block
         std::atomic<int> tapsMuteOut { 0 }, tapsDelOut { 0 };   // πατήματα που μετρήθηκαν τώρα (για την κεφαλίδα)
         std::atomic<int> tapMs { 500 };                         // αναμονή μετά το τελευταίο πάτημα
-        std::atomic<int> autoLoop { 2 };                        // ανίχνευση επανάληψης: 0 = Off, 1 = Auto (ξεκινά μόνη), 2 = ξεκινά με πάτημα του Rec MIDI loop
+        std::atomic<int> autoLoop { 0 };                        // ανίχνευση επανάληψης: 0 = Off, 1 = Auto (ξεκινά μόνη), 2 = ξεκινά με πάτημα του Rec MIDI loop
         std::atomic<bool> tempoUserSet { false };               // το tempo το όρισες εσύ (κουτί, tap, Link, set): η ανίχνευση δεν το αλλάζει
         std::array<std::atomic<int>, numBlocks> autoPausedOut;   // 1 = η αυτόματη ανίχνευση του block είναι σε παύση (μετά από διαγραφή)
         std::array<std::atomic<int>, numBlocks> autoReadyOut;   // 1 = το block είναι έτοιμο για λούπα (για την κεφαλίδα)
@@ -1607,6 +1607,20 @@ namespace flow
 
         void finishRecording (Block& B, double beatNow, bool allowOverdub = true)
         {
+            // η σιωπή πριν από την πρώτη νότα κόβεται: η λούπα ξεκινά με την πρώτη νότα, στο πλέγμα
+            {
+                double first = 1.0e18;
+                for (const auto& ev : B.rec)
+                    if (ev.on && ! ev.isRaw) first = std::min (first, ev.phase);
+                if (first < 1.0e17 && first > B.recStart)
+                {
+                    const int sq = snapQ.load();
+                    const double g = sq == 1 ? 0.5 : sq == 2 ? 0.25 : 0.0;
+                    const double ns = g > 0.0 ? std::round (first / g) * g : first;
+                    B.recStart = std::min (std::max (B.recStart, ns), first);
+                }
+            }
+
             const double elapsed = beatNow - B.recStart;
             if (elapsed <= 0.0) { stopLoop (B); return; }   // ακυρώθηκε πριν αρχίσει (start quantize)
 
