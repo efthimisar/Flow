@@ -1049,6 +1049,41 @@ namespace flow
         }
 
         // πετάλια και πλήκτρα ελέγχου: επιστρέφει true αν το μήνυμα το κατανάλωσε η ανάθεση (δεν πάει στα plugins)
+        // ένα πετάλι θεωρείται πατημένο όσο στέλνει μηνύματα (ροή τιμών) και μέχρι να σταματήσει για 300 ms ή να σταλεί η αποδέσμευση
+        std::array<int, 32> pedalDown {};
+        std::array<juce::uint32, 32> pedalDownTime {};
+        int pedalDownN = 0;
+        juce::uint32 learnQuietUntil = 0;
+        bool pedalIsDown (int code) const
+        {
+            const auto now = juce::Time::getMillisecondCounter();
+            for (int i = 0; i < pedalDownN; ++i)
+                if (pedalDown[(size_t) i] == code) return now - pedalDownTime[(size_t) i] < 300;
+            return false;
+        }
+        void pedalSetDown (int code, bool down)
+        {
+            const auto now = juce::Time::getMillisecondCounter();
+            for (int i = 0; i < pedalDownN; ++i)
+                if (pedalDown[(size_t) i] == code)
+                {
+                    if (! down)
+                    {
+                        pedalDown[(size_t) i] = pedalDown[(size_t) (pedalDownN - 1)];
+                        pedalDownTime[(size_t) i] = pedalDownTime[(size_t) (pedalDownN - 1)];
+                        --pedalDownN;
+                    }
+                    else pedalDownTime[(size_t) i] = now;
+                    return;
+                }
+            if (down)
+            {
+                if (pedalDownN >= (int) pedalDown.size()) pedalDownN = 0;
+                pedalDown[(size_t) pedalDownN] = code;
+                pedalDownTime[(size_t) pedalDownN++] = now;
+            }
+        }
+
         bool handlePedal (const juce::MidiMessage& msg)
         {
             int kind = 0, num = 0;
@@ -1088,6 +1123,8 @@ namespace flow
                     if (volMap[(size_t) b].load() == code) volMap[(size_t) b] = 0;
 
                 mapCode[(size_t) target] = code;
+                pedalSetDown (code, true);   // το πάτημα της ανάθεσης δεν δίνει τη λειτουργία: μόνο το επόμενο
+                learnQuietUntil = juce::Time::getMillisecondCounter() + 500;
                 learnedTarget = target;
                 learnedCode = code;
                 ++learnedCount;
@@ -1115,18 +1152,24 @@ namespace flow
             }
 
             // πετάλι / πλήκτρο κουμπιού: δρα στο επιλεγμένο block
+            const bool wasDown = pedalIsDown (code);
+            pedalSetDown (code, press);
+            const bool edge = press && (kind == 3 || ! wasDown);   // program change: κάθε μήνυμα είναι νέο πάτημα
+            const bool quiet = code == learnedCode.load() && juce::Time::getMillisecondCounter() < learnQuietUntil;
+
             for (int i = 0; i < numControls; ++i)
             {
                 if (mapCode[(size_t) i].load() != code) continue;
 
-                if (press)
+                if (edge && ! quiet)
                 {
+                    flowLog ("πετάλι: κουμπί " + juce::String (i) + " code " + juce::String (code));
                     const int sel = selectedBlock.load();
                     const bool ok = sel >= 0 && sel < numBlocks && active[(size_t) sel].load() != 0;
 
                     switch (i)
                     {
-                        case ctlHold:  if (ok) { holdMode[(size_t) sel] = (holdMode[(size_t) sel].load() + 1) % 5; ++changeCount; } break;
+                        case ctlHold:  if (ok) { const int h = holdMode[(size_t) sel].load(); holdMode[(size_t) sel] = h >= 3 ? 0 : (h + 1) % 3; ++changeCount; } break;
                         case ctlRec:   { const int t = recTarget (true); if (t >= 0) ++cmdMain[(size_t) t]; } break;
                         case ctlUndo:  ++pedalDel; break;     // σβήσιμο λούπας: πατήματα = αριθμός block
                         case ctlStop:  ++pedalMute; break;    // mute / ενεργοποίηση: πατήματα = αριθμός block
@@ -1380,6 +1423,7 @@ namespace flow
                 B.alSwitch.set ((size_t) sw);
                 B.alMute.set ((size_t) sw);
                 B.alHavePending = false;
+                flowLog ("AL: block " + juce::String (b + 1) + " πλήκτρο " + juce::String (sw) + " = συγχορδία " + juce::String ((int) B.alPending.count()) + " νοτών, αναθέσεις: " + juce::String ((int) B.alSwitch.count()));
                 B.latched = B.alChord[(size_t) sw];
                 B.lastLatched = highestSet (B.latched);
                 for (int n = 0; n < 128; ++n)
@@ -1605,6 +1649,14 @@ namespace flow
             return (double) best * beatsPerBar;
         }
 
+        // όταν τελειώνει η εγγραφή λούπας, το latch (LM / LP / AL) του block σβήνει: παίζει μόνο η λούπα
+        void holdOffAfterLoop (Block& B)
+        {
+            const int idx = (int) (&B - &blocks[0]);
+            if (idx >= 0 && idx < numBlocks)
+                holdMode[(size_t) idx] = 0;
+        }
+
         void finishRecording (Block& B, double beatNow, bool allowOverdub = true)
         {
             // η σιωπή πριν από την πρώτη νότα κόβεται: η λούπα ξεκινά με την πρώτη νότα, στο πλέγμα
@@ -1630,6 +1682,7 @@ namespace flow
             if (commitLayer (B, beatNow, beats))
             {
                 B.loopState = loopPlay;
+                holdOffAfterLoop (B);
             }
             else
             {
@@ -1652,7 +1705,17 @@ namespace flow
                 {
                     const int sq = startQ.load();
                     // η ηχογράφηση ξεκινά αμέσως στο πάτημα. Το Start quantize κουμπώνει την αρχή προς τα πίσω.
-                    if (sq == 1)      B.recStart = std::floor (beat + 1.0e-9);
+                    bool anyLoop = false;
+                    for (const auto& o : blocks)
+                        if (o.nLayers > 0 || o.loopState == loopRec || o.loopState == loopOver) anyLoop = true;
+                    const bool linkOn = linkWanted.load() && link.isEnabled();
+
+                    if (! anyLoop && ! linkOn)
+                    {
+                        pendingBeatShift = -beat;   // η πρώτη λούπα: το ρολόι ξεκινά από το 0 με το πάτημα του Rec
+                        B.recStart = 0.0;
+                    }
+                    else if (sq == 1) B.recStart = std::floor (beat + 1.0e-9);
                     else              B.recStart = std::floor (beat / beatsPerBar + 1.0e-9) * beatsPerBar;   // από την αρχή του μέτρου που πατήθηκε
                     B.rec.clear();
                     B.recOpen.reset();
@@ -1713,7 +1776,8 @@ namespace flow
                 }
                 if (taps > 0 && gs - lastTap > win)
                 {
-                    const int blk = lastPlayed.load();
+                    int blk = lastPlayed.load();
+                    if (blk < 0 || blk >= numBlocks || active[(size_t) blk].load() == 0) blk = selectedBlock.load();
                     if (blk >= 0 && blk < numBlocks && active[(size_t) blk].load() != 0)
                     {
                         if (del)
@@ -1924,7 +1988,10 @@ namespace flow
             B.autoReady = false;
             autoReadyOut[(size_t) b] = 0;
             if (ok)
+            {
                 B.loopState = loopPlay;
+                holdOffAfterLoop (B);
+            }
             else
                 stopLoop (B);
 

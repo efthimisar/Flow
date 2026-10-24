@@ -77,7 +77,7 @@ public:
         fxTile.onRightClick = [this] { showFxMenu(); };
 
         holdTile.onClick = [this] { cycleHold (selected); };
-        chordTile.onClick = [this] { cycleChordMode (selected); };
+        chordTile.onClick = [this] { cycleAl (selected); };
         recTile.onClick  = [this] { engine.pressMain (engine.recTarget (false)); };
         undoTile.onClick = [this] { if (isActive (selected)) engine.pressUndo (selected); };
         stopTile.onClick = [this] { if (isActive (selected)) engine.pressMute (selected); };
@@ -87,6 +87,7 @@ public:
 
         // δεξί κλικ: ανάθεση σε πετάλι / ρυθμίσεις
         holdTile.onRightClick = [this] { showPedalMenu (flow::ctlHold); };
+        chordTile.onRightClick = [this] { showPedalMenu (flow::ctlHold); };
         recTile.onRightClick  = [this] { showRecMenu(); };
         undoTile.onRightClick = [this] { showPedalMenu (flow::ctlUndo); };
         stopTile.onRightClick = [this] { showPedalMenu (flow::ctlStop); };
@@ -174,6 +175,8 @@ public:
         refreshAll();
         lastChange = engine.changeCount.load();
         startTimerHz (30);
+        scanTimer.f = [this] { scanStep(); };
+        loadKnownPlugins();
         dockTimer.f = [this] { updateDock(); };
         dockTimer.startTimerHz (60);
     }
@@ -182,6 +185,7 @@ public:
     {
         stopTimer();
         dockTimer.stopTimer();
+        scanTimer.stopTimer();
         if (dockedTop != nullptr) dockedTop->removeComponentListener (this);
         if (pendingLoads == 0) saveSettings (true);
         deviceManager.removeMidiInputDeviceCallback (String(), &engine.incoming);
@@ -235,7 +239,7 @@ public:
     void mouseUp (const MouseEvent& e) override
     {
         // κλικ στο "π / -": μενού (ρυθμίσεις ήχου, set, panic, Link)
-        if (e.y < 30 && std::abs (e.x - getWidth() / 2) < 40 && ! e.mouseWasDraggedSinceMouseDown())
+        if (e.y >= 42 && e.y < 74 && std::abs (e.x - getWidth() / 2) < 40 && ! e.mouseWasDraggedSinceMouseDown())
             showPiMenu();
     }
 
@@ -407,7 +411,18 @@ private:
     void cycleHold (int b)
     {
         if (! isActive (b)) return;
-        engine.holdMode[(size_t) b] = (engine.holdMode[(size_t) b].load() + 1) % 5;
+        const int h = engine.holdMode[(size_t) b].load();
+        engine.holdMode[(size_t) b] = h >= 3 ? 0 : (h + 1) % 3;   // Off → LM → LP → Off (το AL έχει δικό του κουμπί)
+        saveNow();
+        refreshAll();
+    }
+
+    // κουμπί AL: Capture (ανάθεση συγχορδιών σε πλήκτρα) → AL (παίζει) → Off
+    void cycleAl (int b)
+    {
+        if (! isActive (b)) return;
+        const int h = engine.holdMode[(size_t) b].load();
+        engine.holdMode[(size_t) b] = h == 3 ? 4 : h == 4 ? 0 : 3;
         saveNow();
         refreshAll();
     }
@@ -589,6 +604,8 @@ private:
         if (top == nullptr) return;
         auto* w = pluginWindows.begin()->second.get();
         if (! docked) return;
+        docked = false;   // τα παράθυρα plugin είναι ελεύθερα: δεν ακολουθούν το Flow
+        return;
 
         const bool mouseDown = ModifierKeys::currentModifiers.isLeftButtonDown();
 
@@ -636,8 +653,19 @@ private:
         const String key = "pwpos_" + p->getName();
         auto w = std::make_unique<PluginWindow> (*this, p, windowTitle (p), e, key);
 
-        docked = true;
-        w->setTopLeftPosition (dockPos (*w));
+        docked = false;   // ελεύθερο παράθυρο: ανοίγει εκεί που ήταν την τελευταία φορά, αλλιώς δεξιά από το Flow
+        {
+            const String saved = properties.getUserSettings()->getValue (key);
+            const auto parts = StringArray::fromTokens (saved, " ", "");
+            Point<int> at = dockPos (*w);
+            if (parts.size() == 2)
+            {
+                at = { parts[0].getIntValue(), parts[1].getIntValue() };
+                const auto total = Desktop::getInstance().getDisplays().getTotalBounds (true);
+                if (! total.contains (at)) at = dockPos (*w);
+            }
+            w->setTopLeftPosition (at);
+        }
         w->setVisible (true);
         w->toFront (true);
         lastWinPos = w->getPosition();
@@ -813,7 +841,114 @@ private:
 
     //==========================================================================
     // φόρτωση plugins
-    void pickPlugin (const String& title, std::function<void (const PluginDescription&)> chosen)
+    // λίστα plugins από τη σάρωση των φακέλων (VST3, AU). kind: 0 = instruments, 1 = effects, 2 = MIDI FX (effects)
+    File pluginListFile() { return properties.getUserSettings()->getFile().getSiblingFile ("Flow-plugins.xml"); }
+    File pluginScanCrashFile() { return properties.getUserSettings()->getFile().getSiblingFile ("Flow-scan-crash.txt"); }
+
+    void loadKnownPlugins()
+    {
+        if (auto xml = parseXML (pluginListFile()))
+            knownPlugins.recreateFromXml (*xml);
+    }
+
+    void saveKnownPlugins()
+    {
+        if (auto xml = knownPlugins.createXml())
+            xml->writeTo (pluginListFile());
+    }
+
+    void startPluginScan()
+    {
+        if (scanning) return;
+        scanning = true;
+        scanFormatIndex = 0;
+        scanner.reset();
+        setMessage (gr ("Σάρωση plugins…"));
+        scanTimer.startTimer (40);
+    }
+
+    void scanStep()
+    {
+        if (scanner == nullptr)
+        {
+            if (scanFormatIndex >= formatManager.getNumFormats())
+            {
+                scanTimer.stopTimer();
+                scanning = false;
+                saveKnownPlugins();
+                setMessage (gr ("Βρέθηκαν ") + String (knownPlugins.getNumTypes()) + gr (" plugins"));
+                return;
+            }
+            auto* fmt = formatManager.getFormat (scanFormatIndex);
+            scanner = std::make_unique<PluginDirectoryScanner> (knownPlugins, *fmt, fmt->getDefaultLocationsToSearch(), true, pluginScanCrashFile());
+        }
+        String name;
+        if (! scanner->scanNextFile (true, name))
+        {
+            scanner.reset();
+            ++scanFormatIndex;
+        }
+        else
+        {
+            setMessage (gr ("Σάρωση: ") + name);
+        }
+    }
+
+    void pickPlugin (const String& title, int kind, std::function<void (const PluginDescription&)> chosen)
+    {
+        if (scanning)
+        {
+            setMessage (gr ("Η σάρωση plugins συνεχίζεται… δοκίμασε ξανά σε λίγο"));
+            return;
+        }
+        if (knownPlugins.getNumTypes() == 0)
+        {
+            startPluginScan();
+            return;
+        }
+
+        std::vector<PluginDescription> list;
+        for (const auto& d : knownPlugins.getTypes())
+            if (kind == 0 ? d.isInstrument : ! d.isInstrument)
+                list.push_back (d);
+        std::sort (list.begin(), list.end(), [] (const PluginDescription& a, const PluginDescription& b)
+                   { return a.name.compareIgnoreCase (b.name) < 0; });
+
+        auto label = [] (const PluginDescription& d) { return d.name + String::fromUTF8 ("  \xc2\xb7  ") + d.pluginFormatName; };
+
+        PopupMenu menu;
+        menu.addItem (1, String::fromUTF8 ("\xe2\x86\xbb"));   // νέα σάρωση
+        menu.addItem (2, String::fromUTF8 ("\xe2\x80\xa6"));   // επιλογή αρχείου με το χέρι
+        menu.addSeparator();
+
+        if (list.size() > 14)
+        {
+            std::map<String, PopupMenu> byMaker;
+            for (size_t i = 0; i < list.size(); ++i)
+            {
+                const String maker = list[i].manufacturerName.isEmpty() ? String ("-") : list[i].manufacturerName;
+                byMaker[maker].addItem (1000 + (int) i, label (list[i]));
+            }
+            for (auto& kv : byMaker)
+                menu.addSubMenu (kv.first, kv.second);
+        }
+        else
+        {
+            for (size_t i = 0; i < list.size(); ++i)
+                menu.addItem (1000 + (int) i, label (list[i]));
+        }
+
+        menu.showMenuAsync (PopupMenu::Options(), [this, safe = SafePointer<MainComponent> (this), list, title, chosen] (int r)
+        {
+            if (safe == nullptr || r == 0) return;
+            if (r == 1) { knownPlugins.clear(); startPluginScan(); return; }
+            if (r == 2) { pickPluginFile (title, chosen); return; }
+            const int i = r - 1000;
+            if (i >= 0 && i < (int) list.size()) chosen (list[(size_t) i]);
+        });
+    }
+
+    void pickPluginFile (const String& title, std::function<void (const PluginDescription&)> chosen)
     {
         chooser = std::make_unique<FileChooser> (title, File ("/Library/Audio/Plug-Ins"), "*.vst3;*.component");
 
@@ -857,7 +992,7 @@ private:
             setMessage (gr ("Δεν υπάρχει ελεύθερο block (μέγιστο 16)."));
             return;
         }
-        pickPlugin (gr ("Διάλεξε plugin (.vst3 ή .component)"), [this, slot] (const PluginDescription& d)
+        pickPlugin (gr ("Διάλεξε plugin"), 0, [this, slot] (const PluginDescription& d)
         {
             loadPlugin (slot, d, MemoryBlock(), true, true, nullptr);
         });
@@ -867,7 +1002,7 @@ private:
     {
         if (! isActive (selected)) return;
         const int slot = selected;
-        pickPlugin (gr ("Νέο instrument για το block ") + String (slot + 1), [this, slot] (const PluginDescription& d)
+        pickPlugin (gr ("Νέο instrument για το block ") + String (slot + 1), 0, [this, slot] (const PluginDescription& d)
         {
             loadPlugin (slot, d, MemoryBlock(), false, false, nullptr);
         });
@@ -985,7 +1120,7 @@ private:
     void loadMidiFxInto (int block)
     {
         if (! isActive (block)) return;
-        pickPlugin (gr ("Διάλεξε MIDI effect (.vst3 ή .component)"), [this, block] (const PluginDescription& d)
+        pickPlugin (gr ("Διάλεξε MIDI effect"), 2, [this, block] (const PluginDescription& d)
         {
             loadAux (d, MemoryBlock(), "b" + String (block) + "m", [this, block] (PluginPtr p)
             {
@@ -1026,7 +1161,7 @@ private:
         if (target >= 0 && ! isActive (target)) { setMessage (gr ("Φόρτωσε πρώτα ένα instrument (VST)")); return; }
         if (engine.numFx (target) >= maxFxPerChain) { setMessage (gr ("Μέγιστο 8 effects ανά αλυσίδα")); return; }
 
-        pickPlugin (target < 0 ? gr ("Master FX: διάλεξε effect") : gr ("FX: διάλεξε effect"), [this, target] (const PluginDescription& d)
+        pickPlugin (target < 0 ? gr ("Master FX: διάλεξε effect") : gr ("FX: διάλεξε effect"), 1, [this, target] (const PluginDescription& d)
         {
             loadAux (d, MemoryBlock(), "f" + String (target) + "_" + String (engine.numFx (target)), [this, target] (PluginPtr p)
             {
@@ -1280,7 +1415,7 @@ private:
         menu.addItem (8, "Ableton Link" + (LinkBridge::isAvailable() ? String() : gr (" (δεν περιλαμβάνεται σε αυτό το build)")),
                       LinkBridge::isAvailable(), engine.isLinkEnabled());
 
-        const Rectangle<int> area (getScreenX() + getWidth() / 2 - 40, getScreenY() + 4, 80, 28);
+        const Rectangle<int> area (getScreenX() + getWidth() / 2 - 40, getScreenY() + 46, 80, 28);
         menu.showMenuAsync (PopupMenu::Options().withTargetScreenArea (area),
                             [safe = SafePointer<MainComponent> (this)] (int r)
         {
@@ -1624,7 +1759,7 @@ private:
             engine.setAlText (slot, e->getStringAttribute ("al"));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
-            engine.chordMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("chord", 0));
+            engine.chordMode[(size_t) slot]  = 0;   // το Chord δεν χρησιμοποιείται πια
             engine.chordType[(size_t) slot]  = jlimit (0, flow::numChordTypes - 1, e->getIntAttribute ("ctype", 0));
             engine.chordMinor[(size_t) slot] = jlimit (0, 1, e->getIntAttribute ("cminor", 0));
             engine.chordTonic[(size_t) slot] = jlimit (-1, 11, e->getIntAttribute ("ctonic", -1));
@@ -1897,13 +2032,13 @@ private:
         fxTile.setIconColour (anyFxOpen ? hobby::kOn : hobby::kIconGrey);
         fxTile.setDots (jmin (nfx, 3));
 
-        const int cm = valid ? engine.chordMode[(size_t) sel].load() : 0;
-        chordTile.setDots (cm);
-        chordTile.setIconColour (cm == 0 ? hobby::kIconGrey : hobby::kOn);
-        chordTile.setTooltip (gr ("Chord (επιλεγμένο block): πάτημα = Off / Chord (μία νότα δίνει συγχορδία του τύπου που διαλέγεις) / Scale (συγχορδία της κλίμακας: το πρώτο πλήκτρο που πατάς είναι η τονική). Ο κύκλος πάνω από το block αλλάζει τύπο. Τώρα: ")
-                              + (cm == 0 ? "Off" : cm == 1 ? "Chord" : "Scale"));
-
         const int hold = valid ? engine.holdMode[(size_t) sel].load() : 0;
+        chordTile.setDots (0);
+        chordTile.setIconColour (hold == 3 ? hobby::mix (hobby::kIconGrey, Colour (0xffe8883a), hobby::pulse (t * 1.5))
+                                           : hold == 4 ? Colour (0xffe8883a) : hobby::kIconGrey);
+        chordTile.setTooltip (gr ("AL (επιλεγμένο block): πάτημα = Capture (παίξε συγχορδία και μετά ένα ελεύθερο πλήκτρο: το πλήκτρο γίνεται key switch, πορτοκαλί, και μπορείς να κάνεις πολλές αναθέσεις) / ξανά πάτημα = AL παίζει / ξανά = Off. Τώρα: ")
+                              + (hold == 3 ? "Capture" : hold == 4 ? "AL" : "Off"));
+
         holdTile.setDots (hold);
         holdTile.setIconColour (hold == 0 ? hobby::kIconGrey : hobby::kOn);
         holdTile.setTooltip (gr ("Hold (επιλεγμένο block): πάτημα = Off / LM Mono Latch (μία νότα) / LP Poly Latch (συγχορδία). Τώρα: ")
@@ -2066,6 +2201,15 @@ private:
     std::map<const AudioPluginInstance*, String> stateCache;
 
     std::map<AudioPluginInstance*, std::unique_ptr<PluginWindow>> pluginWindows;
+    KnownPluginList knownPlugins;
+    std::unique_ptr<PluginDirectoryScanner> scanner;
+    int scanFormatIndex = 0;
+    bool scanning = false;
+    struct ScanTimer : public Timer
+    {
+        std::function<void()> f;
+        void timerCallback() override { if (f) f(); }
+    } scanTimer;
     bool docked = true;
     Component* dockedTop = nullptr;
     Point<int> lastWinPos;
@@ -2090,7 +2234,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.17.2"; }
+    const String getApplicationVersion() override { return "0.18.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

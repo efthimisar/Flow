@@ -43,7 +43,7 @@ namespace hobby
             float x = ((float) windowWidth - total) * 0.5f;
             for (int i = 0; i < 3; ++i)
             {
-                const juce::Rectangle<float> r (x + (pass == 2 ? 0.0f : off), 9.0f + (pass == 2 ? 0.0f : off), w[i] + 2.0f, 16.0f);
+                const juce::Rectangle<float> r (x + (pass == 2 ? 0.0f : off), 50.0f + (pass == 2 ? 0.0f : off), w[i] + 2.0f, 16.0f);
                 g.setColour (pass == 0 ? juce::Colours::white.withAlpha (0.75f)
                                        : pass == 1 ? juce::Colour (0xffddd3c6) : juce::Colour (0xfff1ebe2));
                 g.drawText (chars[i], r, juce::Justification::centredLeft, false);
@@ -59,7 +59,7 @@ namespace hobby
         for (int pass = 0; pass < 3; ++pass)
         {
             const float off = pass == 0 ? -1.0f : 1.0f;
-            const juce::Rectangle<float> r (x + (pass == 2 ? 0.0f : off), 9.0f + (pass == 2 ? 0.0f : off), 120.0f, 16.0f);
+            const juce::Rectangle<float> r (x + (pass == 2 ? 0.0f : off), 50.0f + (pass == 2 ? 0.0f : off), 120.0f, 16.0f);
             g.setColour (pass == 0 ? juce::Colours::white.withAlpha (0.75f)
                                    : pass == 1 ? juce::Colour (0xffddd3c6) : juce::Colour (0xfff1ebe2));
             g.drawText (text, r, juce::Justification::centredLeft, false);

@@ -340,8 +340,12 @@ public:
             }
         }
 
-        const float hx = laneX + laneW * (float) (std::fmod (now, axisBeats) / axisBeats);
-        g.setColour (Colours::white);
+        bool anyLoop = recording >= 0;
+        for (int i = 0; i < count && ! anyLoop; ++i)
+            if (engine.loopStateOut[(size_t) list[i].getIntValue()].load() != flow::loopOff) anyLoop = true;
+        // χωρίς λούπα το playhead περιμένει στην αρχή: ξεκινά όταν πατηθεί το Rec MIDI loop
+        const float hx = laneX + (anyLoop ? laneW * (float) (std::fmod (now, axisBeats) / axisBeats) : 0.0f);
+        g.setColour (anyLoop ? Colours::white : Colours::white.withAlpha (0.25f));
         g.fillRect (hx - 1.0f, (float) (top - 8), 2.0f, (float) (gridBottom - top + 8));
 
         // κάτω λωρίδα ενδείξεων
@@ -375,20 +379,25 @@ public:
                 g.setColour (hot ? hobby::kRed : hobby::kIconGrey);
                 g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (cx + 26.0f, sy, 40.0f, sh), Justification::centredLeft, false);
             }
-            // φωτάκια ρυθμίσεων looper: A = ανίχνευση, ≈ = αναμονή πατημάτων, # = snap νοτών
+            // φωτάκια ρυθμίσεων looper (δεξιά, μικρά): A = ανίχνευση, ≈ = αναμονή πατημάτων, # = snap νοτών
             {
                 const float ly = sy + sh * 0.5f;
+                const float R = 9.0f;                         // ακτίνα φωτακιού
                 const bool showVals = w >= 800;
+                const float valW = showVals ? 30.0f : 0.0f;
                 const int sel = jlimit (0, flow::numBlocks - 1, selected);
                 const int mode = engine.autoLoop.load();
                 const bool paused = engine.autoPausedOut[(size_t) sel].load() != 0;
                 const bool ready = mode != 0 && ! paused && engine.autoReadyOut[(size_t) sel].load() != 0;
                 const int snap = engine.snapQ.load();
-                float lx = cx + 46.0f;
+
+                // x από δεξιά: [A] [≈ val] [# val] ... τελεία MIDI
+                const float total = 2.0f * R + 14.0f + (2.0f * R + valW) + 14.0f + (2.0f * R + valW);
+                float lx = (float) w - 44.0f - total + R;
 
                 auto lamp = [&] (float x, bool on, Colour c, std::function<void (Rectangle<float>, Colour)> glyph)
                 {
-                    const Rectangle<float> r (x - 11.0f, ly - 11.0f, 22.0f, 22.0f);
+                    const Rectangle<float> r (x - R, ly - R, 2.0f * R, 2.0f * R);
                     g.setColour (on ? c : Colour (0xff3a3430));
                     g.fillEllipse (r);
                     glyph (r, on ? Colour (0xff262220) : Colour (0xff6b625a));
@@ -400,47 +409,47 @@ public:
                       [&] (Rectangle<float> r, Colour c)
                       {
                           g.setColour (c);
-                          g.setFont (hobby::makeFont (typeface, 14.0f));
+                          g.setFont (hobby::makeFont (typeface, 12.0f));
                           g.drawText ("A", r, Justification::centred, false);
                       });
-                lx += 34.0f;
+                lx += 2.0f * R + 14.0f;
 
                 lamp (lx, true, hobby::kPeach,
                       [&] (Rectangle<float> r, Colour c)
                       {
                           g.setColour (c);
-                          for (float dy : { -2.8f, 2.8f })
+                          for (float dy : { -2.4f, 2.4f })
                           {
                               Path p;
-                              p.startNewSubPath (r.getCentreX() - 6.0f, r.getCentreY() + dy);
-                              p.cubicTo (r.getCentreX() - 3.0f, r.getCentreY() + dy - 3.0f, r.getCentreX() - 1.5f, r.getCentreY() + dy - 3.0f, r.getCentreX(), r.getCentreY() + dy);
-                              p.cubicTo (r.getCentreX() + 1.5f, r.getCentreY() + dy + 3.0f, r.getCentreX() + 3.0f, r.getCentreY() + dy + 3.0f, r.getCentreX() + 6.0f, r.getCentreY() + dy);
-                              g.strokePath (p, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
+                              p.startNewSubPath (r.getCentreX() - 5.0f, r.getCentreY() + dy);
+                              p.cubicTo (r.getCentreX() - 2.5f, r.getCentreY() + dy - 2.5f, r.getCentreX() - 1.2f, r.getCentreY() + dy - 2.5f, r.getCentreX(), r.getCentreY() + dy);
+                              p.cubicTo (r.getCentreX() + 1.2f, r.getCentreY() + dy + 2.5f, r.getCentreX() + 2.5f, r.getCentreY() + dy + 2.5f, r.getCentreX() + 5.0f, r.getCentreY() + dy);
+                              g.strokePath (p, PathStrokeType (1.4f, PathStrokeType::curved, PathStrokeType::rounded));
                           }
                       });
                 if (showVals)
                 {
                     g.setColour (hobby::kIconGrey);
-                    g.setFont (hobby::makeFont (typeface, 12.0f));
-                    g.drawText (String ((double) engine.tapMs.load() / 1000.0, 1) + "s", (int) lx + 15, (int) sy, 40, (int) sh, Justification::centredLeft, false);
+                    g.setFont (hobby::makeFont (typeface, 11.0f));
+                    g.drawText (String ((double) engine.tapMs.load() / 1000.0, 1) + "s", (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
                 }
-                lx += showVals ? 66.0f : 34.0f;
+                lx += 2.0f * R + valW + 14.0f;
 
                 lamp (lx, snap != 0, hobby::kLilac,
                       [&] (Rectangle<float> r, Colour c)
                       {
                           g.setColour (c);
-                          const float a = 3.0f, b = 6.0f;
-                          g.fillRect (r.getCentreX() - a - 0.8f, r.getCentreY() - b, 1.6f, 2.0f * b);
-                          g.fillRect (r.getCentreX() + a - 0.8f, r.getCentreY() - b, 1.6f, 2.0f * b);
-                          g.fillRect (r.getCentreX() - b, r.getCentreY() - a - 0.8f, 2.0f * b, 1.6f);
-                          g.fillRect (r.getCentreX() - b, r.getCentreY() + a - 0.8f, 2.0f * b, 1.6f);
+                          const float a = 2.6f, b = 5.0f;
+                          g.fillRect (r.getCentreX() - a - 0.7f, r.getCentreY() - b, 1.4f, 2.0f * b);
+                          g.fillRect (r.getCentreX() + a - 0.7f, r.getCentreY() - b, 1.4f, 2.0f * b);
+                          g.fillRect (r.getCentreX() - b, r.getCentreY() - a - 0.7f, 2.0f * b, 1.4f);
+                          g.fillRect (r.getCentreX() - b, r.getCentreY() + a - 0.7f, 2.0f * b, 1.4f);
                       });
                 if (showVals)
                 {
                     g.setColour (hobby::kIconGrey);
-                    g.setFont (hobby::makeFont (typeface, 12.0f));
-                    g.drawText (snap == 0 ? String ("Off") : snap == 1 ? String ("1/8") : String ("1/16"), (int) lx + 15, (int) sy, 40, (int) sh, Justification::centredLeft, false);
+                    g.setFont (hobby::makeFont (typeface, 11.0f));
+                    g.drawText (snap == 0 ? String ("Off") : snap == 1 ? String ("1/8") : String ("1/16"), (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
                 }
             }
             g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
@@ -587,7 +596,7 @@ public:
             const int cap = jlimit (1, 5, (int) std::floor ((width + gap) / (D + gap)));
             // προτεραιότητα όταν δεν χωράνε όλα: αριθμός, chord (αν είναι ενεργό), καμπύλη, hold, transpose
             int room = cap - 1;
-            const bool showChord = cmode != 0 && room > 0;  if (showChord) --room;
+            const bool showChord = false;   // το Chord δεν χρησιμοποιείται πια: δεν υπάρχει κυκλάκι
             const bool showCurve = room > 0;                if (showCurve) --room;
             const bool showHold  = room > 0;                if (showHold)  --room;
             const bool showTr    = room > 0;              if (showTr)    --room;
@@ -888,6 +897,16 @@ public:
 
         masterRect = { x, y, D, D };
         disc (masterRect, masterMode ? hobby::kPeach.darker (0.3f) : hobby::kPeach.withAlpha (0.55f), "M", masterMode ? Colours::white : Colour (0xff8a4f1c));
+    }
+
+    // μόνο τα κυκλάκια, το + και το M πιάνουν κλικ: το υπόλοιπο (π, Flow) περνά στο πάνω παράθυρο
+    bool hitTest (int x, int y) override
+    {
+        const Point<float> p ((float) x, (float) y);
+        if (masterRect.expanded (3.0f).contains (p) || plusRect.expanded (3.0f).contains (p)) return true;
+        for (const auto& c : circles)
+            if (c.expanded (3.0f).contains (p)) return true;
+        return false;
     }
 
     void mouseDown (const MouseEvent& e) override
