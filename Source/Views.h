@@ -1006,7 +1006,13 @@ public:
                     return;
                 }
 
-        if (! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
+        bool onCircle = false;   // κλικ σε κυκλάκι κανονικού block μένει στο block, ακόμα κι αν η λωρίδα του ειδικού περνά από πάνω
+        for (int b = 0; b < flow::numBlocks && ! onCircle; ++b)
+            if (spans[(size_t) b].used)
+                for (const auto* r : { &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &silentRect[(size_t) b] })
+                    if (r->expanded (2.0f).contains (p)) { onCircle = true; break; }
+
+        if (! onCircle && ! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
         {
             const int sb = engine.specialBlock.load();
             if (e.mods.isPopupMenu()) { if (onVolumeMenu) onVolumeMenu (sb); return; }
