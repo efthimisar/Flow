@@ -510,7 +510,7 @@ public:
                     g.drawText (txt, r, Justification::centred, false);
                     hot.push_back ({ r.expanded (3.0f), fn });
                 };
-                // τρία κουμπιά δίπλα στο tap: ένταση (κάθε πάτημα αλλάζει επίπεδο), ήχος (δικός σου ⇄ αρχικός), έξοδος (κάθε πάτημα επόμενη)
+                // τρία κουμπιά δίπλα στο tap: ένταση (κάθε πάτημα αλλάζει επίπεδο), ήχος (δικός σου ⇄ αρχικός). Η έξοδος του μετρονόμου (ακουστικά) μένει σταθερή, δεν έχει κουμπί
                 float x = (float) tapDot.getRight() + 26.0f;
                 const float levels[4] { 0.25f, 0.5f, 0.75f, 1.0f };
                 const float cur = engine.metroLevel.load();
@@ -522,14 +522,6 @@ public:
                 const bool custom = metroIsCustom && metroIsCustom();
                 lampAt (x, custom, custom ? String::fromUTF8 ("\xe2\x86\xba") : String::fromUTF8 ("\xe2\x99\xaa"),
                         [this, custom] { if (onMetroSample) onMetroSample (custom ? 2 : 1); });   // ♪ διάλεξε δικό σου ήχο, ↺ γύρνα στον αρχικό
-                x += 32.0f;
-                g.setFont (hobby::makeFont (typeface, 14.0f));
-                g.setColour (hobby::kIconGrey);
-                g.drawText (String::fromUTF8 ("\xe2\x87\xa8"), Rectangle<float> (x - 10.0f, sy, 20.0f, sh), Justification::centred, false);
-                x += 22.0f;
-                const int outs = jlimit (1, 4, engine.numOutChannels.load());
-                const int ch = jlimit (0, outs - 1, engine.metroChannel.load());
-                lampAt (x, true, String (ch + 1), [this, ch, outs] { engine.metroChannel = (ch + 1) % outs; if (onMetroChange) onMetroChange(); });
             }
             else if (notice.isNotEmpty())
             {
