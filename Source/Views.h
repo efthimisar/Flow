@@ -315,6 +315,17 @@ public:
 
     std::function<void()> onMetroChange;
 
+    // φωτάκια εργαλείων του επιλεγμένου κουμπιού (VST ⇄ ✕, MIDI FX ⇄ ✕, FX + ✕): δίπλα στο CPU, χωρίς μενού
+    struct ToolLamp { String glyph; Colour colour; bool enabled = true; bool armed = false; std::function<void()> fn; };
+    void setToolLamps (std::vector<ToolLamp> l)
+    {
+        bool same = l.size() == tools.size();
+        for (size_t i = 0; same && i < l.size(); ++i)
+            same = l[i].glyph == tools[i].glyph && l[i].enabled == tools[i].enabled && l[i].armed == tools[i].armed && l[i].colour == tools[i].colour;
+        tools = std::move (l);
+        if (! same) repaint();
+    }
+
     // λωρίδα μετρονόμου (κάτω): tempo, tap, ένταση, έξοδος. Ανοίγει με το πρώτο πάτημα του κουμπιού μετρονόμου.
     bool metroStrip = false;
     void setMetroStrip (bool on)
@@ -565,6 +576,20 @@ public:
                 g.fillRoundedRectangle (bar.withWidth (jmax (2.0f, bar.getWidth() * jlimit (0.0f, 1.0f, cpu))), 2.0f);
                 g.setColour (hot ? hobby::kRed : hobby::kIconGrey);
                 g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (cx + 26.0f, sy, 40.0f, sh), Justification::centredLeft, false);
+
+                float tx = cx + 100.0f;
+                for (auto& tl : tools)
+                {
+                    const Rectangle<float> r (tx - 9.0f, sy + sh * 0.5f - 9.0f, 18.0f, 18.0f);
+                    const Colour c = tl.armed ? hobby::kRed : tl.colour;
+                    g.setColour (tl.enabled ? c : Colour (0xff3a3430));
+                    g.fillEllipse (r);
+                    g.setColour (tl.enabled ? Colour (0xff262220) : Colour (0xff6b625a));
+                    g.setFont (hobby::makeFont (typeface, 12.0f));
+                    g.drawText (tl.glyph, r, Justification::centred, false);
+                    if (tl.enabled) this->hot.push_back ({ r.expanded (3.0f), tl.fn });
+                    tx += 26.0f;
+                }
             }
             // φωτάκια ρυθμίσεων looper (δεξιά, μικρά): A = ανίχνευση, ≈ = αναμονή πατημάτων, # = snap νοτών
             if (! metroStrip)
@@ -666,6 +691,7 @@ private:
     PluginListView list;
     int stepOut = 0, topOut = 48;
     std::vector<std::pair<Rectangle<float>, std::function<void()>>> hot;   // κλικ-ζώνες φωτακιών στη λωρίδα μετρονόμου
+    std::vector<ToolLamp> tools;
 };
 
 //==============================================================================

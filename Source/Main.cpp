@@ -70,11 +70,8 @@ public:
 
         blockTile.onClick = [this] { chooseAndLoadPlugin(); };
         vstTile.onClick = [this] { onVstClick(); };
-        vstTile.onRightClick = [this] { showVstMenu(); };
         mfxTile.onClick = [this] { onMidiFxClick(); };
-        mfxTile.onRightClick = [this] { showMidiFxMenu(); };
         fxTile.onClick = [this] { onFxClick(); };
-        fxTile.onRightClick = [this] { showFxMenu(); };
 
         holdTile.onClick = [this] { cycleHold (selected); };
         chordTile.onClick = [this] { cycleAl (selected); };
@@ -802,6 +799,39 @@ private:
         {
             addFxTo (selected);
         }
+    }
+
+    // φωτάκια εργαλείων στη λωρίδα κάτω, ανάλογα με το κουμπί που δείχνει τώρα: VST ⇄ ✕, MIDI FX ⇄ ✕, FX + ✕. Το ✕ θέλει δύο πατήματα.
+    uint32 armedAt[3] = { 0, 0, 0 };
+    bool armedNow (int i) const { return Time::getMillisecondCounter() < armedAt[i]; }
+    void pressDelete (int i, std::function<void()> doIt)
+    {
+        if (armedNow (i)) { armedAt[i] = 0; doIt(); }
+        else { armedAt[i] = Time::getMillisecondCounter() + 3000; }
+        updateToolLamps();
+    }
+
+    void updateToolLamps()
+    {
+        std::vector<LoopsView::ToolLamp> l;
+        const bool v = isActive (selected);
+        if (v && panelMode == panelInstrument)
+        {
+            l.push_back ({ String::fromUTF8 ("\xe2\x87\x84"), hobby::kOn, true, false, [this] { replaceInstrument(); } });
+            l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kOn, true, armedNow (0), [this] { pressDelete (0, [this] { removeBlock (selected); }); } });
+        }
+        else if (v && panelMode == panelMidiFx)
+        {
+            const bool has = engine.getMidiFx (selected) != nullptr;
+            l.push_back ({ String::fromUTF8 ("\xe2\x87\x84"), hobby::kLilac, true, false, [this] { loadMidiFxInto (selected); } });
+            l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kLilac, has, armedNow (1), [this] { pressDelete (1, [this] { removeMidiFx (selected); }); } });
+        }
+        else if (v && panelMode == panelFx)
+        {
+            l.push_back ({ "+", hobby::kPeach, engine.numFx (selected) < maxFxPerChain, false, [this] { addFxTo (selected); } });
+            l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kPeach, engine.numFx (selected) > 0, armedNow (2), [this] { pressDelete (2, [this] { clearFx (selected); }); } });
+        }
+        loopsView.setToolLamps (std::move (l));
     }
 
     void showVstMenu()
@@ -2177,6 +2207,7 @@ private:
         header.repaint();
         loopsView.title = header.title; loopsView.chordName = header.chordName; loopsView.notice = header.notice;
         loopsView.noticeColour = header.noticeColour; loopsView.cpu = cpuSmooth;
+        updateToolLamps();
 
         loopsView.repaint();
         keyboardView.repaint();
@@ -2314,7 +2345,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.27.0"; }
+    const String getApplicationVersion() override { return "0.28.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
