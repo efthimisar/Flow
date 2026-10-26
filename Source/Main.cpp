@@ -124,7 +124,7 @@ public:
         keyboardView.onRedoZone = [this] (int b) { showZoneMenu (b); };
         keyboardView.onHold = [this] (int b) { selectBlock (b); cycleHold (b); };
         keyboardView.onRemoveBlock = [this] (int b) { removeBlock (b); };
-        keyboardView.onToggleOff = [this] (int b) { toggleBlockOff (b); };
+        keyboardView.onToggleSilent = [this] (int b) { engine.liveSilent[(size_t) b] = engine.liveSilent[(size_t) b].load() != 0 ? 0 : 1; saveNow(); };
         keyboardView.onChordType = [this] (int b, int dir) { selectBlock (b); stepChordType (b, dir); };
         keyboardView.onCurve = [this] (int b)
         {
@@ -1261,6 +1261,7 @@ private:
         old.reset();
 
         if (engine.specialBlock.load() == block) engine.specialBlock = -1;
+        engine.liveSilent[(size_t) block] = 1;
         engine.holdMode[(size_t) block] = 0;
         engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
         engine.curveMode[(size_t) block] = 0;
@@ -1685,6 +1686,7 @@ private:
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
             e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : 0);
+            e->setAttribute ("lsilent", engine.liveSilent[(size_t) b].load());
             e->setAttribute ("chord", engine.chordMode[(size_t) b].load());
             e->setAttribute ("ctype", engine.chordType[(size_t) b].load());
             e->setAttribute ("cminor", engine.chordMinor[(size_t) b].load());
@@ -1833,6 +1835,7 @@ private:
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
             if (e->getIntAttribute ("special", 0) != 0) engine.specialBlock = slot;
+            engine.liveSilent[(size_t) slot] = jlimit (0, 1, e->getIntAttribute ("lsilent", 1));
             engine.chordMode[(size_t) slot]  = 0;   // το Chord δεν χρησιμοποιείται πια
             engine.chordType[(size_t) slot]  = jlimit (0, flow::numChordTypes - 1, e->getIntAttribute ("ctype", 0));
             engine.chordMinor[(size_t) slot] = jlimit (0, 1, e->getIntAttribute ("cminor", 0));
@@ -2314,7 +2317,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.24.0"; }
+    const String getApplicationVersion() override { return "0.25.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

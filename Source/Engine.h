@@ -92,6 +92,7 @@ namespace flow
                 active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
                 lo[b] = lowestNote; hi[b] = lowestNote;
                 holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0; swBits[(size_t) b * 2] = 0; swBits[(size_t) b * 2 + 1] = 0; autoReadyOut[(size_t) b] = 0; autoPausedOut[(size_t) b] = 0;
+                liveSilent[b] = 1;
                 blockOff[b] = 0; chordMode[b] = 0; chordType[b] = 0; chordMinor[b] = 0; chordTonic[b] = -1; pcMaskOut[b] = 0; bassOut[b] = -1;
                 arpMode[b] = 0;
                 curveMode[b] = 0;
@@ -147,6 +148,7 @@ namespace flow
 
         // metronome
         std::atomic<bool> metroOn { false };
+        std::array<std::atomic<int>, numBlocks> liveSilent;   // 1 = όσο παίζει η λούπα του block, το live του block μένει σιωπηλό (default). 0 = ακούγεται και το live.
         std::atomic<int> specialBlock { -1 };   // ειδικό block: πάνω από τα άλλα, χωρίς λούπα, παίζει πάντα ζωντανά (-1 = κανένα)
         std::atomic<float> metroLevel { 0.8f };
         std::atomic<int> metroChannel { 2 };      // έξοδος 3 (0-based 2)
@@ -1386,7 +1388,7 @@ namespace flow
         void emitNote (Block& B, int b, int pos, bool on, int note, int vel)
         {
             // όσο υπάρχει λούπα, το block μένει σιωπηλό στο live: ακούγεται μόνο η λούπα
-            if (B.loopState == loopPlay && B.nLayers > 0)
+            if (B.loopState == loopPlay && B.nLayers > 0 && liveSilent[(size_t) b].load() != 0)
             {
                 if (on || ! B.sounding[(size_t) note]) return;
             }

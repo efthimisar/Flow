@@ -570,7 +570,8 @@ public:
 
     std::function<void (int)> onSelect, onRedoZone, onCurve, onVolumeMenu, onHold;
     std::function<void (int)> onRemoveBlock;
-    std::function<void (int)> onToggleOff;   // διπλό κλικ στον αριθμό: block σβηστό / αναμμένο
+    std::function<void (int)> onToggleOff;   // (δεν χρησιμοποιείται πια από τον αριθμό)
+    std::function<void (int)> onToggleSilent;   // κυκλάκι ♪: το live του block μένει σιωπηλό όσο παίζει η λούπα του
     std::function<void (int, int)> onChordType;   // (block, +1 / -1 / 0 = maj ή νέα τονική)
     std::function<void (int, float)> onVolume;
     std::function<void (int, int, bool)> onSpecialZone;   // ειδικό block: νέα ζώνη από σύρσιμο (lo, hi, τέλος σύρσιμου)
@@ -687,9 +688,20 @@ public:
         const auto numFont = hobby::makeFont (typeface, 13.0f);
         const auto smallFont = hobby::makeFont (typeface, 11.0f);
 
-        for (int b = 0; b < flow::numBlocks; ++b)
+        std::array<int, flow::numBlocks> order {};
         {
+            int k = 0;
+            for (int b = 0; b < flow::numBlocks; ++b) if (b != expanded) order[(size_t) k++] = b;
+            if (expanded >= 0 && expanded < flow::numBlocks) order[(size_t) k++] = expanded;
+            while (k < flow::numBlocks) order[(size_t) k++] = -1;
+        }
+
+        for (int oi = 0; oi < flow::numBlocks; ++oi)
+        {
+            const int b = order[(size_t) oi];
+            if (b < 0) continue;
             auto& s = spans[(size_t) b];
+            silentRect[(size_t) b] = {};
             for (auto* r : { &numRect[(size_t) b], &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &barRect[(size_t) b], &xRect[(size_t) b] })
                 *r = {};
             if (! s.used) continue;
@@ -701,17 +713,19 @@ public:
             const int tr = engine.transpose[(size_t) b].load();
 
             const int cmode = engine.chordMode[(size_t) b].load();
-            const int cap = jlimit (1, 5, (int) std::floor ((width + gap) / (D + gap)));
-            // προτεραιότητα όταν δεν χωράνε όλα: αριθμός, chord (αν είναι ενεργό), καμπύλη, hold, transpose
-            int room = cap - 1;
+            // κλικ στον αριθμό ανοίγει τις υπόλοιπες λειτουργίες: hold, καμπύλη, transpose, ♪ (live σιωπηλό όσο παίζει λούπα), ✕
+            const bool open = b == expanded;
             const bool showChord = false;   // το Chord δεν χρησιμοποιείται πια: δεν υπάρχει κυκλάκι
-            const bool showCurve = room > 0;                if (showCurve) --room;
-            const bool showHold  = room > 0;                if (showHold)  --room;
-            const bool showTr    = room > 0;              if (showTr)    --room;
-            const bool showX     = room > 0;
-            const int shown = 1 + (showChord ? 1 : 0) + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showX ? 1 : 0);
+            const bool showCurve = open, showHold = open, showTr = open, showSilent = open, showX = open;
+            const int shown = 1 + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showSilent ? 1 : 0) + (showX ? 1 : 0);
             const float total = (float) shown * D + (float) (shown - 1) * gap;
             float x = s.l + (width - total) * 0.5f;
+            if (open)
+            {
+                x = jlimit (14.0f, (float) getWidth() - 14.0f - total, x);
+                g.setColour (hobby::kScreen);
+                g.fillRoundedRectangle (x - 5.0f, labelY - 3.0f, total + 10.0f, D + 6.0f, 9.0f);
+            }
             const float cy = labelY;
 
             // αριθμός
@@ -780,6 +794,21 @@ public:
                 x += D + gap;
             }
 
+            if (showSilent)  // ♪: με κάθε πάτημα το live του block μένει σιωπηλό ή όχι όσο παίζει η λούπα του
+            {
+                silentRect[(size_t) b] = { x, cy, D, D };
+                const auto sr2 = silentRect[(size_t) b];
+                const bool silent = engine.liveSilent[(size_t) b].load() != 0;
+                g.setColour (col.withMultipliedAlpha (alpha * (silent ? 0.4f : 0.16f)));
+                g.fillEllipse (sr2);
+                g.setColour (col.withMultipliedAlpha (silent ? alpha : 0.7f));
+                g.setFont (smallFont);
+                g.drawText (String::fromUTF8 ("\xe2\x99\xaa"), sr2, Justification::centred, false);
+                if (silent)
+                    g.drawLine (sr2.getX() + 5.0f, sr2.getBottom() - 5.0f, sr2.getRight() - 5.0f, sr2.getY() + 5.0f, 1.6f);
+                x += D + gap;
+            }
+
             if (showX)       // σβήσιμο block: δύο πατήματα (το πρώτο κοκκινίζει για 3 δευτερόλεπτα)
             {
                 xRect[(size_t) b] = { x, cy, D, D };
@@ -809,6 +838,15 @@ public:
         const auto p = e.position;
         dragBlock = -1;
         spMode = 0;
+
+        // κλικ εκτός από τα κυκλάκια του ανοιχτού block τα κλείνει
+        if (expanded >= 0)
+        {
+            const auto& eb = numRect[(size_t) expanded];
+            const bool inRow = p.y >= labelY - 4.0f && p.y <= labelY + 26.0f
+                               && p.x >= eb.getX() - 6.0f && p.x <= xRect[(size_t) expanded].getRight() + 6.0f;
+            if (! inRow) { expanded = -1; repaint(); }
+        }
 
         if (! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
         {
@@ -852,7 +890,8 @@ public:
                 if (onTranspose) onTranspose (b, e.getNumberOfClicks() >= 2 ? 0 : 1);
                 return;
             }
-            if (numRect[(size_t) b].expanded (2.0f).contains (p) && e.getNumberOfClicks() >= 2) { if (onToggleOff) onToggleOff (b); return; }
+            if (numRect[(size_t) b].expanded (2.0f).contains (p)) { expanded = expanded == b ? -1 : b; repaint(); return; }   // ο αριθμός δεν επιλέγει: ανοίγει τις λειτουργίες
+            if (silentRect[(size_t) b].expanded (2.0f).contains (p)) { if (onToggleSilent) onToggleSilent (b); repaint(); return; }
             if (onChord) { if (onChordType) onChordType (b, e.getNumberOfClicks() >= 2 ? 0 : 1); return; }
             if (holdRect[(size_t) b].expanded (2.0f).contains (p)) { if (onHold) onHold (b); return; }
             if (curveRect[(size_t) b].expanded (2.0f).contains (p)) { if (onCurve) onCurve (b); return; }
@@ -975,6 +1014,8 @@ private:
     const String& message;
     Typeface::Ptr typeface;
     std::array<Span, flow::numBlocks> spans;
+    int expanded = -1;
+    std::array<Rectangle<float>, flow::numBlocks> silentRect;
     std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect, xRect;
     int armedBlock = -1;
     uint32 armedUntil = 0;
