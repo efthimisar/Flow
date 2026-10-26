@@ -49,7 +49,7 @@ static inline StringArray activeBlocks (const flow::Engine& engine)
 {
     StringArray list;
     for (int b = 0; b < flow::numBlocks; ++b)
-        if (engine.active[(size_t) b].load() != 0)
+        if (engine.active[(size_t) b].load() != 0 && b != engine.specialBlock.load())   // το ειδικό block δεν έχει λωρίδα λούπας
             list.add (String (b));
     return list;
 }
@@ -508,6 +508,7 @@ public:
     std::function<void (int)> onToggleOff;   // διπλό κλικ στον αριθμό: block σβηστό / αναμμένο
     std::function<void (int, int)> onChordType;   // (block, +1 / -1 / 0 = maj ή νέα τονική)
     std::function<void (int, float)> onVolume;
+    std::function<void (int, int, bool)> onSpecialZone;   // ειδικό block: νέα ζώνη από σύρσιμο (lo, hi, τέλος σύρσιμου)
     std::function<void (int, int)> onTranspose;   // (block, +1 / -1 / 0 = μηδενισμός)
 
     Colour keyLight (int b) const { return engine.blockOff[(size_t) b].load() != 0 ? Colour (0xff7a7168) : blockLight (b); }
@@ -528,7 +529,7 @@ public:
         kw = (float) getWidth() - 28.0f;
         const float ww = kw / 52.0f;
         labelY = 12.0f;
-        keysY = labelY + 31.0f;
+        keysY = labelY + 39.0f;   // 8 px παραπάνω: χώρος για τη λωρίδα του ειδικού block
 
         for (auto& s : spans) s = Span();
         std::vector<Rectangle<float>> blackRects;
@@ -554,6 +555,8 @@ public:
                 s.r = jmax (s.r, r);
             }
 
+            noteL[(size_t) n] = l; noteR[(size_t) n] = r;
+            if (! black) whiteNote[(size_t) jmin (wi, 51)] = n;
             const bool isFirst = n == firstKey;
             const float alpha = 1.0f;
             const bool switchKey = b >= 0 && ((engine.swBits[(size_t) b * 2 + (size_t) (n >> 6)].load() >> (n & 63)) & 1) != 0;
@@ -591,6 +594,28 @@ public:
         g.setColour (hobby::kScreen);
         for (auto sx : seps)
             g.fillRect (sx - 1.0f, keysY, 2.0f, 56.0f);
+
+        // ειδικό block: άσπρη λωρίδα πάνω από τα πλήκτρα της ζώνης του, και λευκό περίγραμμα στο πρώτο και στο τελευταίο πλήκτρο
+        specialRect = {};
+        {
+            const int sb = engine.specialBlock.load();
+            if (sb >= 0 && engine.active[(size_t) sb].load() != 0 && engine.zoneState[(size_t) sb].load() == 0)
+            {
+                const int a = engine.lo[(size_t) sb].load(), c = engine.hi[(size_t) sb].load();
+                if (a >= flow::lowestNote && c <= flow::highestNote && a <= c)
+                {
+                    const float al = engine.blockOff[(size_t) sb].load() != 0 ? 0.3f : (sb == sel ? 1.0f : 0.8f);
+                    specialRect = { noteL[(size_t) a], keysY - 13.0f, noteR[(size_t) c] - noteL[(size_t) a], 8.0f };
+                    g.setColour (Colours::white.withAlpha (al));
+                    g.fillRoundedRectangle (specialRect, 4.0f);
+                    for (int n : { a, c })
+                    {
+                        const bool blk = flow::isBlackKey (n);
+                        g.drawRoundedRectangle (Rectangle<float> (noteL[(size_t) n], keysY, noteR[(size_t) n] - noteL[(size_t) n], blk ? 34.0f : 56.0f).reduced (1.0f), 3.0f, 2.0f);
+                    }
+                }
+            }
+        }
 
         // πάνω από κάθε ζώνη: κυκλάκια. Από κάτω τους: γραμμή έντασης.
         constexpr float D = 22.0f, gap = 4.0f;
@@ -718,6 +743,18 @@ public:
     {
         const auto p = e.position;
         dragBlock = -1;
+        spMode = 0;
+
+        if (! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
+        {
+            const int sb = engine.specialBlock.load();
+            if (e.mods.isPopupMenu()) { if (onVolumeMenu) onVolumeMenu (sb); return; }
+            spLo0 = engine.lo[(size_t) sb].load(); spHi0 = engine.hi[(size_t) sb].load();
+            spStartNote = noteAtX (p.x);
+            spMoved = false;
+            spMode = p.x < specialRect.getX() + 10.0f ? 1 : p.x > specialRect.getRight() - 10.0f ? 2 : 3;
+            return;
+        }
 
         for (int b = 0; b < flow::numBlocks; ++b)
         {
@@ -770,9 +807,38 @@ public:
     void mouseDrag (const MouseEvent& e) override
     {
         if (dragBlock >= 0) setVolumeFromX (dragBlock, e.position.x);
+
+        if (spMode > 0 && onSpecialZone)
+        {
+            const int n = noteAtX (e.position.x);
+            int a = spLo0, c = spHi0;
+            if (spMode == 1)      a = jmin (n, spHi0);
+            else if (spMode == 2) c = jmax (n, spLo0);
+            else
+            {
+                const int w = spHi0 - spLo0;
+                a = jlimit (flow::lowestNote, flow::highestNote - w, spLo0 + (n - spStartNote));
+                c = a + w;
+            }
+            if (a != engine.lo[(size_t) engine.specialBlock.load()].load() || c != engine.hi[(size_t) engine.specialBlock.load()].load())
+            {
+                spMoved = true;
+                onSpecialZone (a, c, false);
+            }
+        }
     }
 
-    void mouseUp (const MouseEvent&) override { dragBlock = -1; }
+    void mouseUp (const MouseEvent&) override
+    {
+        dragBlock = -1;
+        if (spMode > 0)
+        {
+            const int sb = engine.specialBlock.load();
+            if (spMoved) { if (onSpecialZone && sb >= 0) onSpecialZone (engine.lo[(size_t) sb].load(), engine.hi[(size_t) sb].load(), true); }
+            else if (onSelect && sb >= 0) onSelect (sb);
+            spMode = 0;
+        }
+    }
 
 private:
     struct Span { float l = 1e9f, r = -1e9f; bool used = false; };
@@ -824,6 +890,14 @@ private:
         return p;
     }
 
+    int noteAtX (float x) const
+    {
+        const float ww = kw / 52.0f;
+        const int i = jlimit (0, 51, (int) std::floor ((x - 14.0f) / ww));
+        const int n = whiteNote[(size_t) i];
+        return n >= flow::lowestNote ? n : flow::lowestNote;
+    }
+
     void setVolumeFromX (int b, float x)
     {
         const auto bar = barRect[(size_t) b];
@@ -841,6 +915,11 @@ private:
     uint32 armedUntil = 0;
     float kw = 1.0f, labelY = 46.0f, keysY = 77.0f;
     int dragBlock = -1;
+    std::array<float, 128> noteL {}, noteR {};
+    std::array<int, 52> whiteNote {};
+    Rectangle<float> specialRect;
+    int spMode = 0, spLo0 = 0, spHi0 = 0, spStartNote = 0;
+    bool spMoved = false;
 };
 
 //==============================================================================

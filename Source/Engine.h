@@ -33,7 +33,7 @@ namespace flow
     enum LoopState { loopOff = 0, loopRec = 1, loopPlay = 2, loopOver = 3 };
     constexpr int maxLayers = 32;
     // κουμπιά που ανατίθενται σε πετάλι ή πλήκτρο (MIDI learn)
-    enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, ctlMetro, ctlPanic, ctlScenePrev, ctlSceneNext, ctlMute, numControls };
+    enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, ctlMetro, ctlPanic, ctlScenePrev, ctlSceneNext, ctlMute, ctlSpecial, numControls };
 
     // καμπύλες έντασης: 0 διαγώνια, 1 βαθιά (αργή αρχή), 2 ανάποδη βαθιά (γρήγορη αρχή), 3 διαγώνια προς τα κάτω
     constexpr int numCurves = 6;   // 4 = S-καμπύλη, 5 = πολύ βαθιά (κυβική)
@@ -108,6 +108,7 @@ namespace flow
             }
             for (int i = 0; i < numControls; ++i) mapCode[i] = 0;
             owner.fill (-1);
+            ownerSp.fill (-1);
             incoming.reset (44100.0);
         }
 
@@ -146,6 +147,7 @@ namespace flow
 
         // metronome
         std::atomic<bool> metroOn { false };
+        std::atomic<int> specialBlock { -1 };   // ειδικό block: πάνω από τα άλλα, χωρίς λούπα, παίζει πάντα ζωντανά (-1 = κανένα)
         std::atomic<float> metroLevel { 0.8f };
         std::atomic<int> metroChannel { 2 };      // έξοδος 3 (0-based 2)
         std::atomic<int> numOutChannels { 2 };
@@ -169,14 +171,14 @@ namespace flow
             const int lp = lastPlayed.load();
             if (fromPedal && lp >= 0 && lp < numBlocks && active[(size_t) lp].load() != 0) return lp;
             const int sel = selectedBlock.load();
-            return sel >= 0 && sel < numBlocks && active[(size_t) sel].load() != 0 ? sel : -1;
+            return sel >= 0 && sel < numBlocks && sel != specialBlock.load() && active[(size_t) sel].load() != 0 ? sel : -1;   // το ειδικό block δεν έχει λούπα
         }
 
-        void pressMain (int b) { if (b >= 0) ++cmdMain[(size_t) b]; }
-        void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
+        void pressMain (int b) { if (b >= 0 && b != specialBlock.load()) ++cmdMain[(size_t) b]; }
+        void pressUndo (int b) { if (b != specialBlock.load()) ++cmdUndo[(size_t) b]; }
         void pressStop (int b) { ++cmdStop[(size_t) b]; }
         void pressMute (int b) { ++cmdMute[(size_t) b]; }
-        void pressReRec (int b) { if (b >= 0) rerecReq[(size_t) b] = 1; }   // ξαναγράφω: σβήνει τη λούπα του block και ξεκινά νέα εγγραφή
+        void pressReRec (int b) { if (b >= 0 && b != specialBlock.load()) rerecReq[(size_t) b] = 1; }   // ξαναγράφω: σβήνει τη λούπα του block και ξεκινά νέα εγγραφή
         void tapFromUi()       { ++tapRequest; }
         void panic()           { ++panicCount; }
 
@@ -254,13 +256,21 @@ namespace flow
         {
             int best = -1, bestSeq = -1;
             for (int b = 0; b < numBlocks; ++b)
-                if (active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
+                if (b != specialBlock.load() && active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
                     && zoneSeq[b].load() > bestSeq)
                 {
                     best = b;
                     bestSeq = zoneSeq[b].load();
                 }
             return best;
+        }
+
+        // το ειδικό block παίζει το πλήκτρο n (εφόσον υπάρχει, είναι αναμμένο και το πλήκτρο είναι στη ζώνη του)
+        int specialForNote (int n) const
+        {
+            const int sb = specialBlock.load();
+            if (sb < 0 || sb >= numBlocks || active[(size_t) sb].load() == 0 || zoneState[(size_t) sb].load() != 0 || blockOff[(size_t) sb].load() != 0) return -1;
+            return n >= lo[(size_t) sb].load() && n <= hi[(size_t) sb].load() ? sb : -1;
         }
 
         void startVolumeLearn (int b) { mapLearnTarget = -1; volLearn = b; }
@@ -540,6 +550,7 @@ namespace flow
             if (seenPanic != panicCount.load())
             {
                 owner.fill (-1);
+                ownerSp.fill (-1);
                 seenPanic = panicCount.load();
             }
 
@@ -782,6 +793,7 @@ namespace flow
         juce::MidiBuffer chordTmp;
         Head head;
         std::array<int, 128> owner;
+        std::array<int, 128> ownerSp;   // ειδικό block: δεύτερος ιδιοκτήτης του πλήκτρου (παίζει μαζί με το κανονικό block)
         std::array<std::vector<Action>, numBlocks> inActions;
         std::array<std::vector<juce::MidiMessage>, numBlocks> inRaw;
         std::vector<Action> actions;
@@ -1000,6 +1012,14 @@ namespace flow
                     }
 
                     const int b = blockForNote (n);
+                    const int sp = specialForNote (n);
+                    if (sp >= 0)
+                    {
+                        ownerSp[(size_t) n] = sp;
+                        Action a;
+                        a.pos = pos; a.order = 1; a.kind = Kind::Live; a.note = n; a.vel = msg.getVelocity(); a.on = true;
+                        inActions[(size_t) sp].push_back (a);
+                    }
                     if (b >= 0)
                     {
                         owner[(size_t) n] = b;
@@ -1008,7 +1028,7 @@ namespace flow
                         a.pos = pos; a.order = 1; a.kind = Kind::Live; a.note = n; a.vel = msg.getVelocity(); a.on = true;
                         inActions[(size_t) b].push_back (a);
                     }
-                    else if (isBlackKey (n))    // ελεύθερα μαύρα πλήκτρα: δύο μαζί (σε ~50 ms) = tap tempo
+                    else if (sp < 0 && isBlackKey (n))    // ελεύθερα μαύρα πλήκτρα: δύο μαζί (σε ~50 ms) = tap tempo
                     {
                         const int64_t t = gs + pos;
                         if (lastFreeNote >= 0 && lastFreeNote != n && (double) (t - lastFreeT) <= 0.05 * sr)
@@ -1026,6 +1046,14 @@ namespace flow
                 else if (msg.isNoteOff())
                 {
                     const int n = msg.getNoteNumber();
+                    const int sp = ownerSp[(size_t) n];
+                    if (sp >= 0)
+                    {
+                        ownerSp[(size_t) n] = -1;
+                        Action a;
+                        a.pos = pos; a.order = 1; a.kind = Kind::Live; a.note = n; a.on = false;
+                        inActions[(size_t) sp].push_back (a);
+                    }
                     const int b = owner[(size_t) n];
                     if (b >= 0)
                     {
@@ -1039,6 +1067,8 @@ namespace flow
                 {
                     const int b = owner[(size_t) msg.getNoteNumber()];
                     if (b >= 0) pushRaw (b, pos, msg);
+                    const int sp = ownerSp[(size_t) msg.getNoteNumber()];
+                    if (sp >= 0 && sp != b) pushRaw (sp, pos, msg);
                 }
                 else if (msg.isController() || msg.isPitchWheel() || msg.isChannelPressure())
                 {
@@ -1175,6 +1205,7 @@ namespace flow
                         case ctlUndo:  ++pedalDel; break;     // σβήσιμο λούπας: πατήματα = αριθμός block
                         case ctlStop:  ++pedalMute; break;    // mute / ενεργοποίηση: πατήματα = αριθμός block
                         case ctlMute:  ++pedalMute; break;
+                        case ctlSpecial: { const int sb = specialBlock.load(); if (sb >= 0 && sb < numBlocks) { blockOff[(size_t) sb] = blockOff[(size_t) sb].load() != 0 ? 0 : 1; ++changeCount; } } break;
                         case ctlTape:  recorder.pressButton(); break;
                         case ctlMetro: metroOn = ! metroOn.load(); break;
                         case ctlPanic: ++panicCount; break;

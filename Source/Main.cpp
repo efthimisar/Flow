@@ -53,7 +53,7 @@ public:
         for (auto* t : { &recTile, &undoTile, &stopTile, &tapeTile })
             t->setRound (true);
 
-        blockTile.setTooltip (gr ("Block: φορτώνει νέο plugin σε νέο block"));
+        blockTile.setTooltip (gr ("Block: φορτώνει νέο plugin σε νέο block. Δεξί κλικ: ★ ειδικό block (το επιλεγμένο block παίζει πάντα ζωντανά πάνω από τα άλλα, χωρίς λούπα. Άσπρη λωρίδα πάνω από τα πλήκτρα: σύρσιμο = θέση, άκρα = εύρος) και πετάλι on/off"));
         vstTile.setTooltip (gr ("VST: ανοίγει / κλείνει το παράθυρο του instrument (πράσινο = το block έχει VST). Δεξί κλικ: αντικατάσταση, αφαίρεση"));
         mfxTile.setTooltip (gr ("MIDI FX: MIDI effect (π.χ. Stepic) πριν από το instrument. Αν δεν έχει plugin, ανοίγει επιλογή αρχείου. Δεξί κλικ: αντικατάσταση, αφαίρεση"));
         fxTile.setTooltip (gr ("FX: αλυσίδα audio effects μετά το instrument. Τα κυκλάκια 1, 2, 3 και το + είναι στην κεφαλίδα του πάνελ. Δεξί κλικ: προσθήκη"));
@@ -127,6 +127,15 @@ public:
             dirty = true;
         };
         keyboardView.onVolumeMenu = [this] (int b) { showVolumeMenu (b); };
+        keyboardView.onSpecialZone = [this] (int a, int c, bool fin)
+        {
+            const int sb = engine.specialBlock.load();
+            if (sb < 0) return;
+            engine.setZone (sb, a, c);
+            if (fin) saveNow();
+            keyboardView.repaint();
+        };
+        blockTile.onRightClick = [this] { showBlockMenu(); };
 
         header.onCircle = [this] (int i)
         {
@@ -1233,6 +1242,7 @@ private:
         if (old != nullptr) stateCache.erase (old.get());
         old.reset();
 
+        if (engine.specialBlock.load() == block) engine.specialBlock = -1;
         engine.holdMode[(size_t) block] = 0;
         engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
         engine.curveMode[(size_t) block] = 0;
@@ -1277,6 +1287,43 @@ private:
                 safe->saveNow();
             }
             safe->refreshAll();
+        });
+    }
+
+    // δεξί κλικ στο Block: ειδικό block του επιλεγμένου block και πετάλι on/off του
+    void showBlockMenu()
+    {
+        const int sb = engine.specialBlock.load();
+        const bool ok = isActive (selected);
+        const int code = engine.mapCode[(size_t) flow::ctlSpecial].load();
+
+        PopupMenu menu;
+        menu.addItem (1, String::fromUTF8 ("\xe2\x98\x85"), ok, sb >= 0 && sb == selected);
+        menu.addItem (2, String::fromUTF8 ("\xe2\x97\x8e  \xe2\x98\x85"), sb >= 0);
+        menu.addItem (3, String::fromUTF8 ("\xe2\x9c\x95  \xe2\x98\x85"), code != 0);
+        if (code != 0)
+            menu.addItem (4, gr ("Τώρα: ") + pedalCodeText (code), false);
+
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&blockTile),
+                            [safe = SafePointer<MainComponent> (this)] (int result)
+        {
+            if (safe == nullptr) return;
+            if (result == 1)
+            {
+                auto& en = safe->engine;
+                const int s = safe->selected;
+                if (en.specialBlock.load() == s) en.specialBlock = -1;
+                else
+                {
+                    en.pressUndo (s);   // το ειδικό block δεν έχει λούπα: αν είχε, σβήνεται
+                    en.specialBlock = s;
+                }
+                safe->saveNow();
+                safe->refreshAll();
+                safe->keyboardView.repaint();
+            }
+            if (result == 2) safe->startPedalLearn (flow::ctlSpecial);
+            if (result == 3) { safe->engine.mapCode[(size_t) flow::ctlSpecial] = 0; safe->saveNow(); }
         });
     }
 
@@ -1619,6 +1666,7 @@ private:
             e->setAttribute ("al", engine.getAlText (b));
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
+            e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : 0);
             e->setAttribute ("chord", engine.chordMode[(size_t) b].load());
             e->setAttribute ("ctype", engine.chordType[(size_t) b].load());
             e->setAttribute ("cminor", engine.chordMinor[(size_t) b].load());
@@ -1747,6 +1795,7 @@ private:
             }
         }
 
+        engine.specialBlock = -1;
         for (auto* e : root.getChildWithTagNameIterator ("Block"))
         {
             const int slot = e->getIntAttribute ("slot", -1);
@@ -1765,6 +1814,7 @@ private:
             engine.setAlText (slot, e->getStringAttribute ("al"));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
+            if (e->getIntAttribute ("special", 0) != 0) engine.specialBlock = slot;
             engine.chordMode[(size_t) slot]  = 0;   // το Chord δεν χρησιμοποιείται πια
             engine.chordType[(size_t) slot]  = jlimit (0, flow::numChordTypes - 1, e->getIntAttribute ("ctype", 0));
             engine.chordMinor[(size_t) slot] = jlimit (0, 1, e->getIntAttribute ("cminor", 0));
@@ -1964,7 +2014,7 @@ private:
     //==========================================================================
     static const char* controlName (int i)
     {
-        static const char* const names[flow::numControls] = { "Hold", "Rec MIDI loop", "Σβήσιμο λούπας", "Mute λούπας", "Rec Audio", "Metronome", "Panic", "Προηγούμενη σκηνή", "Επόμενη σκηνή" };
+        static const char* const names[flow::numControls] = { "Hold", "Rec MIDI loop", "Σβήσιμο λούπας", "Mute λούπας", "Rec Audio", "Metronome", "Panic", "Προηγούμενη σκηνή", "Επόμενη σκηνή", "Mute", "Ειδικό block on/off" };
         return names[i];
     }
 
@@ -1999,6 +2049,7 @@ private:
         switch (i)
         {
             case flow::ctlHold:  return &holdTile;
+            case flow::ctlSpecial: return &blockTile;
             case flow::ctlRec:   return &recTile;
             case flow::ctlUndo:  return &undoTile;
             case flow::ctlStop:  return &stopTile;
@@ -2245,7 +2296,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.22.0"; }
+    const String getApplicationVersion() override { return "0.23.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
