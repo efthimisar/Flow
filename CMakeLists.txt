@@ -50,7 +50,8 @@ juce_add_binary_data(FlowResources SOURCES Resources/Carlito-Bold.ttf)
 target_sources(Flow PRIVATE
     Source/Main.cpp
     Source/HobbyStyle.cpp
-    Source/RecorderEngine.cpp)
+    Source/RecorderEngine.cpp
+    Source/KeyLights.cpp)
 
 target_compile_definitions(Flow PRIVATE
     JUCE_WEB_BROWSER=0
