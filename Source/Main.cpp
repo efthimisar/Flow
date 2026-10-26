@@ -947,38 +947,34 @@ private:
         std::sort (list.begin(), list.end(), [] (const PluginDescription& a, const PluginDescription& b)
                    { return a.name.compareIgnoreCase (b.name) < 0; });
 
-        auto label = [] (const PluginDescription& d) { return d.name + String::fromUTF8 ("  \xc2\xb7  ") + d.pluginFormatName; };
 
-        PopupMenu menu;
-        menu.addItem (1, String::fromUTF8 ("\xe2\x86\xbb"));   // νέα σάρωση
-        menu.addItem (2, String::fromUTF8 ("\xe2\x80\xa6"));   // επιλογή αρχείου με το χέρι
-        menu.addSeparator();
-
-        if (list.size() > 14)
+        // η λίστα εμφανίζεται μέσα στην οθόνη των loops (στη θέση τους): διάλεξε όνομα, ↻ νέα σάρωση, … αρχείο, ✕ κλείσιμο
+        StringArray names, formats;
+        for (const auto& d : list)
         {
-            std::map<String, PopupMenu> byMaker;
-            for (size_t i = 0; i < list.size(); ++i)
-            {
-                const String maker = list[i].manufacturerName.isEmpty() ? String ("-") : list[i].manufacturerName;
-                byMaker[maker].addItem (1000 + (int) i, label (list[i]));
-            }
-            for (auto& kv : byMaker)
-                menu.addSubMenu (kv.first, kv.second);
-        }
-        else
-        {
-            for (size_t i = 0; i < list.size(); ++i)
-                menu.addItem (1000 + (int) i, label (list[i]));
+            names.add (d.name);
+            formats.add (d.pluginFormatName);
         }
 
-        menu.showMenuAsync (PopupMenu::Options(), [this, safe = SafePointer<MainComponent> (this), list, title, chosen] (int r)
-        {
-            if (safe == nullptr || r == 0) return;
-            if (r == 1) { knownPlugins.clear(); startPluginScan(); return; }
-            if (r == 2) { pickPluginFile (title, chosen); return; }
-            const int i = r - 1000;
-            if (i >= 0 && i < (int) list.size()) chosen (list[(size_t) i]);
-        });
+        const Colour kc = kind == 0 ? hobby::kOn : kind == 1 ? hobby::kPeach : hobby::kLilac;
+        const String kt = kind == 0 ? "VST" : kind == 1 ? "FX" : "MIDI FX";
+        const String ks = kind == 0 ? "instruments" : "effects";
+
+        loopsView.getList().open (kt, ks, kc, names, formats,
+                                  [safe = SafePointer<MainComponent> (this), list, chosen] (int i)
+                                  {
+                                      if (safe != nullptr && i >= 0 && i < (int) list.size()) chosen (list[(size_t) i]);
+                                  },
+                                  [safe = SafePointer<MainComponent> (this)]
+                                  {
+                                      if (safe == nullptr) return;
+                                      safe->knownPlugins.clear();
+                                      safe->startPluginScan();
+                                  },
+                                  [safe = SafePointer<MainComponent> (this), title, chosen]
+                                  {
+                                      if (safe != nullptr) safe->pickPluginFile (title, chosen);
+                                  });
     }
 
     void pickPluginFile (const String& title, std::function<void (const PluginDescription&)> chosen)
@@ -2102,12 +2098,13 @@ private:
         // κουμπιά plugin: πράσινο = αυτό που δείχνει τώρα ο editor. Τελείες: υπάρχει plugin / πόσα FX
         const bool hasMfx = valid && engine.getMidiFx (sel) != nullptr;
         const int nfx = valid ? engine.numFx (sel) : 0;
-        vstTile.setIconColour (valid ? hobby::kOn : hobby::kIconGrey);   // πράσινο = το block έχει VST
-        mfxTile.setIconColour (hasMfx && hasWindow (engine.getMidiFx (sel)) ? hobby::kOn : hobby::kIconGrey);
+        // πράσινο = υπάρχει (block / VST / MIDI FX / FX στο επιλεγμένο block), άσπρο = δεν υπάρχει
+        const Colour tileWhite (0xfff3f4f6);
+        blockTile.setIconColour (firstActive() >= 0 ? hobby::kOn : tileWhite);
+        vstTile.setIconColour (valid ? hobby::kOn : tileWhite);
+        mfxTile.setIconColour (hasMfx ? hobby::kOn : tileWhite);
         mfxTile.setDots (hasMfx ? 1 : 0);
-        bool anyFxOpen = false;
-        for (int i = 0; i < nfx; ++i) anyFxOpen = anyFxOpen || hasWindow (engine.getFx (sel, i));
-        fxTile.setIconColour (anyFxOpen ? hobby::kOn : hobby::kIconGrey);
+        fxTile.setIconColour (nfx > 0 ? hobby::kOn : tileWhite);
         fxTile.setDots (jmin (nfx, 3));
 
         const int hold = valid ? engine.holdMode[(size_t) sel].load() : 0;
@@ -2317,7 +2314,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.26.0"; }
+    const String getApplicationVersion() override { return "0.27.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

@@ -55,6 +55,112 @@ static inline StringArray activeBlocks (const flow::Engine& engine)
 }
 
 //==============================================================================
+// Λίστα plugins μέσα στην οθόνη (στη θέση των loops): ↻ νέα σάρωση, … επιλογή αρχείου, ✕ κλείσιμο. Κλικ σε όνομα = επιλογή.
+class PluginListView : public Component
+{
+public:
+    explicit PluginListView (Typeface::Ptr face) : typeface (face) { setVisible (false); }
+
+    void open (const String& t, const String& s, Colour c, StringArray names, StringArray formats,
+               std::function<void (int)> pick, std::function<void()> rescan, std::function<void()> file)
+    {
+        title = t; sub = s; colour = c; items = names; fmts = formats;
+        onPick = pick; onRescan = rescan; onFile = file;
+        scroll = 0;
+        setVisible (true);
+        repaint();
+    }
+
+    void close() { setVisible (false); }
+
+    void paint (Graphics& g) override
+    {
+        const int w = getWidth();
+        hot.clear();
+        g.setColour (hobby::kScreen);
+        g.fillRoundedRectangle (getLocalBounds().toFloat(), 12.0f);
+
+        g.setFont (hobby::makeFont (typeface, 17.0f));
+        g.setColour (colour);
+        g.drawText (title, 26, 8, 200, 28, Justification::centredLeft, false);
+        g.setFont (hobby::makeFont (typeface, 14.0f));
+        g.setColour (hobby::kIconGrey);
+        g.drawText (sub, 26 + (int) std::ceil (textWidth (hobby::makeFont (typeface, 17.0f), title)) + 12, 8, 200, 28, Justification::centredLeft, false);
+
+        auto lamp = [&] (float cx, const String& glyph, Colour c, std::function<void()> fn)
+        {
+            const Rectangle<float> r (cx - 12.0f, 22.0f - 12.0f, 24.0f, 24.0f);
+            g.setColour (c.withAlpha (0.25f));
+            g.fillEllipse (r);
+            g.setColour (c);
+            g.setFont (hobby::makeFont (typeface, 15.0f));
+            g.drawText (glyph, r, Justification::centred, false);
+            hot.push_back ({ r.expanded (4.0f), fn });
+        };
+        lamp ((float) w - 34.0f, String::fromUTF8 ("\xe2\x9c\x95"), hobby::kRed, [this] { close(); });
+        lamp ((float) w - 64.0f, String::fromUTF8 ("\xe2\x80\xa6"), hobby::kOn, [this] { if (onFile) onFile(); close(); });
+        lamp ((float) w - 94.0f, String::fromUTF8 ("\xe2\x86\xbb"), hobby::kOn, [this] { if (onRescan) onRescan(); close(); });
+
+        const int cols = w >= 640 ? 2 : 1;
+        const float gapX = 20.0f, left = 26.0f, rowH = 34.0f, top = 58.0f;
+        const float colW = ((float) w - 2.0f * left - gapX * (float) (cols - 1)) / (float) cols;
+        const int rowsVisible = jmax (1, (int) ((float) (getHeight() - 58 - 8) / rowH));
+        const int total = items.size();
+        const int totalRows = (total + cols - 1) / cols;
+        scroll = jlimit (0, jmax (0, totalRows - rowsVisible), scroll);
+
+        for (int r = 0; r < rowsVisible; ++r)
+            for (int c = 0; c < cols; ++c)
+            {
+                const int idx = (r + scroll) * cols + c;
+                if (idx >= total) continue;
+                const float x = left + (float) c * (colW + gapX), y = top + (float) r * rowH;
+                const Rectangle<float> rr (x, y, colW, rowH - 6.0f);
+                g.setColour (Colour (0xff2d2926));
+                g.fillRoundedRectangle (rr, 6.0f);
+                g.setColour (hobby::kText);
+                g.setFont (hobby::makeFont (typeface, 15.0f));
+                g.drawText (items[idx], rr.withTrimmedLeft (14.0f).withTrimmedRight (60.0f), Justification::centredLeft, true);
+                g.setColour (hobby::kIconGrey.withAlpha (0.6f));
+                g.setFont (hobby::makeFont (typeface, 11.0f));
+                g.drawText (fmts[idx], rr.withTrimmedRight (12.0f), Justification::centredRight, false);
+                hot.push_back ({ rr, [this, idx] { if (onPick) onPick (idx); close(); } });
+            }
+
+        if (totalRows > rowsVisible)   // λεπτή μπάρα κύλισης δεξιά
+        {
+            const float th = (float) (getHeight() - 58 - 8);
+            const float bh = jmax (16.0f, th * (float) rowsVisible / (float) totalRows);
+            const float by = top + (th - bh) * (float) scroll / (float) jmax (1, totalRows - rowsVisible);
+            g.setColour (Colour (0xff4a433d));
+            g.fillRoundedRectangle ((float) w - 12.0f, by, 4.0f, bh, 2.0f);
+        }
+    }
+
+    void mouseDown (const MouseEvent& e) override
+    {
+        for (auto& h : hot)
+            if (h.first.contains (e.position)) { auto fn = h.second; fn(); return; }
+    }
+
+    void mouseWheelMove (const MouseEvent&, const MouseWheelDetails& wd) override
+    {
+        scroll += wd.deltaY > 0 ? -1 : 1;
+        repaint();
+    }
+
+private:
+    Typeface::Ptr typeface;
+    String title, sub;
+    Colour colour { Colours::white };
+    StringArray items, fmts;
+    std::function<void (int)> onPick;
+    std::function<void()> onRescan, onFile;
+    int scroll = 0;
+    std::vector<std::pair<Rectangle<float>, std::function<void()>>> hot;
+};
+
+//==============================================================================
 // Κουτί tempo: κλικ = πληκτρολόγηση 40-240, σύρσιμο πάνω/κάτω = αλλαγή.
 class TempoBox : public Component, public SettableTooltipClient, private TextEditor::Listener
 {
@@ -194,8 +300,9 @@ class LoopsView : public Component
 {
 public:
     LoopsView (flow::Engine& e, const int& sel, Typeface::Ptr face)
-        : engine (e), selected (sel), typeface (face), tempoBox (e, face), tapDot (e)
+        : engine (e), selected (sel), typeface (face), tempoBox (e, face), tapDot (e), list (face)
     {
+        addChildComponent (list);
         addChildComponent (tempoBox);
         addChildComponent (tapDot);
         tempoBox.setTooltip (gr ("Tempo (40-240): κλικ για να πληκτρολογήσεις, ή σύρε πάνω/κάτω"));
@@ -204,6 +311,7 @@ public:
 
     std::function<void (int)> onSelect;
     TempoBox& getTempoBox() { return tempoBox; }
+    PluginListView& getList() { return list; }
 
     std::function<void()> onMetroChange;
 
@@ -227,6 +335,7 @@ public:
 
     void resized() override
     {
+        list.setBounds (0, 0, getWidth(), jmax (60, getHeight() - 38));
         const int by = getHeight() - 22 - 7;
         tempoBox.setBounds (getWidth() / 2 - 150, by, 100, 22);
         tapDot.setBounds (tempoBox.getRight() + 8, by, 22, 22);
@@ -554,6 +663,7 @@ private:
     Typeface::Ptr typeface;
     TempoBox tempoBox;
     TapDot tapDot;
+    PluginListView list;
     int stepOut = 0, topOut = 48;
     std::vector<std::pair<Rectangle<float>, std::function<void()>>> hot;   // κλικ-ζώνες φωτακιών στη λωρίδα μετρονόμου
 };
