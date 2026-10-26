@@ -198,7 +198,7 @@ public:
 
         if (metroSamplePath.isNotEmpty()) loadMetroSample (File (metroSamplePath), false);
         if (settings->getBoolValue ("link", false) && LinkBridge::isAvailable()) engine.setLinkEnabled (true);
-        lightsWanted = settings->getBoolValue ("keyLights", false);
+        lightsWanted = true;   // τα φώτα πλήκτρων ανάβουν μόνα τους όταν βρεθεί Komplete Kontrol MK2
 
         refreshSize();
         restoreSession();
@@ -816,8 +816,7 @@ private:
         {
             const bool ok = keyLights.start();
             flow::flowLog ("φώτα πλήκτρων: " + keyLights.getStatus());
-            setMessage (ok ? gr ("Φώτα πλήκτρων: ") + keyLights.getStatus()
-                           : gr ("Φώτα πλήκτρων: ") + keyLights.getStatus());
+            if (ok) setMessage (gr ("Φώτα πλήκτρων: ") + keyLights.getStatus());
             if (ok) { lastLights.fill (0xff); updateLights (true); }
         }
         else
@@ -931,8 +930,6 @@ private:
         }
         if (v)   // ★ ειδικό block (πάνω από τα άλλα, χωρίς λούπα)
             l.push_back ({ String::fromUTF8 ("\xe2\x98\x85"), Colours::white, true, false, [this] { toggleSpecial(); } });
-        l.push_back ({ String::fromUTF8 ("\xe2\x9c\xa6"), keyLights.isOn() ? hobby::kOn : lightsWanted ? hobby::kRed : hobby::kIconGrey, true, false,
-                       [this] { setKeyLights (! keyLights.isOn()); } });   // ✦ φώτα πλήκτρων (Komplete Kontrol S-series MK2)
         l.push_back ({ String::fromUTF8 ("\xe2\x97\x8e"), learnMode == 0 ? hobby::kIconGrey : learnMode == 1 ? hobby::kOn : hobby::kRed, true, false,
                        [this] { learnMode = (learnMode + 1) % 3; if (learnMode == 1) setMessage (gr ("Πάτησε το κουμπί που θέλεις να αναθέσεις σε πετάλι")); updateToolLamps(); } });
         loopsView.setToolLamps (std::move (l));
