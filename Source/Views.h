@@ -986,17 +986,6 @@ public:
 
         // το μενού του block ανοίγει και κλείνει μόνο με τον αριθμό του (όχι με κλικ αλλού)
 
-        if (! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
-        {
-            const int sb = engine.specialBlock.load();
-            if (e.mods.isPopupMenu()) { if (onVolumeMenu) onVolumeMenu (sb); return; }
-            spLo0 = engine.lo[(size_t) sb].load(); spHi0 = engine.hi[(size_t) sb].load();
-            spStartNote = noteAtX (p.x);
-            spMoved = false;
-            spMode = p.x < specialRect.getX() + 10.0f ? 1 : p.x > specialRect.getRight() - 10.0f ? 2 : 3;
-            return;
-        }
-
         // ο αριθμός ανοίγει/κλείνει το μενού του block, ανεξάρτητα από γειτονικά blocks που μπορεί να επικαλύπτονται
         if (! e.mods.isPopupMenu())
             for (int b = 0; b < flow::numBlocks; ++b)
@@ -1016,6 +1005,17 @@ public:
                     else { armedBlock = b; armedUntil = Time::getMillisecondCounter() + 3000; repaint(); Component::SafePointer<KeyboardView> sp (this); Timer::callAfterDelay (3100, [sp] { if (sp != nullptr) sp->repaint(); }); }
                     return;
                 }
+
+        if (! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
+        {
+            const int sb = engine.specialBlock.load();
+            if (e.mods.isPopupMenu()) { if (onVolumeMenu) onVolumeMenu (sb); return; }
+            spLo0 = engine.lo[(size_t) sb].load(); spHi0 = engine.hi[(size_t) sb].load();
+            spStartNote = noteAtX (p.x);
+            spMoved = false;
+            spMode = p.x < specialRect.getX() + 10.0f ? 1 : p.x > specialRect.getRight() - 10.0f ? 2 : 3;
+            return;
+        }
 
         for (int b = 0; b < flow::numBlocks; ++b)
         {
