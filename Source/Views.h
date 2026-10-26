@@ -314,6 +314,7 @@ public:
     PluginListView& getList() { return list; }
 
     std::function<void()> onMetroChange;
+    std::function<bool()> metroIsCustom;   // έχει φορτωθεί δικός ήχος μετρονόμου;
     std::function<void (int)> onMetroSample;   // 1 = διάλεξε ήχο, 2 = αρχικός ήχος
 
     // φωτάκια εργαλείων του επιλεγμένου κουμπιού (VST ⇄ ✕, MIDI FX ⇄ ✕, FX + ✕): δίπλα στο CPU, χωρίς μενού
@@ -509,37 +510,26 @@ public:
                     g.drawText (txt, r, Justification::centred, false);
                     hot.push_back ({ r.expanded (3.0f), fn });
                 };
-                float x = (float) tapDot.getRight() + 36.0f;
-                g.setFont (hobby::makeFont (typeface, 14.0f));
-                g.setColour (hobby::kIconGrey);
-                g.drawText (String::fromUTF8 ("\xe2\x96\x82\xe2\x96\x84\xe2\x96\x86"), Rectangle<float> (x - 26.0f, sy, 30.0f, sh), Justification::centred, false);
-                x += 14.0f;
+                // τρία κουμπιά δίπλα στο tap: ένταση (κάθε πάτημα αλλάζει επίπεδο), ήχος (δικός σου ⇄ αρχικός), έξοδος (κάθε πάτημα επόμενη)
+                float x = (float) tapDot.getRight() + 26.0f;
                 const float levels[4] { 0.25f, 0.5f, 0.75f, 1.0f };
                 const float cur = engine.metroLevel.load();
-                int curIdx = 3;
-                for (int i = 0; i < 3; ++i)
-                    if (std::abs (cur - levels[i]) <= std::abs (cur - levels[curIdx])) curIdx = i;
-                for (int i = 0; i < 4; ++i)
-                {
-                    const float lv = levels[i];
-                    lampAt (x, i == curIdx, String ((int) (lv * 100)), [this, lv] { engine.metroLevel = lv; if (onMetroChange) onMetroChange(); });
-                    x += 24.0f;
-                }
-                x += 12.0f;
-                lampAt (x, false, String::fromUTF8 ("\xe2\x99\xaa"), [this] { if (onMetroSample) onMetroSample (1); });   // ♪ διάλεξε δικό σου ήχο
-                x += 24.0f;
-                lampAt (x, false, String::fromUTF8 ("\xe2\x86\xba"), [this] { if (onMetroSample) onMetroSample (2); });   // ↺ ο αρχικός ήχος
-                x += 36.0f;
+                int curIdx = 0;
+                for (int i = 1; i < 4; ++i)
+                    if (std::abs (cur - levels[i]) < std::abs (cur - levels[curIdx])) curIdx = i;
+                lampAt (x, true, String ((int) (levels[curIdx] * 100)), [this, curIdx, levels] { engine.metroLevel = levels[(curIdx + 1) % 4]; if (onMetroChange) onMetroChange(); });
+                x += 32.0f;
+                const bool custom = metroIsCustom && metroIsCustom();
+                lampAt (x, custom, custom ? String::fromUTF8 ("\xe2\x86\xba") : String::fromUTF8 ("\xe2\x99\xaa"),
+                        [this, custom] { if (onMetroSample) onMetroSample (custom ? 2 : 1); });   // ♪ διάλεξε δικό σου ήχο, ↺ γύρνα στον αρχικό
+                x += 32.0f;
                 g.setFont (hobby::makeFont (typeface, 14.0f));
                 g.setColour (hobby::kIconGrey);
                 g.drawText (String::fromUTF8 ("\xe2\x87\xa8"), Rectangle<float> (x - 10.0f, sy, 20.0f, sh), Justification::centred, false);
                 x += 22.0f;
                 const int outs = jlimit (1, 4, engine.numOutChannels.load());
-                for (int c = 0; c < outs; ++c)
-                {
-                    lampAt (x, engine.metroChannel.load() == c, String (c + 1), [this, c] { engine.metroChannel = c; if (onMetroChange) onMetroChange(); });
-                    x += 24.0f;
-                }
+                const int ch = jlimit (0, outs - 1, engine.metroChannel.load());
+                lampAt (x, true, String (ch + 1), [this, ch, outs] { engine.metroChannel = (ch + 1) % outs; if (onMetroChange) onMetroChange(); });
             }
             else if (notice.isNotEmpty())
             {

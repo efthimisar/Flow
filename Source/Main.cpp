@@ -107,6 +107,7 @@ public:
             }
         };
         loopsView.onMetroChange = [this] { saveNow(); };
+        loopsView.metroIsCustom = [this] { return metroSamplePath.isNotEmpty(); };
         loopsView.onMetroSample = [this] (int what)
         {
             if (what == 1) chooseMetroSample();
