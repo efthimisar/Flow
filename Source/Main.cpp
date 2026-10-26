@@ -931,6 +931,20 @@ private:
         }
         if (v)   // ★ ειδικό block (πάνω από τα άλλα, χωρίς λούπα)
             l.push_back ({ String ("SP"), Colours::white, true, false, [this] { toggleSpecial(); } });
+        // quantize: κάθε πάτημα αλλάζει επίπεδο και το μήνυμα δείχνει το νέο. Σβηστό (γκρι) = Off.
+        auto q3 = [this] (std::atomic<int>& q, const String& name, const char* l0, const char* l1, const char* l2)
+        {
+            q = (q.load() + 1) % 3;
+            setMessage (name + ": " + String (q.load() == 0 ? l0 : q.load() == 1 ? l1 : l2));
+            saveNow();
+            updateToolLamps();
+        };
+        l.push_back ({ String::fromUTF8 ("\xe2\x96\xb6|"), engine.startQ.load() != 0 ? hobby::kOn : hobby::kIconGrey, true, false,
+                       [this, q3] { q3 (engine.startQ, "Start quantize", "Off", "beat", "bar"); } });
+        l.push_back ({ String::fromUTF8 ("\xe2\x86\x94"), engine.lengthQ.load() != 0 ? hobby::kOn : hobby::kIconGrey, true, false,
+                       [this, q3] { q3 (engine.lengthQ, "Length quantize", "Off", "beat", "bar (4/4)"); } });
+        l.push_back ({ String::fromUTF8 ("\xe2\x99\xaf"), engine.snapQ.load() != 0 ? hobby::kOn : hobby::kIconGrey, true, false,
+                       [this, q3] { q3 (engine.snapQ, "Note quantize", "Off", "1/8", "1/16"); } });
         l.push_back ({ String::fromUTF8 ("\xe2\x97\x8e"), learnMode == 0 ? hobby::kIconGrey : learnMode == 1 ? hobby::kOn : hobby::kRed, true, false,
                        [this] { learnMode = (learnMode + 1) % 3; if (learnMode == 1) setMessage (gr ("Πάτησε το κουμπί που θέλεις να αναθέσεις σε πετάλι")); updateToolLamps(); } });
         loopsView.setToolLamps (std::move (l));
