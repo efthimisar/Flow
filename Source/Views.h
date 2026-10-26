@@ -877,8 +877,8 @@ public:
             g.setColour (col.withMultipliedAlpha (alpha));
             g.fillEllipse (numRect[(size_t) b]);
             g.setColour (hobby::kScreen);
-            g.setFont (numFont);
-            g.drawText (isSpecial ? String::fromUTF8 ("\xe2\x98\x85") : String (b + 1), numRect[(size_t) b], Justification::centred, false);
+            g.setFont (isSpecial ? hobby::makeFont (typeface, 10.5f) : numFont);
+            g.drawText (isSpecial ? String ("SP") : String (b + 1), numRect[(size_t) b], Justification::centred, false);
             x += D + gap;
 
             if (showChord)   // τύπος συγχορδίας (Chord) ή κλίμακα (Scale)

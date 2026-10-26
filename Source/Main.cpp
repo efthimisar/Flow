@@ -929,7 +929,7 @@ private:
             l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kPeach, engine.numFx (selected) > 0, armedNow (2), [this] { pressDelete (2, [this] { clearFx (selected); }); } });
         }
         if (v)   // ★ ειδικό block (πάνω από τα άλλα, χωρίς λούπα)
-            l.push_back ({ String::fromUTF8 ("\xe2\x98\x85"), Colours::white, true, false, [this] { toggleSpecial(); } });
+            l.push_back ({ String ("SP"), Colours::white, true, false, [this] { toggleSpecial(); } });
         l.push_back ({ String::fromUTF8 ("\xe2\x97\x8e"), learnMode == 0 ? hobby::kIconGrey : learnMode == 1 ? hobby::kOn : hobby::kRed, true, false,
                        [this] { learnMode = (learnMode + 1) % 3; if (learnMode == 1) setMessage (gr ("Πάτησε το κουμπί που θέλεις να αναθέσεις σε πετάλι")); updateToolLamps(); } });
         loopsView.setToolLamps (std::move (l));
