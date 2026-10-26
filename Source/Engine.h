@@ -1545,7 +1545,10 @@ namespace flow
         // κλείνει το layer που ηχογραφείται (rec) και το προσθέτει στο loop. Επιστρέφει true αν είχε νότες.
         bool commitLayer (Block& B, double beatNow, double len)
         {
-            const double elapsed = std::max (1.0e-6, std::min (len, beatNow - B.recStart));
+            const double rawElapsed = std::max (1.0e-6, beatNow - B.recStart);
+            const double elapsed = std::max (1.0e-6, std::min (len, rawElapsed));
+            // το μήκος στρογγυλεύτηκε στο πλησιέστερο μέτρο: αν η διαφορά είναι μέχρι ένα beat, οι νότες προσαρμόζονται αναλογικά
+            const double warp = (std::abs (rawElapsed - len) <= 1.0 && rawElapsed > 1.0e-3) ? len / rawElapsed : 1.0;
 
             for (int n = 0; n < 128; ++n)    // νότες που κρατιούνται όταν τελειώνει η ηχογράφηση σταματούν στο τέλος
                 if (B.recOpen[(size_t) n])
@@ -1560,7 +1563,7 @@ namespace flow
             dst.clear();
             for (const auto& e : B.rec)
             {
-                const double ph = std::max (0.0, e.phase - B.recStart);
+                const double ph = (e.phase - B.recStart) * warp;   // νότες λίγο πριν το μέτρο (αρνητικές) πάνε στο τέλος της λούπας
                 if (ph >= len) continue;
                 double a = B.recStart + ph;
 
@@ -1660,17 +1663,26 @@ namespace flow
 
         void finishRecording (Block& B, double beatNow, bool allowOverdub = true)
         {
-            // η σιωπή πριν από την πρώτη νότα κόβεται: η λούπα ξεκινά με την πρώτη νότα, στο πλέγμα
+            // αρχή λούπας: αν η πρώτη νότα είναι μέχρι ένα beat από γραμμή μέτρου, η λούπα ξεκινά στη γραμμή (κρατά την αίσθηση του παιξίματος).
+            // Αλλιώς η σιωπή πριν την πρώτη νότα κόβεται και η λούπα ξεκινά με την πρώτη νότα, στο πλέγμα.
             {
                 double first = 1.0e18;
                 for (const auto& ev : B.rec)
                     if (ev.on && ! ev.isRaw) first = std::min (first, ev.phase);
-                if (first < 1.0e17 && first > B.recStart)
+                if (first < 1.0e17)
                 {
-                    const int sq = snapQ.load();
-                    const double g = sq == 1 ? 0.5 : sq == 2 ? 0.25 : 0.0;
-                    const double ns = g > 0.0 ? std::round (first / g) * g : first;
-                    B.recStart = std::min (std::max (B.recStart, ns), first);
+                    const double nb = std::round (first / beatsPerBar) * beatsPerBar;
+                    if (std::abs (first - nb) <= 1.0)
+                    {
+                        B.recStart = nb;
+                    }
+                    else if (first > B.recStart)
+                    {
+                        const int sq = snapQ.load();
+                        const double g = sq == 1 ? 0.5 : sq == 2 ? 0.25 : 0.0;
+                        const double ns = g > 0.0 ? std::round (first / g) * g : first;
+                        B.recStart = std::min (std::max (B.recStart, ns), first);
+                    }
                 }
             }
 
@@ -1711,11 +1723,8 @@ namespace flow
                         if (o.nLayers > 0 || o.loopState == loopRec || o.loopState == loopOver) anyLoop = true;
                     const bool linkOn = linkWanted.load() && link.isEnabled();
 
-                    if (! anyLoop && ! linkOn)
-                    {
-                        pendingBeatShift = -beat;   // η πρώτη λούπα: το ρολόι ξεκινά από το 0 με το πάτημα του Rec
-                        B.recStart = 0.0;
-                    }
+                    juce::ignoreUnused (anyLoop, linkOn);   // το ρολόι τρέχει ελεύθερα: η αρχή της λούπας κουμπώνει στο μέτρο όταν κλείσει η εγγραφή
+                    if (false) {}
                     else if (sq == 1) B.recStart = std::floor (beat + 1.0e-9);
                     else              B.recStart = std::floor (beat / beatsPerBar + 1.0e-9) * beatsPerBar;   // από την αρχή του μέτρου που πατήθηκε
                     B.rec.clear();
