@@ -672,6 +672,8 @@ public:
                 {
                     const float al = engine.blockOff[(size_t) sb].load() != 0 ? 0.3f : (sb == sel ? 1.0f : 0.8f);
                     specialRect = { noteL[(size_t) a], keysY - 13.0f, noteR[(size_t) c] - noteL[(size_t) a], 8.0f };
+                    auto& ss = spans[(size_t) sb];   // το ειδικό block έχει δικό του κυκλάκι ★ (και τις λειτουργίες του) αριστερά στη λωρίδα
+                    ss.used = true; ss.l = specialRect.getX(); ss.r = specialRect.getRight();
                     g.setColour (Colours::white.withAlpha (al));
                     g.fillRoundedRectangle (specialRect, 4.0f);
                     for (int n : { a, c })
@@ -707,7 +709,8 @@ public:
             if (! s.used) continue;
 
             const float width = s.r - s.l;
-            const Colour col = keyLight (b);
+            const bool isSpecial = b == engine.specialBlock.load();
+            const Colour col = isSpecial ? Colours::white.withMultipliedAlpha (engine.blockOff[(size_t) b].load() != 0 ? 0.4f : 1.0f) : keyLight (b);
             const float alpha = b == sel ? 1.0f : 0.7f;
             const int hold = engine.holdMode[(size_t) b].load();
             const int tr = engine.transpose[(size_t) b].load();
@@ -716,10 +719,10 @@ public:
             // κλικ στον αριθμό ανοίγει τις υπόλοιπες λειτουργίες: hold, καμπύλη, transpose, ♪ (live σιωπηλό όσο παίζει λούπα), ✕
             const bool open = b == expanded;
             const bool showChord = false;   // το Chord δεν χρησιμοποιείται πια: δεν υπάρχει κυκλάκι
-            const bool showCurve = open, showHold = open, showTr = open, showSilent = open, showX = open;
+            const bool showCurve = open, showHold = open, showTr = open, showSilent = open && ! isSpecial, showX = open;
             const int shown = 1 + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showSilent ? 1 : 0) + (showX ? 1 : 0);
             const float total = (float) shown * D + (float) (shown - 1) * gap;
-            float x = s.l + (width - total) * 0.5f;
+            float x = isSpecial && ! open ? s.l : s.l + (width - total) * 0.5f;
             if (open)
             {
                 x = jlimit (14.0f, (float) getWidth() - 14.0f - total, x);
@@ -734,7 +737,7 @@ public:
             g.fillEllipse (numRect[(size_t) b]);
             g.setColour (hobby::kScreen);
             g.setFont (numFont);
-            g.drawText (String (b + 1), numRect[(size_t) b], Justification::centred, false);
+            g.drawText (isSpecial ? String::fromUTF8 ("\xe2\x98\x85") : String (b + 1), numRect[(size_t) b], Justification::centred, false);
             x += D + gap;
 
             if (showChord)   // τύπος συγχορδίας (Chord) ή κλίμακα (Scale)
@@ -863,6 +866,7 @@ public:
         {
             const auto& s = spans[(size_t) b];
             if (! s.used || p.x < s.l || p.x > s.r || p.y < labelY - 2.0f || p.y > keysY + 56.0f) continue;
+            if (b == engine.specialBlock.load() && p.y >= keysY - 13.0f) continue;   // κάτω από τα κυκλάκια το ειδικό block δεν παίρνει κλικ (τα πλήκτρα ανήκουν στα κανονικά blocks)
 
             const bool onBar = barRect[(size_t) b].expanded (0.0f, 6.0f).contains (p);
             const bool onTr = trRect[(size_t) b].expanded (2.0f).contains (p);
