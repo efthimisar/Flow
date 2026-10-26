@@ -76,6 +76,7 @@ public:
     void setIconColour (juce::Colour c) { if (! hasOverride || c != iconOverride) { iconOverride = c; hasOverride = true; repaint(); } }
     void setRound (bool r) { round = r; repaint(); }
     void setSymbol (Symbol s) { if (s != symbol) { symbol = s; repaint(); } }
+    void setNumber (int n, bool filled) { if (n != number || filled != numberFilled) { number = n; numberFilled = filled; repaint(); } }   // αριθμός μέσα σε κύκλο (0 = κανονικό σύμβολο)
     void setDots (int n) { if (n != dots) { dots = n; repaint(); } }   // τελείες κάτω από το εικονίδιο (π.χ. 1 = Mono, 2 = Poly)
     std::function<void()> onRightClick;   // δεξί κλικ / ctrl-κλικ
     void mouseDown (const juce::MouseEvent& e) override
@@ -96,4 +97,6 @@ private:
     juce::Colour iconOverride;
     int index = 0;
     int dots = 0;
+    int number = 0;
+    bool numberFilled = false;
 };

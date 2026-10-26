@@ -407,7 +407,18 @@ void ValueTile::paintButton (juce::Graphics& g, bool, bool isDown)
     if (isOnOff) iconColour = index == 1 ? hobby::kOn : hobby::kOff;
     if (hasOverride) iconColour = iconOverride;
     const float cy = dots > 0 ? 19.0f : 25.5f;
-    drawSymbol (g, symbol, { r.getCentreX(), cy + dy }, 22.0f, iconColour);
+    if (number > 0)
+    {
+        const juce::Point<float> ctr (r.getCentreX(), 25.5f + dy);
+        const juce::Rectangle<float> disc (ctr.x - 13.0f, ctr.y - 13.0f, 26.0f, 26.0f);
+        g.setColour (iconColour);
+        if (numberFilled) g.fillEllipse (disc); else g.drawEllipse (disc.reduced (1.0f), 2.2f);
+        g.setColour (numberFilled ? juce::Colour (0xff262220) : iconColour);
+        g.setFont (hobby::makeFont (typeface, 17.0f));
+        g.drawText (juce::String (number), disc, juce::Justification::centred, false);
+    }
+    else
+        drawSymbol (g, symbol, { r.getCentreX(), cy + dy }, 22.0f, iconColour);
 
     if (dots > 0)
     {

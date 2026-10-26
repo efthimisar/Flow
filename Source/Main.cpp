@@ -30,7 +30,7 @@ public:
           chordTile (Symbol::Chord, typeface),
           recTile (Symbol::PadRecord, typeface),
           undoTile (Symbol::Cancel, typeface),
-          stopTile (Symbol::Mute, typeface),
+          stopTile (Symbol::Undo, typeface),
           tapeTile (Symbol::Tape, typeface),
           metroTile (Symbol::Tempo, typeface),
           folderTile (Symbol::Folder, typeface)
@@ -58,9 +58,9 @@ public:
         mfxTile.setTooltip (gr ("MIDI FX: MIDI effect (π.χ. Stepic) πριν από το instrument. Αν δεν έχει plugin, ανοίγει επιλογή αρχείου. Δεξί κλικ: αντικατάσταση, αφαίρεση"));
         fxTile.setTooltip (gr ("FX: αλυσίδα audio effects μετά το instrument. Τα κυκλάκια 1, 2, 3 και το + είναι στην κεφαλίδα του πάνελ. Δεξί κλικ: προσθήκη"));
         folderTile.setTooltip (gr ("Φάκελος αποθήκευσης των Rec Audio (zip με master και stems)"));
-        recTile.setTooltip ("Rec MIDI loop: " + gr ("γράφει τη λούπα του block (από πετάλι: του block που έπαιξες τελευταίο). Πάτημα ξανά = τέλος. Δεξί κλικ: quantize και πετάλι"));
-        undoTile.setTooltip (gr ("Σβήσιμο λούπας: σβήνει τη λούπα του block. Πετάλι: πατήματα = αριθμός block (δύο πατήματα = block 2)"));
-        stopTile.setTooltip (gr ("Mute / ενεργοποίηση λούπας του block. Πετάλι: πατήματα = αριθμός block (δύο πατήματα = block 2)"));
+        recTile.setTooltip ("Rec MIDI loop: " + gr ("γράφει τη λούπα του επιλεγμένου block (ο αριθμός μέσα στον κύκλο). Πάτημα ξανά = τέλος. Αν το block έχει ήδη λούπα, δεν κάνει τίποτα: χρησιμοποίησε ξαναγράφω ή σβήσιμο. Δεξί κλικ: quantize και πετάλι"));
+        undoTile.setTooltip (gr ("Σβήσιμο λούπας: σβήνει τη λούπα του επιλεγμένου block. Πετάλι: πατήματα = αριθμός block (δύο πατήματα = block 2)"));
+        stopTile.setTooltip ("Rec MIDI loop: " + gr ("ξαναγράφω. Σβήνει τη λούπα του επιλεγμένου block και ξεκινά αμέσως νέα εγγραφή. Δεξί κλικ: πετάλι σίγασης"));
         tapeTile.setTooltip ("Rec Audio: " + gr ("σταμάτημα ή νέο take (master και stems ανά block, σε zip)"));
         metroTile.setTooltip (gr ("Metronome (πλήκτρο M). Ακούγεται μονοφωνικά σε ξεχωριστή έξοδο. Δεξί κλικ: ήχος, ένταση, έξοδος, πλήκτρο/πετάλι"));
 
@@ -78,9 +78,15 @@ public:
 
         holdTile.onClick = [this] { cycleHold (selected); };
         chordTile.onClick = [this] { cycleAl (selected); };
-        recTile.onClick  = [this] { engine.pressMain (engine.recTarget (false)); };
+        recTile.onClick  = [this]
+        {
+            const int b = engine.recTarget (false);
+            if (b < 0) return;
+            if (engine.loopStateOut[(size_t) b].load() == flow::loopPlay) return;   // το block έχει ήδη λούπα: ξαναγράφω ή σβήσιμο
+            engine.pressMain (b);
+        };
         undoTile.onClick = [this] { if (isActive (selected)) engine.pressUndo (selected); };
-        stopTile.onClick = [this] { if (isActive (selected)) engine.pressMute (selected); };
+        stopTile.onClick = [this] { if (isActive (selected)) engine.pressReRec (selected); };
         tapeTile.onClick = [this] { engine.recorder.pressButton(); };
         metroTile.onClick = [this] { toggleMetronome(); };
         folderTile.onClick = [this] { chooseTapeFolder(); };
@@ -2048,19 +2054,19 @@ private:
         const int mute = valid ? engine.loopMuteOut[(size_t) sel].load() : 0;
         const int taps = engine.tapsMuteOut.load();
 
-        Symbol recSymbol = Symbol::PadRecord;
+        const int recBlock = valid ? sel + 1 : 0;
         Colour recColour = hobby::kIconGrey;
-        if (loop == flow::loopRec)       { recSymbol = Symbol::Play;       recColour = hobby::mix (hobby::kIconGrey, hobby::kRed,   hobby::pulse (t * 1.5)); }
-        else if (loop == flow::loopPlay) { recSymbol = Symbol::PadRecord;  recColour = hobby::kOn; }
-        else if (loop == flow::loopOver) { recSymbol = Symbol::Play;       recColour = hobby::mix (hobby::kIconGrey, hobby::kPeach, hobby::pulse (t * 1.5)); }
-        recTile.setSymbol (recSymbol);
+        bool recFilled = false;
+        if (loop == flow::loopRec)       { recColour = hobby::mix (hobby::kIconGrey, hobby::kRed, hobby::pulse (t * 1.5)); recFilled = true; }
+        else if (loop == flow::loopPlay) { recColour = hobby::kOn; recFilled = true; }
+        else if (loop == flow::loopOver) { recColour = hobby::mix (hobby::kIconGrey, hobby::kPeach, hobby::pulse (t * 1.5)); recFilled = true; }
+        recTile.setNumber (recBlock, recFilled);
         recTile.setIconColour (recColour);
 
         undoTile.setIconColour (engine.tapsDelOut.load() > 0 ? hobby::kCoral : loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
 
-        stopTile.setIconColour (taps > 0 ? hobby::kLilac
-                                         : mute != 0 ? hobby::mix (hobby::kIconGrey, hobby::kLilac, 0.4f + 0.6f * hobby::pulse (t * 0.5))
-                                                     : hobby::kIconGrey);
+        stopTile.setIconColour (loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
+        juce::ignoreUnused (mute, taps);
 
         switch (engine.recorder.getState())
         {

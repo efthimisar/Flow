@@ -104,7 +104,7 @@ namespace flow
                 loopLayersOut[b] = 0;
                 loopMuteOut[b] = 0;
                 loopTapsOut[b] = 0;
-                cmdMain[b] = 0; cmdUndo[b] = 0; cmdStop[b] = 0; cmdMute[b] = 0; loopStoppedOut[b] = 0;
+                cmdMain[b] = 0; cmdUndo[b] = 0; cmdStop[b] = 0; cmdMute[b] = 0; rerecReq[b] = 0; loopStoppedOut[b] = 0;
             }
             for (int i = 0; i < numControls; ++i) mapCode[i] = 0;
             owner.fill (-1);
@@ -116,7 +116,7 @@ namespace flow
         std::array<std::atomic<uint64_t>, numBlocks * 2> latchBits;   // πλήκτρα που κρατιούνται από το Latch (και νότες συγχορδίας), για την οθόνη
         std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, blockOff, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
                                                 volMap, loopStateOut, loopLayersOut, loopMuteOut, loopTapsOut,
-                                                cmdMain, cmdUndo, cmdStop, cmdMute, loopStoppedOut;
+                                                cmdMain, cmdUndo, cmdStop, cmdMute, rerecReq, loopStoppedOut;
         std::array<std::atomic<double>, numBlocks> loopBeatsOut, recStartBeatOut;
         std::array<std::atomic<float>, numBlocks> volPos, gainOut;
         std::array<std::atomic<int>, numControls> mapCode;   // MIDI learn πεταλιών / πλήκτρων
@@ -176,6 +176,7 @@ namespace flow
         void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
         void pressStop (int b) { ++cmdStop[(size_t) b]; }
         void pressMute (int b) { ++cmdMute[(size_t) b]; }
+        void pressReRec (int b) { if (b >= 0) rerecReq[(size_t) b] = 1; }   // ξαναγράφω: σβήνει τη λούπα του block και ξεκινά νέα εγγραφή
         void tapFromUi()       { ++tapRequest; }
         void panic()           { ++panicCount; }
 
@@ -2113,6 +2114,13 @@ namespace flow
 
             // ---- loop: εντολές (κουμπιά ή πετάλια)
             const int64_t tapWindow = (int64_t) (sr * 0.7);
+
+            if (rerecReq[(size_t) b].exchange (0) != 0)
+            {
+                loopUndo (B);
+                B.hist.clear(); B.autoReady = false; B.lastDetect = 0; B.autoPaused = false;
+                loopMain (B, beat0);
+            }
 
             for (int cm = cmdMain[(size_t) b].load(); B.seenMain != cm; )
             {
