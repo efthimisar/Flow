@@ -314,6 +314,7 @@ public:
     PluginListView& getList() { return list; }
 
     std::function<void()> onMetroChange;
+    std::function<void (int)> onMetroSample;   // 1 = διάλεξε ήχο, 2 = αρχικός ήχος
 
     // φωτάκια εργαλείων του επιλεγμένου κουμπιού (VST ⇄ ✕, MIDI FX ⇄ ✕, FX + ✕): δίπλα στο CPU, χωρίς μενού
     struct ToolLamp { String glyph; Colour colour; bool enabled = true; bool armed = false; std::function<void()> fn; };
@@ -525,6 +526,10 @@ public:
                     x += 24.0f;
                 }
                 x += 12.0f;
+                lampAt (x, false, String::fromUTF8 ("\xe2\x99\xaa"), [this] { if (onMetroSample) onMetroSample (1); });   // ♪ διάλεξε δικό σου ήχο
+                x += 24.0f;
+                lampAt (x, false, String::fromUTF8 ("\xe2\x86\xba"), [this] { if (onMetroSample) onMetroSample (2); });   // ↺ ο αρχικός ήχος
+                x += 36.0f;
                 g.setFont (hobby::makeFont (typeface, 14.0f));
                 g.setColour (hobby::kIconGrey);
                 g.drawText (String::fromUTF8 ("\xe2\x87\xa8"), Rectangle<float> (x - 10.0f, sy, 20.0f, sh), Justification::centred, false);

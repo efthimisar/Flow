@@ -68,26 +68,28 @@ public:
         addAndMakeVisible (keyboardView);
         addAndMakeVisible (header);
 
-        blockTile.onClick = [this] { chooseAndLoadPlugin(); };
+        blockTile.onClick = [this] { if (learnClick (flow::ctlSpecial)) return; chooseAndLoadPlugin(); };
         vstTile.onClick = [this] { onVstClick(); };
         mfxTile.onClick = [this] { onMidiFxClick(); };
         fxTile.onClick = [this] { onFxClick(); };
 
         holdTile.onClick = [this] { cycleHold (selected); };
-        chordTile.onClick = [this] { cycleAl (selected); };
+        chordTile.onClick = [this] { if (learnClick (flow::ctlHold)) return; cycleAl (selected); };
         recTile.onClick  = [this]
         {
+            if (learnClick (flow::ctlRec)) return;
             const int b = engine.recTarget (false);
             if (b < 0) return;
             if (engine.loopStateOut[(size_t) b].load() == flow::loopPlay) return;   // το block έχει ήδη λούπα: ξαναγράφω ή σβήσιμο
             engine.pressMain (b);
         };
-        undoTile.onClick = [this] { if (isActive (selected)) engine.pressUndo (selected); };
-        stopTile.onClick = [this] { if (isActive (selected)) engine.pressReRec (selected); };
-        tapeTile.onClick = [this] { engine.recorder.pressButton(); };
+        undoTile.onClick = [this] { if (learnClick (flow::ctlUndo)) return; if (isActive (selected)) engine.pressUndo (selected); };
+        stopTile.onClick = [this] { if (learnClick (flow::ctlStop)) return; if (isActive (selected)) engine.pressReRec (selected); };
+        tapeTile.onClick = [this] { if (learnClick (flow::ctlTape)) return; engine.recorder.pressButton(); };
         // μετρονόμος: 1ο πάτημα = ανοίγει η λωρίδα (tempo, ένταση, έξοδος), 2ο = ξεκινά ο ήχος και αναβοσβήνει, 3ο = σταματά. Το επόμενο ξαναρχίζει τον κύκλο.
         metroTile.onClick = [this]
         {
+            if (learnClick (flow::ctlMetro)) return;
             if (engine.metroOn.load())
             {
                 toggleMetronome();           // σταματά
@@ -104,16 +106,12 @@ public:
             }
         };
         loopsView.onMetroChange = [this] { saveNow(); };
+        loopsView.onMetroSample = [this] (int what)
+        {
+            if (what == 1) chooseMetroSample();
+            else { metroSamplePath = {}; engine.setMetroSample (AudioBuffer<float>()); saveNow(); }
+        };
         folderTile.onClick = [this] { chooseTapeFolder(); };
-
-        // δεξί κλικ: ανάθεση σε πετάλι / ρυθμίσεις
-        holdTile.onRightClick = [this] { showPedalMenu (flow::ctlHold); };
-        chordTile.onRightClick = [this] { showPedalMenu (flow::ctlHold); };
-        recTile.onRightClick  = [this] { showRecMenu(); };
-        undoTile.onRightClick = [this] { showPedalMenu (flow::ctlUndo); };
-        stopTile.onRightClick = [this] { showPedalMenu (flow::ctlStop); };
-        tapeTile.onRightClick = [this] { showPedalMenu (flow::ctlTape); };
-        metroTile.onRightClick = [this] { showMetroMenu(); };
 
         loopsView.onSelect = [this] (int b) { selectBlock (b); };
         loopsView.getTempoBox().onChange = [this] { dirty = true; };
@@ -802,6 +800,23 @@ private:
     }
 
     // φωτάκια εργαλείων στη λωρίδα κάτω, ανάλογα με το κουμπί που δείχνει τώρα: VST ⇄ ✕, MIDI FX ⇄ ✕, FX + ✕. Το ✕ θέλει δύο πατήματα.
+    // ◎ φωτάκι: πετάλι. 1ο πάτημα = ανάθεση (πράσινο): πάτα ένα κουμπί της εφαρμογής και μετά το πετάλι. 2ο = διαγραφή ανάθεσης (κόκκινο). 3ο = κλείνει.
+    int learnMode = 0;
+    bool learnClick (int ctl)
+    {
+        if (learnMode == 0) return false;
+        if (learnMode == 1) startPedalLearn (ctl);
+        else
+        {
+            engine.mapCode[(size_t) ctl] = 0;
+            setMessage (String (controlName (ctl)) + " " + String::fromUTF8 ("\xe2\x9c\x95"));
+            saveNow();
+        }
+        learnMode = 0;
+        updateToolLamps();
+        return true;
+    }
+
     uint32 armedAt[3] = { 0, 0, 0 };
     bool armedNow (int i) const { return Time::getMillisecondCounter() < armedAt[i]; }
     void pressDelete (int i, std::function<void()> doIt)
@@ -831,6 +846,10 @@ private:
             l.push_back ({ "+", hobby::kPeach, engine.numFx (selected) < maxFxPerChain, false, [this] { addFxTo (selected); } });
             l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kPeach, engine.numFx (selected) > 0, armedNow (2), [this] { pressDelete (2, [this] { clearFx (selected); }); } });
         }
+        if (v)   // ★ ειδικό block (πάνω από τα άλλα, χωρίς λούπα)
+            l.push_back ({ String::fromUTF8 ("\xe2\x98\x85"), Colours::white, true, false, [this] { toggleSpecial(); } });
+        l.push_back ({ String::fromUTF8 ("\xe2\x97\x8e"), learnMode == 0 ? hobby::kIconGrey : learnMode == 1 ? hobby::kOn : hobby::kRed, true, false,
+                       [this] { learnMode = (learnMode + 1) % 3; if (learnMode == 1) setMessage (gr ("Πάτησε το κουμπί που θέλεις να αναθέσεις σε πετάλι")); updateToolLamps(); } });
         loopsView.setToolLamps (std::move (l));
     }
 
@@ -1335,7 +1354,23 @@ private:
         });
     }
 
-    // δεξί κλικ στο Block: ειδικό block του επιλεγμένου block και πετάλι on/off του
+    void toggleSpecial()
+    {
+        if (! isActive (selected)) return;
+        auto& en = engine;
+        const int s = selected;
+        if (en.specialBlock.load() == s) en.specialBlock = -1;
+        else
+        {
+            en.pressUndo (s);   // το ειδικό block δεν έχει λούπα: αν είχε, σβήνεται
+            en.specialBlock = s;
+        }
+        saveNow();
+        refreshAll();
+        keyboardView.repaint();
+    }
+
+    // (δεν χρησιμοποιείται πια) δεξί κλικ στο Block: ειδικό block του επιλεγμένου block και πετάλι on/off του
     void showBlockMenu()
     {
         const int sb = engine.specialBlock.load();
@@ -2345,7 +2380,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.28.0"; }
+    const String getApplicationVersion() override { return "0.29.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
