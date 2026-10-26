@@ -512,13 +512,19 @@ public:
                 };
                 // τρία κουμπιά δίπλα στο tap: ένταση (κάθε πάτημα αλλάζει επίπεδο), ήχος (δικός σου ⇄ αρχικός). Η έξοδος του μετρονόμου (ακουστικά) μένει σταθερή, δεν έχει κουμπί
                 float x = (float) tapDot.getRight() + 26.0f;
-                const float levels[4] { 0.25f, 0.5f, 0.75f, 1.0f };
-                const float cur = engine.metroLevel.load();
-                int curIdx = 0;
-                for (int i = 1; i < 4; ++i)
-                    if (std::abs (cur - levels[i]) < std::abs (cur - levels[curIdx])) curIdx = i;
-                lampAt (x, true, String ((int) (levels[curIdx] * 100)), [this, curIdx, levels] { engine.metroLevel = levels[(curIdx + 1) % 4]; if (onMetroChange) onMetroChange(); });
-                x += 32.0f;
+                // ένταση: μπάρα από 0 έως 100%, σέρνεται
+                {
+                    const float bw = 96.0f, bh = 6.0f;
+                    metroSliderRect = { x, ly - bh * 0.5f, bw, bh };
+                    const float lv = jlimit (0.0f, 1.0f, engine.metroLevel.load());
+                    g.setColour (Colour (0xff3a3430));
+                    g.fillRoundedRectangle (metroSliderRect, 3.0f);
+                    g.setColour (hobby::kOn);
+                    g.fillRoundedRectangle (metroSliderRect.withWidth (jmax (3.0f, bw * lv)), 3.0f);
+                    g.setColour (Colour (0xfff3f4f6));
+                    g.fillEllipse (metroSliderRect.getX() + bw * lv - 6.0f, ly - 6.0f, 12.0f, 12.0f);
+                    x += bw + 22.0f;
+                }
                 const bool custom = metroIsCustom && metroIsCustom();
                 lampAt (x, custom, custom ? String::fromUTF8 ("\xe2\x86\xba") : String::fromUTF8 ("\xe2\x99\xaa"),
                         [this, custom] { if (onMetroSample) onMetroSample (custom ? 2 : 1); });   // ♪ διάλεξε δικό σου ήχο, ↺ γύρνα στον αρχικό
@@ -660,6 +666,12 @@ public:
     void mouseDown (const MouseEvent& e) override
     {
         if (e.mods.isPopupMenu()) return;
+        if (metroStrip && ! metroSliderRect.isEmpty() && metroSliderRect.expanded (8.0f, 10.0f).contains (e.position))
+        {
+            draggingMetro = true;
+            setMetroLevelFromX (e.position.x);
+            return;
+        }
         for (auto& h : hot)
             if (h.first.contains (e.position)) { h.second(); repaint(); return; }
         if (stepOut <= 0) return;
@@ -669,7 +681,18 @@ public:
             onSelect (list[i].getIntValue());
     }
 
+    void mouseDrag (const MouseEvent& e) override { if (draggingMetro) setMetroLevelFromX (e.position.x); }
+    void mouseUp (const MouseEvent&) override { if (draggingMetro) { draggingMetro = false; if (onMetroChange) onMetroChange(); } }
+
 private:
+    void setMetroLevelFromX (float px)
+    {
+        engine.metroLevel = jlimit (0.0f, 1.0f, (px - metroSliderRect.getX()) / metroSliderRect.getWidth());
+        repaint();
+    }
+
+    Rectangle<float> metroSliderRect;
+    bool draggingMetro = false;
     flow::Engine& engine;
     const int& selected;
     Typeface::Ptr typeface;
