@@ -2334,8 +2334,25 @@ private:
         keyboardView.repaint();
     }
 
+    int lastFollowed = -1;
     void timerCallback() override
     {
+        // focus: το block που έπαιξες τελευταίο γίνεται αυτόματα το επιλεγμένο (οθόνη, κουμπιά λούπας, πετάλια)
+        {
+            const int lp = engine.lastPlayed.load();
+            if (lp != lastFollowed)
+            {
+                lastFollowed = lp;
+                if (lp >= 0 && lp != selected && isActive (lp) && lp != engine.specialBlock.load())
+                {
+                    selected = lp;
+                    engine.selectedBlock = lp;
+                    updateEditor();
+                    refreshAll();
+                }
+            }
+        }
+
         // νέες συσκευές MIDI (π.χ. Bluetooth πετάλι που συνδέθηκε μετά την εκκίνηση) ενεργοποιούνται μόνες τους
         if (++midiPollTicks >= 30)
         {
