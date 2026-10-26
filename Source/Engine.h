@@ -750,6 +750,7 @@ namespace flow
             double recStart = 0.0, loopBeats = 0.0;
             bool panicPending = false;
             std::vector<LoopEvent> rec;
+            std::vector<LoopEvent> preRec;   // τελευταίες νότες πριν ξεκινήσει η εγγραφή: μπαίνουν στη λούπα όταν η αρχή κουμπώνει πίσω στον κύκλο
 
             void resetState()
             {
@@ -1415,7 +1416,17 @@ namespace flow
                 B.rec.push_back ({ blkBeat0 + (double) pos * blkBps, on, note, vel });
                 B.recOpen.set ((size_t) note, on);
             }
+            else if (B.loopState == loopOff && ! isSpecialIdx (b))
+            {
+                const double bt = blkBeat0 + (double) pos * blkBps;
+                B.preRec.push_back ({ bt, on, note, vel });
+                size_t cut = 0;
+                while (cut < B.preRec.size() && B.preRec[cut].phase < bt - 4.0 * beatsPerBar) ++cut;   // κρατάμε μέχρι 4 μέτρα πίσω
+                if (cut > 0) B.preRec.erase (B.preRec.begin(), B.preRec.begin() + (long) cut);
+            }
         }
+
+        bool isSpecialIdx (int b) const { return b == specialBlock.load(); }
 
         void offAll (Block& B, int b, int pos)
         {
@@ -1758,10 +1769,21 @@ namespace flow
 
                     juce::ignoreUnused (anyLoop, linkOn);   // το ρολόι τρέχει ελεύθερα: η αρχή της λούπας κουμπώνει στο μέτρο όταν κλείσει η εγγραφή
                     if (false) {}
-                    else if (sq == 1) B.recStart = std::floor (beat + 1.0e-9);
-                    else              B.recStart = std::floor (beat / beatsPerBar + 1.0e-9) * beatsPerBar;   // από την αρχή του μέτρου που πατήθηκε
+                    else if (sq == 0) B.recStart = beat;
+                    else
+                    {
+                        const double cycle = 2.0 * beatsPerBar;   // ο κύκλος 2 μέτρων της κόκκινης μπάρας
+                        B.recStart = std::floor (beat / cycle + 1.0e-9) * cycle;
+                    }
                     B.rec.clear();
                     B.recOpen.reset();
+                    for (const auto& pe : B.preRec)   // ό,τι έπαιξες από την αρχή του κύκλου μπαίνει στη λούπα
+                        if (pe.phase >= B.recStart - 1.0e-9 && pe.phase < beat)
+                        {
+                            B.rec.push_back (pe);
+                            B.recOpen.set ((size_t) pe.note, pe.on);
+                        }
+                    B.preRec.clear();
                     B.loopState = loopRec;
                     break;
                 }
