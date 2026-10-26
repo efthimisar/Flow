@@ -233,28 +233,12 @@ public:
             if (st == flow::loopRec || st == flow::loopOver) { recording = b; overdubbing = st == flow::loopOver; break; }
         }
 
-        // επάνω: αριστερά REC Loop / n, δεξιά REC Audio / χρόνος
-        const auto f = hobby::makeFont (typeface, 19.0f);
-        g.setFont (f);
-
-        const String loopWord = overdubbing ? "OVERDUB" : "REC";
-        g.setColour (recording >= 0 ? (overdubbing ? hobby::kPeach : hobby::kRed) : hobby::kIconGrey);
-        g.drawText (loopWord, 14, 15, 120, 28, Justification::centredLeft, false);
-        g.setColour (hobby::kText);
-        g.drawText (" Loop / " + (recording >= 0 ? String (recording + 1) : String ("-")),
-                    14 + (int) std::ceil (textWidth (f, loopWord)), 15, 200, 28, Justification::centredLeft, false);
-
+        // ενδείξεις εγγραφής: εμφανίζονται κάτω, στη λωρίδα, μόνο όσο γράφει κάτι
         const auto tapeState = engine.recorder.getState();
         const bool taping = tapeState == RecorderEngine::State::Recording;
-        String audioRest = tapeState == RecorderEngine::State::Error ? String (" Audio / ERROR")
-                           : " Audio / " + clockText (engine.recorder.getElapsedSeconds());
-        if (engine.recorder.isZipping()) audioRest = " Audio / ZIP...";
-        const float restW = textWidth (f, audioRest), recW = textWidth (f, "REC");
-        g.setColour (hobby::kText);
-        g.drawText (audioRest, w - 14 - (int) std::ceil (restW) - 4, 15, (int) std::ceil (restW) + 4, 28, Justification::centredRight, false);
-        g.setColour (taping ? hobby::kRed : hobby::kIconGrey);
-        g.drawText ("REC", w - 14 - (int) std::ceil (restW) - (int) std::ceil (recW) - 4, 15, (int) std::ceil (recW) + 4, 28,
-                    Justification::centredRight, false);
+        String audioText = tapeState == RecorderEngine::State::Error ? String ("REC AUDIO ERROR")
+                           : "REC AUDIO " + clockText (engine.recorder.getElapsedSeconds());
+        if (engine.recorder.isZipping()) audioText = "REC AUDIO ZIP...";
 
         // λωρίδες
         const auto list = activeBlocks (engine);
@@ -263,7 +247,7 @@ public:
         const int room = jmax (40, getHeight() - top - 12 - 26);   // το ύψος της οθόνης loops αλλάζει με το plugin
         const int step = count > 0 ? jmin (44, room / count) : 44;
         const int laneH = jmax (6, step - 6);
-        const float laneX = 42.0f, laneW = (float) (w - 14) - laneX;
+        const float laneX = 14.0f, laneW = (float) (w - 14) - laneX;
 
         stepOut = step; topOut = top;
 
@@ -272,8 +256,6 @@ public:
         {
             const int b = list[i].getIntValue();
             const int y = top + i * step;
-            g.setColour (b == selected ? hobby::kText : hobby::kIconGrey);
-            g.drawText (String (b + 1), 14, y, 24, laneH, Justification::centredRight, false);
             g.setColour (Colour (0xff2d2926));
             g.fillRoundedRectangle (laneX, (float) y, laneW, (float) laneH, jmin (6.0f, (float) laneH * 0.3f));
         }
@@ -373,10 +355,33 @@ public:
                 g.drawText (chordName, 14 + (int) std::ceil (textWidth (g.getCurrentFont(), title)) + 14, (int) sy, 140, (int) sh, Justification::centredLeft, false);
             }
             const float cx = (float) w * 0.5f;
+            const bool showRec = recording >= 0 || taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error;
             if (notice.isNotEmpty())
             {
                 g.setColour (noticeColour);
                 g.drawText (notice, (int) cx - 140, (int) sy, 165, (int) sh, Justification::centred, true);
+            }
+            else if (showRec)
+            {
+                const float pl = (float) hobby::pulse (Time::getMillisecondCounterHiRes() * 0.001 * 1.5);
+                float x0 = cx - 150.0f;
+                g.setFont (hobby::makeFont (typeface, 14.0f));
+                if (recording >= 0)
+                {
+                    const String t = String (overdubbing ? "OVERDUB " : "REC LOOP ") + String (recording + 1);
+                    g.setColour (hobby::kRed.withAlpha (0.4f + 0.6f * pl));
+                    g.fillEllipse (x0, sy + sh * 0.5f - 4.0f, 8.0f, 8.0f);
+                    g.setColour (overdubbing ? hobby::kPeach : hobby::kRed);
+                    g.drawText (t, Rectangle<float> (x0 + 14.0f, sy, 110.0f, sh), Justification::centredLeft, false);
+                    x0 += 130.0f;
+                }
+                if (taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error)
+                {
+                    g.setColour (hobby::kRed.withAlpha (taping ? 0.4f + 0.6f * pl : 1.0f));
+                    g.fillEllipse (x0, sy + sh * 0.5f - 4.0f, 8.0f, 8.0f);
+                    g.setColour (hobby::kRed);
+                    g.drawText (audioText, Rectangle<float> (x0 + 14.0f, sy, 170.0f, sh), Justification::centredLeft, false);
+                }
             }
             else
             {
