@@ -39,6 +39,7 @@ namespace hobby
     // ---- ζωγραφιά ----
     void drawBody (juce::Graphics&, juce::Rectangle<int> bounds);                        // κρεμ βάση
     void drawBrandMark (juce::Graphics&, const juce::Typeface::Ptr&, int windowWidth);   // "π/-" πάνω στο κέντρο
+    inline float kBrandY = 50.0f;   // ύψος του Flow και του π (ορίζεται από τη γεωμετρία του παραθύρου)
     void drawEmbossedText (juce::Graphics&, const juce::Typeface::Ptr&, const juce::String&, float x);   // ανάγλυφο γράμμα στο χρώμα του φόντου (αριστερά, πάνω)
     // ανάγλυφο πλαίσιο με βαθουλωμένη οθόνη (οθόνη: innerShadow ~18, λωρίδα: ~15)
     void drawBezel (juce::Graphics&, juce::Rectangle<float> bezel, juce::Rectangle<float> screen,

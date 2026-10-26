@@ -239,7 +239,7 @@ public:
     void mouseUp (const MouseEvent& e) override
     {
         // κλικ στο "π / -": μενού (ρυθμίσεις ήχου, set, panic, Link)
-        if (e.y >= 42 && e.y < 74 && std::abs (e.x - getWidth() / 2) < 40 && ! e.mouseWasDraggedSinceMouseDown())
+        if (e.y >= pluginBezel.getY() && e.y < pluginBezel.getBottom() && std::abs (e.x - getWidth() / 2) < 40 && ! e.mouseWasDraggedSinceMouseDown())
             showPiMenu();
     }
 
@@ -469,7 +469,7 @@ private:
 
     //==========================================================================
     // γεωμετρία παραθύρου: μία στήλη (κεφαλίδα, οθόνη loops, κουμπιά, πλήκτρα). Τα plugin ανοίγουν σε δικά τους παράθυρα.
-    static constexpr int topH = 36, botH = 14, gapPx = 8, sideM = 11, headerBarH = 44;
+    static constexpr int topH = 14, botH = 14, gapPx = 8, sideM = 11, headerBarH = 34;
     static constexpr int minLoopsH = 160, stripH = 72, keysH = 120, minContentW = 724, defaultLoopsH = 250;
     static constexpr int minContentH() { return minLoopsH + gapPx + stripH + gapPx + keysH; }
     static constexpr int chromeH() { return topH + headerBarH + gapPx + botH; }
@@ -494,8 +494,8 @@ private:
         loopsView.setBounds (loopsBezel.reduced (5));
         keyboardView.setBounds (keysBezel.reduced (5));
 
-        const auto panel = pluginBezel.reduced (5);
-        header.setBounds (panel.getX(), panel.getY(), panel.getWidth(), headerH);
+        header.setBounds (pluginBezel.getX() + 5, pluginBezel.getY(), pluginBezel.getWidth() - 10, headerH);
+        hobby::kBrandY = (float) pluginBezel.getY() + (float) headerH * 0.5f - 8.0f;
 
         // τρεις ομάδες: αριστερά VST, MIDI FX, FX, Hold, Chord. Στη μέση τα 4 στρογγυλά. Δεξιά metronome και φάκελος.
         const auto strip = stripBezel.reduced (5);
@@ -2234,7 +2234,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.18.0"; }
+    const String getApplicationVersion() override { return "0.19.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
