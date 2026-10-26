@@ -917,7 +917,6 @@ private:
         if (v && panelMode == panelInstrument)
         {
             l.push_back ({ String::fromUTF8 ("\xe2\x87\x84"), hobby::kOn, true, false, [this] { replaceInstrument(); } });
-            l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kOn, true, armedNow (0), [this] { pressDelete (0, [this] { removeBlock (selected); }); } });
         }
         else if (v && panelMode == panelMidiFx)
         {

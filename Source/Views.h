@@ -1003,6 +1003,16 @@ public:
             return;
         }
 
+        // το ✕ του ανοιχτού block ελέγχεται πρώτο: τα κυκλάκια μπορεί να πέφτουν πάνω στην περιοχή γειτονικού block
+        if (! e.mods.isPopupMenu())
+            for (int b = 0; b < flow::numBlocks; ++b)
+                if (spans[(size_t) b].used && xRect[(size_t) b].expanded (2.0f).contains (p))
+                {
+                    if (armedBlock == b && Time::getMillisecondCounter() < armedUntil) { armedBlock = -1; repaint(); if (onRemoveBlock) onRemoveBlock (b); }
+                    else { armedBlock = b; armedUntil = Time::getMillisecondCounter() + 3000; repaint(); Component::SafePointer<KeyboardView> sp (this); Timer::callAfterDelay (3100, [sp] { if (sp != nullptr) sp->repaint(); }); }
+                    return;
+                }
+
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             const auto& s = spans[(size_t) b];
@@ -1019,14 +1029,6 @@ public:
                 else if (onChord) { if (onChordType) onChordType (b, -1); }
                 else if (onBar) { if (onVolumeMenu) onVolumeMenu (b); }
                 else if (p.y < keysY) { if (onRedoZone) onRedoZone (b); }
-                return;
-            }
-
-            if (xRect[(size_t) b].expanded (2.0f).contains (p))
-            {
-                if (armedBlock == b && Time::getMillisecondCounter() < armedUntil) { armedBlock = -1; if (onRemoveBlock) onRemoveBlock (b); }
-                else { armedBlock = b; armedUntil = Time::getMillisecondCounter() + 3000; }
-                repaint();
                 return;
             }
 
