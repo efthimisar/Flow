@@ -2,6 +2,7 @@
 // Prisma Audio
 
 #include "Views.h"
+#include "KeyLights.h"
 #include <map>
 
 namespace
@@ -197,6 +198,7 @@ public:
 
         if (metroSamplePath.isNotEmpty()) loadMetroSample (File (metroSamplePath), false);
         if (settings->getBoolValue ("link", false) && LinkBridge::isAvailable()) engine.setLinkEnabled (true);
+        lightsWanted = settings->getBoolValue ("keyLights", false);
 
         refreshSize();
         restoreSession();
@@ -801,6 +803,88 @@ private:
 
     // φωτάκια εργαλείων στη λωρίδα κάτω, ανάλογα με το κουμπί που δείχνει τώρα: VST ⇄ ✕, MIDI FX ⇄ ✕, FX + ✕. Το ✕ θέλει δύο πατήματα.
     // ◎ φωτάκι: πετάλι. 1ο πάτημα = ανάθεση (πράσινο): πάτα ένα κουμπί της εφαρμογής και μετά το πετάλι. 2ο = διαγραφή ανάθεσης (κόκκινο). 3ο = κλείνει.
+    // ---- φώτα πλήκτρων Komplete Kontrol MK2: κάθε block παίρνει το χρώμα του, το ειδικό block ανάβει άσπρο στο πρώτο και στο τελευταίο πλήκτρο
+    KeyLights keyLights;
+    bool lightsWanted = false;
+    int lightsTick = 0;
+    std::array<uint8_t, 88> lastLights {};
+
+    void setKeyLights (bool on)
+    {
+        lightsWanted = on;
+        if (on)
+        {
+            const bool ok = keyLights.start();
+            flow::flowLog ("φώτα πλήκτρων: " + keyLights.getStatus());
+            setMessage (ok ? gr ("Φώτα πλήκτρων: ") + keyLights.getStatus()
+                           : gr ("Φώτα πλήκτρων: ") + keyLights.getStatus());
+            if (ok) { lastLights.fill (0xff); updateLights (true); }
+        }
+        else
+        {
+            keyLights.stop();
+            flow::flowLog ("φώτα πλήκτρων: κλειστά");
+        }
+        saveNow();
+        updateToolLamps();
+    }
+
+    // το χρώμα του block στην παλέτα του MK2 (hue 1..16: κόκκινο, πορτοκαλί, ... φούξια. 17 = άσπρο). Φωτεινότητα 0..3.
+    static uint8_t lightByte (Colour c, int brightness)
+    {
+        static const float hues[16] { 0, 25, 40, 50, 60, 90, 125, 160, 185, 200, 225, 255, 270, 285, 310, 330 };
+        const float h = c.getHue() * 360.0f;
+        int best = 0;
+        float bestD = 1.0e9f;
+        for (int i = 0; i < 16; ++i)
+        {
+            float d = std::abs (h - hues[i]);
+            d = jmin (d, 360.0f - d);
+            if (d < bestD) { bestD = d; best = i; }
+        }
+        return (uint8_t) ((best + 1) * 4 + jlimit (0, 3, brightness));
+    }
+
+    void updateLights (bool force)
+    {
+        if (! keyLights.isOn()) return;
+
+        std::array<uint8_t, 88> buf {};
+        const int first = keyLights.getFirstNote();
+        const int count = keyLights.getKeyCount();
+        for (int n = flow::lowestNote; n <= flow::highestNote; ++n)
+        {
+            const int idx = n - first;
+            if (idx < 0 || idx >= count || idx >= 88) continue;
+            const int b = engine.blockForNote (n);
+            if (b < 0) continue;
+            if (engine.blockOff[(size_t) b].load() != 0) continue;
+            buf[(size_t) idx] = lightByte (blockLight (b), b == selected ? 3 : 1);
+        }
+
+        const int sb = engine.specialBlock.load();
+        if (sb >= 0 && isActive (sb) && engine.blockOff[(size_t) sb].load() == 0 && engine.zoneState[(size_t) sb].load() == 0)
+            for (int n : { engine.lo[(size_t) sb].load(), engine.hi[(size_t) sb].load() })
+            {
+                const int idx = n - first;
+                if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);   // άσπρο
+            }
+
+        if (force || buf != lastLights || ++lightsTick >= 15)   // ξαναστέλνει κάθε ~0.5 s: τα φώτα του Flow επικρατούν όποιο plugin κι αν γράψει
+        {
+            lightsTick = 0;
+            lastLights = buf;
+            if (! keyLights.sendKeys (buf.data(), 88))
+            {
+                flow::flowLog ("φώτα πλήκτρων: " + keyLights.getStatus());
+                keyLights.stop();
+                lightsWanted = true;
+                updateToolLamps();
+            }
+        }
+    }
+
+    bool lightsTried = false;
     int learnMode = 0;
     bool learnClick (int ctl)
     {
@@ -848,6 +932,8 @@ private:
         }
         if (v)   // ★ ειδικό block (πάνω από τα άλλα, χωρίς λούπα)
             l.push_back ({ String::fromUTF8 ("\xe2\x98\x85"), Colours::white, true, false, [this] { toggleSpecial(); } });
+        l.push_back ({ String::fromUTF8 ("\xe2\x9c\xa6"), keyLights.isOn() ? hobby::kOn : lightsWanted ? hobby::kRed : hobby::kIconGrey, true, false,
+                       [this] { setKeyLights (! keyLights.isOn()); } });   // ✦ φώτα πλήκτρων (Komplete Kontrol S-series MK2)
         l.push_back ({ String::fromUTF8 ("\xe2\x97\x8e"), learnMode == 0 ? hobby::kIconGrey : learnMode == 1 ? hobby::kOn : hobby::kRed, true, false,
                        [this] { learnMode = (learnMode + 1) % 3; if (learnMode == 1) setMessage (gr ("Πάτησε το κουμπί που θέλεις να αναθέσεις σε πετάλι")); updateToolLamps(); } });
         loopsView.setToolLamps (std::move (l));
@@ -2043,6 +2129,7 @@ private:
         settings->setValue ("metroChannel", engine.metroChannel.load());
         settings->setValue ("metroSample", metroSamplePath);
         settings->setValue ("link", engine.isLinkEnabled());
+        settings->setValue ("keyLights", lightsWanted);
 
         for (int i = 0; i < flow::numControls; ++i)
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
@@ -2269,6 +2356,9 @@ private:
                     knownMidi.remove (i);
         }
 
+        if (lightsWanted && ! keyLights.isOn() && ! lightsTried) { lightsTried = true; setKeyLights (true); }
+        updateLights (false);
+
         const int mc = engine.midiCount.load();
         if (mc != lastMidiCount) { lastMidiCount = mc; lastMidiMs = Time::getMillisecondCounter(); }
         header.midiActive = Time::getMillisecondCounter() - lastMidiMs < 250;
@@ -2380,7 +2470,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.29.0"; }
+    const String getApplicationVersion() override { return "0.30.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
