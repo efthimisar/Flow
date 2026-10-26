@@ -983,14 +983,7 @@ public:
         dragBlock = -1;
         spMode = 0;
 
-        // κλικ εκτός από τα κυκλάκια του ανοιχτού block τα κλείνει
-        if (expanded >= 0)
-        {
-            const auto& eb = numRect[(size_t) expanded];
-            const bool inRow = p.y >= labelY - 4.0f && p.y <= labelY + 26.0f
-                               && p.x >= eb.getX() - 6.0f && p.x <= xRect[(size_t) expanded].getRight() + 6.0f;
-            if (! inRow) { expanded = -1; repaint(); }
-        }
+        // το μενού του block ανοίγει και κλείνει μόνο με τον αριθμό του (όχι με κλικ αλλού)
 
         if (! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
         {
@@ -1002,6 +995,16 @@ public:
             spMode = p.x < specialRect.getX() + 10.0f ? 1 : p.x > specialRect.getRight() - 10.0f ? 2 : 3;
             return;
         }
+
+        // ο αριθμός ανοίγει/κλείνει το μενού του block, ανεξάρτητα από γειτονικά blocks που μπορεί να επικαλύπτονται
+        if (! e.mods.isPopupMenu())
+            for (int b = 0; b < flow::numBlocks; ++b)
+                if (spans[(size_t) b].used && numRect[(size_t) b].expanded (2.0f).contains (p))
+                {
+                    expanded = expanded == b ? -1 : b;
+                    repaint();
+                    return;
+                }
 
         // το ✕ του ανοιχτού block ελέγχεται πρώτο: τα κυκλάκια μπορεί να πέφτουν πάνω στην περιοχή γειτονικού block
         if (! e.mods.isPopupMenu())
