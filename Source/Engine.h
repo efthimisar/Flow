@@ -1204,8 +1204,8 @@ namespace flow
                     {
                         case ctlHold:  if (ok) { const int h = holdMode[(size_t) sel].load(); holdMode[(size_t) sel] = h >= 3 ? 0 : (h + 1) % 3; ++changeCount; } break;
                         case ctlRec:   { const int t = recTarget (true); if (t >= 0) ++cmdMain[(size_t) t]; } break;
-                        case ctlUndo:  ++pedalDel; break;     // σβήσιμο λούπας: πατήματα = αριθμός block
-                        case ctlStop:  ++pedalMute; break;    // mute / ενεργοποίηση: πατήματα = αριθμός block
+                        case ctlUndo:  { const int t = recTarget (true); if (t >= 0) pressUndo (t); } break;     // ✕ σβήσιμο λούπας, όπως το κουμπί της οθόνης
+                        case ctlStop:  { const int t = recTarget (true); if (t >= 0) pressReRec (t); } break;    // ξαναγράφω, όπως το κουμπί της οθόνης
                         case ctlMute:  ++pedalMute; break;
                         case ctlSpecial: { const int sb = specialBlock.load(); if (sb >= 0 && sb < numBlocks) { blockOff[(size_t) sb] = blockOff[(size_t) sb].load() != 0 ? 0 : 1; ++changeCount; } } break;
                         case ctlTape:  recorder.pressButton(); break;
