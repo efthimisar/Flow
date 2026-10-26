@@ -503,10 +503,8 @@ public:
                 auto lampAt = [&] (float x, bool on, const String& txt, std::function<void()> fn)
                 {
                     const Rectangle<float> r (x - R, ly - R, 2.0f * R, 2.0f * R);
-                    g.setColour (on ? hobby::kOn : Colour (0xff3a3430));
-                    g.fillEllipse (r);
-                    g.setColour (on ? Colour (0xff262220) : Colour (0xff6b625a));
-                    g.setFont (hobby::makeFont (typeface, 10.0f));
+                    g.setColour (on ? hobby::kOn : Colour (0xff6b625a));   // σκέτο σύμβολο που φωτίζει ή σβήνει
+                    g.setFont (hobby::makeFont (typeface, 16.0f));
                     g.drawText (txt, r, Justification::centred, false);
                     hot.push_back ({ r.expanded (3.0f), fn });
                 };
@@ -575,10 +573,8 @@ public:
                 {
                     const Rectangle<float> r (tx - 9.0f, sy + sh * 0.5f - 9.0f, 18.0f, 18.0f);
                     const Colour c = tl.armed ? hobby::kRed : tl.colour;
-                    g.setColour (tl.enabled ? c : Colour (0xff3a3430));
-                    g.fillEllipse (r);
-                    g.setColour (tl.enabled ? Colour (0xff262220) : Colour (0xff6b625a));
-                    g.setFont (hobby::makeFont (typeface, 12.0f));
+                    g.setColour (tl.enabled ? c : Colour (0xff4a433d));   // σκέτο σύμβολο: φωτίζει με το χρώμα του ή σβήνει
+                    g.setFont (hobby::makeFont (typeface, 16.0f));
                     g.drawText (tl.glyph, r, Justification::centred, false);
                     if (tl.enabled) this->hot.push_back ({ r.expanded (3.0f), tl.fn });
                     tx += 26.0f;
