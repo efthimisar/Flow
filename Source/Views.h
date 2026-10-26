@@ -59,7 +59,23 @@ static inline StringArray activeBlocks (const flow::Engine& engine)
 class PluginListView : public Component
 {
 public:
-    explicit PluginListView (Typeface::Ptr face) : typeface (face) { setVisible (false); }
+    explicit PluginListView (Typeface::Ptr face) : typeface (face)
+    {
+        search.setFont (hobby::makeFont (typeface, 15.0f));
+        search.setTextToShowWhenEmpty (String::fromUTF8 ("\xce\xb1\xce\xbd\xce\xb1\xce\xb6\xce\xae\xcf\x84\xce\xb7\xcf\x83\xce\xb7\xe2\x80\xa6"), hobby::kIconGrey);   // αναζήτηση…
+        search.setColour (TextEditor::backgroundColourId, Colour (0xff2d2926));
+        search.setColour (TextEditor::textColourId, hobby::kText);
+        search.setColour (TextEditor::outlineColourId, Colours::transparentBlack);
+        search.setColour (TextEditor::focusedOutlineColourId, Colour (0xff4a433d));
+        search.setColour (CaretComponent::caretColourId, hobby::kText);
+        search.setIndents (10, 6);
+        search.onTextChange = [this] { scroll = 0; repaint(); };
+        search.onEscapeKey = [this] { if (search.isEmpty()) close(); else search.clear(); };
+        addAndMakeVisible (search);
+        setVisible (false);
+    }
+
+    void resized() override { search.setBounds (jmax (260, getWidth() - 94 - 14 - 190 - 10), 8, 190, 28); }
 
     void open (const String& t, const String& s, Colour c, StringArray names, StringArray formats,
                std::function<void (int)> pick, std::function<void()> rescan, std::function<void()> file)
@@ -67,7 +83,10 @@ public:
         title = t; sub = s; colour = c; items = names; fmts = formats;
         onPick = pick; onRescan = rescan; onFile = file;
         scroll = 0;
+        search.clear();
         setVisible (true);
+        resized();
+        search.grabKeyboardFocus();
         repaint();
     }
 
@@ -105,15 +124,20 @@ public:
         const float gapX = 20.0f, left = 26.0f, rowH = 34.0f, top = 58.0f;
         const float colW = ((float) w - 2.0f * left - gapX * (float) (cols - 1)) / (float) cols;
         const int rowsVisible = jmax (1, (int) ((float) (getHeight() - 58 - 8) / rowH));
-        const int total = items.size();
+        std::vector<int> vis;   // ευρετήριο των plugins που ταιριάζουν στην αναζήτηση
+        const String q = search.getText().trim();
+        for (int i = 0; i < items.size(); ++i)
+            if (q.isEmpty() || items[i].containsIgnoreCase (q)) vis.push_back (i);
+        const int total = (int) vis.size();
         const int totalRows = (total + cols - 1) / cols;
         scroll = jlimit (0, jmax (0, totalRows - rowsVisible), scroll);
 
         for (int r = 0; r < rowsVisible; ++r)
             for (int c = 0; c < cols; ++c)
             {
-                const int idx = (r + scroll) * cols + c;
-                if (idx >= total) continue;
+                const int k = (r + scroll) * cols + c;
+                if (k >= total) continue;
+                const int idx = vis[(size_t) k];
                 const float x = left + (float) c * (colW + gapX), y = top + (float) r * rowH;
                 const Rectangle<float> rr (x, y, colW, rowH - 6.0f);
                 g.setColour (Colour (0xff2d2926));
@@ -156,6 +180,7 @@ private:
     StringArray items, fmts;
     std::function<void (int)> onPick;
     std::function<void()> onRescan, onFile;
+    TextEditor search;
     int scroll = 0;
     std::vector<std::pair<Rectangle<float>, std::function<void()>>> hot;
 };
