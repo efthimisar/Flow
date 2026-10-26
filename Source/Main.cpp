@@ -88,7 +88,25 @@ public:
         undoTile.onClick = [this] { if (isActive (selected)) engine.pressUndo (selected); };
         stopTile.onClick = [this] { if (isActive (selected)) engine.pressReRec (selected); };
         tapeTile.onClick = [this] { engine.recorder.pressButton(); };
-        metroTile.onClick = [this] { toggleMetronome(); };
+        // μετρονόμος: 1ο πάτημα = ανοίγει η λωρίδα (tempo, ένταση, έξοδος), 2ο = ξεκινά ο ήχος και αναβοσβήνει, 3ο = σταματά. Το επόμενο ξαναρχίζει τον κύκλο.
+        metroTile.onClick = [this]
+        {
+            if (engine.metroOn.load())
+            {
+                toggleMetronome();           // σταματά
+                loopsView.setMetroStrip (false);
+            }
+            else if (! loopsView.metroStrip)
+            {
+                loopsView.setMetroStrip (true);
+            }
+            else
+            {
+                loopsView.setMetroStrip (false);
+                toggleMetronome();           // ξεκινά
+            }
+        };
+        loopsView.onMetroChange = [this] { saveNow(); };
         folderTile.onClick = [this] { chooseTapeFolder(); };
 
         // δεξί κλικ: ανάθεση σε πετάλι / ρυθμίσεις
@@ -2296,7 +2314,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.23.0"; }
+    const String getApplicationVersion() override { return "0.24.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

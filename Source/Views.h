@@ -196,14 +196,28 @@ public:
     LoopsView (flow::Engine& e, const int& sel, Typeface::Ptr face)
         : engine (e), selected (sel), typeface (face), tempoBox (e, face), tapDot (e)
     {
-        addAndMakeVisible (tempoBox);
-        addAndMakeVisible (tapDot);
+        addChildComponent (tempoBox);
+        addChildComponent (tapDot);
         tempoBox.setTooltip (gr ("Tempo (40-240): κλικ για να πληκτρολογήσεις, ή σύρε πάνω/κάτω"));
         tapDot.setTooltip (gr ("Tap tempo: κλικ ή δύο ελεύθερα μαύρα πλήκτρα μαζί"));
     }
 
     std::function<void (int)> onSelect;
     TempoBox& getTempoBox() { return tempoBox; }
+
+    std::function<void()> onMetroChange;
+
+    // λωρίδα μετρονόμου (κάτω): tempo, tap, ένταση, έξοδος. Ανοίγει με το πρώτο πάτημα του κουμπιού μετρονόμου.
+    bool metroStrip = false;
+    void setMetroStrip (bool on)
+    {
+        if (on == metroStrip) return;
+        metroStrip = on;
+        tempoBox.setVisible (on);
+        tapDot.setVisible (on);
+        resized();
+        repaint();
+    }
 
     // ενδείξεις κάτω (χωρίς πλαίσιο): block, συγχορδία, μήνυμα ή CPU, τελεία MIDI
     bool midiActive = false;
@@ -213,8 +227,11 @@ public:
 
     void resized() override
     {
-        tempoBox.setBounds (getWidth() / 2 - 58, 15, 116, 28);
-        tapDot.setBounds (tempoBox.getRight() + 8, 18, 22, 22);
+        const int by = getHeight() - 22 - 7;
+        tempoBox.setBounds (getWidth() / 2 - 150, by, 100, 22);
+        tapDot.setBounds (tempoBox.getRight() + 8, by, 22, 22);
+        tempoBox.setVisible (metroStrip);
+        tapDot.setVisible (metroStrip);
     }
 
     void paint (Graphics& g) override
@@ -356,7 +373,50 @@ public:
             }
             const float cx = (float) w * 0.5f;
             const bool showRec = recording >= 0 || taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error;
-            if (notice.isNotEmpty())
+            hot.clear();
+            if (metroStrip)
+            {
+                // tempo και tap είναι τα δύο components αριστερά. Ένταση: 25 50 75 100. Έξοδος: ⇨ 1 2 3 4
+                const float ly = sy + sh * 0.5f, R = 9.0f;
+                auto lampAt = [&] (float x, bool on, const String& txt, std::function<void()> fn)
+                {
+                    const Rectangle<float> r (x - R, ly - R, 2.0f * R, 2.0f * R);
+                    g.setColour (on ? hobby::kOn : Colour (0xff3a3430));
+                    g.fillEllipse (r);
+                    g.setColour (on ? Colour (0xff262220) : Colour (0xff6b625a));
+                    g.setFont (hobby::makeFont (typeface, 10.0f));
+                    g.drawText (txt, r, Justification::centred, false);
+                    hot.push_back ({ r.expanded (3.0f), fn });
+                };
+                float x = (float) tapDot.getRight() + 36.0f;
+                g.setFont (hobby::makeFont (typeface, 14.0f));
+                g.setColour (hobby::kIconGrey);
+                g.drawText (String::fromUTF8 ("\xe2\x96\x82\xe2\x96\x84\xe2\x96\x86"), Rectangle<float> (x - 26.0f, sy, 30.0f, sh), Justification::centred, false);
+                x += 14.0f;
+                const float levels[4] { 0.25f, 0.5f, 0.75f, 1.0f };
+                const float cur = engine.metroLevel.load();
+                int curIdx = 3;
+                for (int i = 0; i < 3; ++i)
+                    if (std::abs (cur - levels[i]) <= std::abs (cur - levels[curIdx])) curIdx = i;
+                for (int i = 0; i < 4; ++i)
+                {
+                    const float lv = levels[i];
+                    lampAt (x, i == curIdx, String ((int) (lv * 100)), [this, lv] { engine.metroLevel = lv; if (onMetroChange) onMetroChange(); });
+                    x += 24.0f;
+                }
+                x += 12.0f;
+                g.setFont (hobby::makeFont (typeface, 14.0f));
+                g.setColour (hobby::kIconGrey);
+                g.drawText (String::fromUTF8 ("\xe2\x87\xa8"), Rectangle<float> (x - 10.0f, sy, 20.0f, sh), Justification::centred, false);
+                x += 22.0f;
+                const int outs = jlimit (1, 4, engine.numOutChannels.load());
+                for (int c = 0; c < outs; ++c)
+                {
+                    lampAt (x, engine.metroChannel.load() == c, String (c + 1), [this, c] { engine.metroChannel = c; if (onMetroChange) onMetroChange(); });
+                    x += 24.0f;
+                }
+            }
+            else if (notice.isNotEmpty())
             {
                 g.setColour (noticeColour);
                 g.drawText (notice, (int) cx - 140, (int) sy, 165, (int) sh, Justification::centred, true);
@@ -398,6 +458,7 @@ public:
                 g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (cx + 26.0f, sy, 40.0f, sh), Justification::centredLeft, false);
             }
             // φωτάκια ρυθμίσεων looper (δεξιά, μικρά): A = ανίχνευση, ≈ = αναμονή πατημάτων, # = snap νοτών
+            if (! metroStrip)
             {
                 const float ly = sy + sh * 0.5f;
                 const float R = 9.0f;                         // ακτίνα φωτακιού
@@ -477,7 +538,10 @@ public:
 
     void mouseDown (const MouseEvent& e) override
     {
-        if (e.mods.isPopupMenu() || stepOut <= 0) return;
+        if (e.mods.isPopupMenu()) return;
+        for (auto& h : hot)
+            if (h.first.contains (e.position)) { h.second(); repaint(); return; }
+        if (stepOut <= 0) return;
         const auto list = activeBlocks (engine);
         const int i = (e.y - topOut) / stepOut;
         if (e.y >= topOut && i >= 0 && i < list.size() && onSelect)
@@ -491,6 +555,7 @@ private:
     TempoBox tempoBox;
     TapDot tapDot;
     int stepOut = 0, topOut = 48;
+    std::vector<std::pair<Rectangle<float>, std::function<void()>>> hot;   // κλικ-ζώνες φωτακιών στη λωρίδα μετρονόμου
 };
 
 //==============================================================================
