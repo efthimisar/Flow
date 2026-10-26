@@ -213,8 +213,8 @@ public:
 
     void resized() override
     {
-        tempoBox.setBounds (getWidth() / 2 - 58, 12, 116, 28);
-        tapDot.setBounds (tempoBox.getRight() + 8, 15, 22, 22);
+        tempoBox.setBounds (getWidth() / 2 - 58, 15, 116, 28);
+        tapDot.setBounds (tempoBox.getRight() + 8, 18, 22, 22);
     }
 
     void paint (Graphics& g) override
@@ -239,10 +239,10 @@ public:
 
         const String loopWord = overdubbing ? "OVERDUB" : "REC";
         g.setColour (recording >= 0 ? (overdubbing ? hobby::kPeach : hobby::kRed) : hobby::kIconGrey);
-        g.drawText (loopWord, 14, 12, 120, 28, Justification::centredLeft, false);
+        g.drawText (loopWord, 14, 15, 120, 28, Justification::centredLeft, false);
         g.setColour (hobby::kText);
         g.drawText (" Loop / " + (recording >= 0 ? String (recording + 1) : String ("-")),
-                    14 + (int) std::ceil (textWidth (f, loopWord)), 12, 200, 28, Justification::centredLeft, false);
+                    14 + (int) std::ceil (textWidth (f, loopWord)), 15, 200, 28, Justification::centredLeft, false);
 
         const auto tapeState = engine.recorder.getState();
         const bool taping = tapeState == RecorderEngine::State::Recording;
@@ -251,9 +251,9 @@ public:
         if (engine.recorder.isZipping()) audioRest = " Audio / ZIP...";
         const float restW = textWidth (f, audioRest), recW = textWidth (f, "REC");
         g.setColour (hobby::kText);
-        g.drawText (audioRest, w - 14 - (int) std::ceil (restW) - 4, 12, (int) std::ceil (restW) + 4, 28, Justification::centredRight, false);
+        g.drawText (audioRest, w - 14 - (int) std::ceil (restW) - 4, 15, (int) std::ceil (restW) + 4, 28, Justification::centredRight, false);
         g.setColour (taping ? hobby::kRed : hobby::kIconGrey);
-        g.drawText ("REC", w - 14 - (int) std::ceil (restW) - (int) std::ceil (recW) - 4, 12, (int) std::ceil (recW) + 4, 28,
+        g.drawText ("REC", w - 14 - (int) std::ceil (restW) - (int) std::ceil (recW) - 4, 15, (int) std::ceil (recW) + 4, 28,
                     Justification::centredRight, false);
 
         // λωρίδες
@@ -279,6 +279,19 @@ public:
         }
 
         const int gridBottom = top + jmax (1, count) * step + 4;
+
+        // κόκκινη μπάρα 2 μέτρων: προχωρά συνεχόμενα και ξαναρχίζει. Μόνο ένδειξη για να παίζεις μέσα στο μέτρο, δεν καθορίζει το μήκος της λούπας
+        {
+            const double cycle = 2.0 * flow::beatsPerBar;
+            const float p = (float) (std::fmod (jmax (0.0, now), cycle) / cycle);
+            const float by = 6.0f, bh = 5.0f;
+            g.setColour (Colour (0xff3a3430));
+            g.fillRoundedRectangle (laneX, by, laneW, bh, bh * 0.5f);
+            g.setColour (hobby::kRed);
+            g.fillRoundedRectangle (laneX, by, jmax (bh, laneW * p), bh, bh * 0.5f);
+            g.setColour (Colour (0xff6b625a));
+            g.fillRect (laneX + laneW * 0.5f - 0.5f, by - 1.0f, 1.0f, bh + 2.0f);
+        }
         for (int i = 0; i <= axisBars; ++i)
         {
             const float x = laneX + laneW * (float) i / (float) axisBars;

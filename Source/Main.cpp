@@ -2076,7 +2076,12 @@ private:
             default:                               tapeTile.setIconColour (hobby::kIconGrey); break;
         }
 
-        metroTile.setIconColour (engine.metroOn.load() ? hobby::kOn : hobby::kIconGrey);
+        {
+            // ο μετρονόμος αναβοσβήνει σε κάθε beat όταν ο ήχος του είναι ανοιχτός
+            const double ph = engine.beatPosOut.load();
+            const float flash = jlimit (0.0f, 1.0f, 1.0f - (float) (ph - std::floor (ph)) * 4.0f);
+            metroTile.setIconColour (engine.metroOn.load() ? hobby::mix (hobby::kIconGrey, hobby::kOn, 0.3f + 0.7f * flash) : hobby::kIconGrey);
+        }
 
         // κεφαλίδα πάνελ
         const bool master = panelMode == panelMaster;
@@ -2240,7 +2245,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.19.0"; }
+    const String getApplicationVersion() override { return "0.20.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
