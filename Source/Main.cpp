@@ -255,7 +255,7 @@ public:
     {
         hobby::drawBody (g, getLocalBounds());
         hobby::drawBrandMark (g, typeface, getWidth());
-        hobby::drawEmbossedText (g, typeface, "Flow", (float) sideM + 8.0f);
+        hobby::drawEmbossedText (g, typeface, "flow", (float) sideM + 8.0f);
 
         hobby::drawBezel (g, loopsBezel.toFloat(), loopsBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
         hobby::drawBezel (g, keysBezel.toFloat(), keysBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
