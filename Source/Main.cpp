@@ -979,7 +979,12 @@ private:
 
     bool knobClick (int k)
     {
-        if (learnMode == 0) return false;
+        if (learnMode == 0)
+        {
+            if (isActive (selected) && knobParam[(size_t) selected][(size_t) k] < 0)
+                setMessage (gr ("Ανάθεση: πάτα το ◎ (πράσινο), μετά το ποτενσιόμετρο"));
+            return false;
+        }
         if (! isActive (selected)) { setMessage (gr ("Διάλεξε πρώτα block με plugin")); return true; }
         if (learnMode == 2)
         {

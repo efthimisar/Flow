@@ -814,7 +814,7 @@ public:
             if (! ks.bound)   // ελεύθερο ποτενσιόμετρο: αχνή παύλα στην αρχή της διαδρομής (7 η ώρα)
             {
                 const float ang = MathConstants<float>::pi * -0.75f - MathConstants<float>::halfPi;
-                g.setColour (Colour (0xff6b625a));
+                g.setColour (dash.withAlpha (0.55f));
                 g.drawLine (Line<float> (Point<float> (c.x + R * 0.55f * std::cos (ang), c.y + R * 0.55f * std::sin (ang)),
                                          Point<float> (c.x + (R - 1.0f) * std::cos (ang), c.y + (R - 1.0f) * std::sin (ang))), 3.0f);
             }
