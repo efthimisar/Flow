@@ -517,9 +517,21 @@ public:
             const bool showRec = recording >= 0 || taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error;
             hot.clear();
             tipZones.clear();
-            const bool showCpu = ! metroStrip && notice.isEmpty() && ! showRec;
             const float titleW = std::ceil (textWidth (g.getCurrentFont(), title));
             float chordX = 14.0f + titleW + 14.0f;
+            // διάταξη: τα σύμβολα σπρώχνουν το ένα το άλλο. Αν δεν χωράνε όλα, πρώτα φεύγουν οι τιμές δεξιά, μετά το CPU.
+            const float chordW = chordName.isNotEmpty() ? std::ceil (textWidth (hobby::makeFont (typeface, 16.0f), chordName)) + 14.0f : 0.0f;
+            const float toolsW = (float) tools.size() * 26.0f;
+            auto needed = [&] (bool cpuOn, bool valsOn)
+            {
+                const float right = 3.0f * 18.0f + 28.0f + (valsOn ? 60.0f : 0.0f) + 44.0f;
+                return 14.0f + titleW + 14.0f + chordW + (cpuOn ? 150.0f : 0.0f) + 16.0f + toolsW + 16.0f + right;
+            };
+            const bool cpuAllowed = ! metroStrip && notice.isEmpty() && ! showRec;
+            bool layoutCpu = true, layoutVals = true;
+            if (needed (true, true) > (float) w) layoutVals = false;
+            if (needed (true, false) > (float) w) layoutCpu = false;
+            const bool showCpu = cpuAllowed && layoutCpu;
             if (showCpu)   // CPU δίπλα από το όνομα του block
             {
                 const bool hotCpu = cpu >= 0.85f;
@@ -606,7 +618,9 @@ public:
             else
             {
                 // λάμπες εργαλείων στη μέση: σκέτα σύμβολα, φωτίζουν ή σβήνουν. Το μπαλούν λέει τι κάνει η καθεμία.
-                float tx = cx - (float) tools.size() * 13.0f + 13.0f;
+                const float leftEnd = 14.0f + titleW + 14.0f + chordW + (showCpu ? 150.0f : 0.0f);
+                const float rightStart = (float) w - 44.0f - (3.0f * 18.0f + 28.0f + (layoutVals ? 60.0f : 0.0f));
+                float tx = jmin (jmax (cx - toolsW * 0.5f, leftEnd + 16.0f), rightStart - 16.0f - toolsW) + 13.0f;
                 for (auto& tl : tools)
                 {
                     const Rectangle<float> r (tx - 12.0f, sy + sh * 0.5f - 11.0f, 24.0f, 22.0f);
@@ -624,7 +638,7 @@ public:
             {
                 const float ly = sy + sh * 0.5f;
                 const float R = 9.0f;                         // ακτίνα φωτακιού
-                const bool showVals = w >= 800;
+                const bool showVals = layoutVals;
                 const float valW = showVals ? 30.0f : 0.0f;
                 const int sel = jlimit (0, flow::numBlocks - 1, selected);
                 const int mode = engine.autoLoop.load();
