@@ -101,6 +101,25 @@ namespace hobby
                 }
             ig.setTiledImageFill (noise, 0, 0, 1.0f);
             ig.fillAll();
+            // φωτισμός από πίσω: λίγο φωτεινότερο κέντρο, σκούρες γωνίες (vignette)
+            {
+                const juce::Point<float> mid ((float) w * 0.5f, (float) h * 0.5f);
+                const float rad = (float) std::sqrt ((double) w * w + (double) h * h) * 0.5f;
+                juce::ColourGradient back (juce::Colours::white.withAlpha (0.05f), mid.x, mid.y,
+                                           juce::Colours::black.withAlpha (0.30f), mid.x + rad, mid.y, true);
+                back.addColour (0.55, juce::Colours::transparentBlack);
+                ig.setGradientFill (back);
+                ig.fillAll();
+            }
+            // πλέγμα pixel LCD: πολύ λεπτές γραμμές κάθε 3 pixel
+            {
+                juce::Image grid (juce::Image::ARGB, 3, 3, true);
+                for (int y = 0; y < 3; ++y)
+                    for (int x = 0; x < 3; ++x)
+                        if (x == 0 || y == 0) grid.setPixelAt (x, y, juce::Colours::black.withAlpha (x == 0 && y == 0 ? 0.12f : 0.07f));
+                ig.setTiledImageFill (grid, 0, 0, 1.0f);
+                ig.fillAll();
+            }
             // διαγώνια ανταύγεια πάνω-αριστερά
             ig.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.11f), 0.0f, 0.0f,
                                                       juce::Colours::transparentWhite, (float) w * 0.55f, (float) h * 0.95f, false));

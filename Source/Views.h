@@ -487,8 +487,22 @@ public:
                     const double len = jmin (L, axisBeats - k);
                     const Rectangle<float> seg (laneX + laneW * (float) (k / axisBeats) + 0.002f * laneW, y,
                                                 laneW * (float) (len / axisBeats) - 0.004f * laneW, lh);
-                    g.setColour ((allMuted || engine.blockOff[(size_t) b].load() != 0) ? Colour (0xff3a3d46) : blockLight (b));
+                    const bool dimSeg = allMuted || engine.blockOff[(size_t) b].load() != 0;
+                    const Colour segCol = dimSeg ? Colour (0xff3a3d46) : blockLight (b);
+                    if (! dimSeg)   // λάμψη οθόνης γύρω από τη λωρίδα
+                    {
+                        g.setColour (segCol.withAlpha (0.07f));
+                        g.fillRoundedRectangle (seg.expanded (6.0f), corner + 6.0f);
+                        g.setColour (segCol.withAlpha (0.10f));
+                        g.fillRoundedRectangle (seg.expanded (3.0f), corner + 3.0f);
+                    }
+                    g.setColour (segCol);
                     g.fillRoundedRectangle (seg, corner);
+                    if (! dimSeg && seg.getWidth() > 4.0f * corner)   // φωτεινή κορυφή
+                    {
+                        g.setColour (Colours::white.withAlpha (0.28f));
+                        g.fillRect (seg.getX() + corner, seg.getY() + 0.5f, seg.getWidth() - 2.0f * corner, 1.0f);
+                    }
                     if (state == flow::loopOver)
                     {
                         g.setColour (hobby::kPeach);
