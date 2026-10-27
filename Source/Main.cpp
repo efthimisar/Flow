@@ -916,21 +916,21 @@ private:
         const bool v = isActive (selected);
         if (v && panelMode == panelInstrument)
         {
-            l.push_back ({ String::fromUTF8 ("\xe2\x87\x84"), hobby::kOn, true, false, [this] { replaceInstrument(); } });
+            l.push_back ({ String::fromUTF8 ("\xe2\x87\x84"), hobby::kOn, true, false, [this] { replaceInstrument(); }, gr ("Άλλαξε το όργανο (VST) του block") });
         }
         else if (v && panelMode == panelMidiFx)
         {
             const bool has = engine.getMidiFx (selected) != nullptr;
-            l.push_back ({ String::fromUTF8 ("\xe2\x87\x84"), hobby::kLilac, true, false, [this] { loadMidiFxInto (selected); } });
-            l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kLilac, has, armedNow (1), [this] { pressDelete (1, [this] { removeMidiFx (selected); }); } });
+            l.push_back ({ String::fromUTF8 ("\xe2\x87\x84"), hobby::kLilac, true, false, [this] { loadMidiFxInto (selected); }, gr ("Φόρτωσε MIDI FX στο block") });
+            l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kLilac, has, armedNow (1), [this] { pressDelete (1, [this] { removeMidiFx (selected); }); }, gr ("Αφαίρεση MIDI FX (δύο πατήματα)") });
         }
         else if (v && panelMode == panelFx)
         {
-            l.push_back ({ "+", hobby::kPeach, engine.numFx (selected) < maxFxPerChain, false, [this] { addFxTo (selected); } });
-            l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kPeach, engine.numFx (selected) > 0, armedNow (2), [this] { pressDelete (2, [this] { clearFx (selected); }); } });
+            l.push_back ({ "+", hobby::kPeach, engine.numFx (selected) < maxFxPerChain, false, [this] { addFxTo (selected); }, gr ("Πρόσθεσε εφέ (FX) στο block") });
+            l.push_back ({ String::fromUTF8 ("\xe2\x9c\x95"), hobby::kPeach, engine.numFx (selected) > 0, armedNow (2), [this] { pressDelete (2, [this] { clearFx (selected); }); }, gr ("Αφαίρεση όλων των εφέ του block (δύο πατήματα)") });
         }
         if (v)   // ★ ειδικό block (πάνω από τα άλλα, χωρίς λούπα)
-            l.push_back ({ String ("SP"), Colours::white, true, false, [this] { toggleSpecial(); } });
+            l.push_back ({ String ("SP"), Colours::white, true, false, [this] { toggleSpecial(); }, gr ("SP = ειδικό block: πάνω από τα άλλα, χωρίς λούπα, παίζει πάντα") });
         // quantize: κάθε πάτημα αλλάζει επίπεδο και το μήνυμα δείχνει το νέο. Σβηστό (γκρι) = Off.
         auto q3 = [this] (std::atomic<int>& q, const String& name, const char* l0, const char* l1, const char* l2)
         {
@@ -940,13 +940,12 @@ private:
             updateToolLamps();
         };
         l.push_back ({ String::fromUTF8 ("\xe2\x96\xb6|"), engine.startQ.load() != 0 ? hobby::kOn : hobby::kIconGrey, true, false,
-                       [this, q3] { q3 (engine.startQ, "Start quantize", "Off", "beat", "bar"); } });
+                       [this, q3] { q3 (engine.startQ, "Start quantize", "Off", "beat", "bar"); }, gr ("Start quantize: από πού ξεκινά η λούπα (Off / beat / μέτρο)") });
         l.push_back ({ String::fromUTF8 ("\xe2\x86\x94"), engine.lengthQ.load() != 0 ? hobby::kOn : hobby::kIconGrey, true, false,
-                       [this, q3] { q3 (engine.lengthQ, "Length quantize", "Off", "beat", "bar (4/4)"); } });
-        l.push_back ({ String::fromUTF8 ("\xe2\x99\xaf"), engine.snapQ.load() != 0 ? hobby::kOn : hobby::kIconGrey, true, false,
-                       [this, q3] { q3 (engine.snapQ, "Note quantize", "Off", "1/8", "1/16"); } });
+                       [this, q3] { q3 (engine.lengthQ, "Length quantize", "Off", "beat", "bar (4/4)"); }, gr ("Length quantize: η διάρκεια της λούπας σε ολόκληρα beat ή μέτρα") });
         l.push_back ({ String::fromUTF8 ("\xe2\x97\x8e"), learnMode == 0 ? hobby::kIconGrey : learnMode == 1 ? hobby::kOn : hobby::kRed, true, false,
-                       [this] { learnMode = (learnMode + 1) % 3; if (learnMode == 1) setMessage (gr ("Πάτησε το κουμπί που θέλεις να αναθέσεις σε πετάλι")); updateToolLamps(); } });
+                       [this] { learnMode = (learnMode + 1) % 3; if (learnMode == 1) setMessage (gr ("Πάτησε το κουμπί που θέλεις να αναθέσεις σε πετάλι")); updateToolLamps(); },
+                       gr ("MIDI learn: πράσινο = ανάθεση πεταλιού, κόκκινο = σβήσιμο ανάθεσης") });
         loopsView.setToolLamps (std::move (l));
     }
 

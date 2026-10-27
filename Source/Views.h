@@ -321,7 +321,7 @@ private:
 
 //==============================================================================
 // Οθόνη loops: μία λωρίδα ανά block, άξονας 4/8/16 μέτρα, λευκή κεφαλή αναπαραγωγής.
-class LoopsView : public Component
+class LoopsView : public Component, public TooltipClient
 {
 public:
     LoopsView (flow::Engine& e, const int& sel, Typeface::Ptr face)
@@ -343,7 +343,7 @@ public:
     std::function<void (int)> onMetroSample;   // 1 = διάλεξε ήχο, 2 = αρχικός ήχος
 
     // φωτάκια εργαλείων του επιλεγμένου κουμπιού (VST ⇄ ✕, MIDI FX ⇄ ✕, FX + ✕): δίπλα στο CPU, χωρίς μενού
-    struct ToolLamp { String glyph; Colour colour; bool enabled = true; bool armed = false; std::function<void()> fn; };
+    struct ToolLamp { String glyph; Colour colour; bool enabled = true; bool armed = false; std::function<void()> fn; String tip; };
     void setToolLamps (std::vector<ToolLamp> l)
     {
         bool same = l.size() == tools.size();
@@ -513,14 +513,36 @@ public:
             g.setFont (hobby::makeFont (typeface, 16.0f));
             g.setColour (hobby::kText);
             g.drawText (title, 14, (int) sy, w / 2 - 150, (int) sh, Justification::centredLeft, false);
-            if (chordName.isNotEmpty())
-            {
-                g.setColour (hobby::kLilac);
-                g.drawText (chordName, 14 + (int) std::ceil (textWidth (g.getCurrentFont(), title)) + 14, (int) sy, 140, (int) sh, Justification::centredLeft, false);
-            }
             const float cx = (float) w * 0.5f;
             const bool showRec = recording >= 0 || taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error;
             hot.clear();
+            tipZones.clear();
+            const bool showCpu = ! metroStrip && notice.isEmpty() && ! showRec;
+            const float titleW = std::ceil (textWidth (g.getCurrentFont(), title));
+            float chordX = 14.0f + titleW + 14.0f;
+            if (showCpu)   // CPU δίπλα από το όνομα του block
+            {
+                const bool hotCpu = cpu >= 0.85f;
+                const float c0 = chordX;
+                g.setFont (hobby::makeFont (typeface, 13.0f));
+                g.setColour (hobby::kIconGrey);
+                g.drawText ("CPU", Rectangle<float> (c0, sy, 30.0f, sh), Justification::centredLeft, false);
+                const Rectangle<float> bar (c0 + 34.0f, sy + sh * 0.5f - 2.0f, 60.0f, 4.0f);
+                g.setColour (Colour (0xff3a3430));
+                g.fillRoundedRectangle (bar, 2.0f);
+                g.setColour (hotCpu ? hobby::kRed : hobby::kOn);
+                g.fillRoundedRectangle (bar.withWidth (jmax (2.0f, bar.getWidth() * jlimit (0.0f, 1.0f, cpu))), 2.0f);
+                g.setColour (hotCpu ? hobby::kRed : hobby::kIconGrey);
+                g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (c0 + 100.0f, sy, 40.0f, sh), Justification::centredLeft, false);
+                tipZones.push_back ({ Rectangle<float> (c0, sy, 140.0f, sh), String::fromUTF8 ("Φόρτος επεξεργαστή (CPU)") });
+                chordX = c0 + 150.0f;
+            }
+            if (chordName.isNotEmpty())
+            {
+                g.setFont (hobby::makeFont (typeface, 16.0f));
+                g.setColour (hobby::kLilac);
+                g.drawText (chordName, (int) chordX, (int) sy, 140, (int) sh, Justification::centredLeft, false);
+            }
             if (metroStrip)
             {
                 // tempo και tap είναι τα δύο components αριστερά. Ένταση: 25 50 75 100. Έξοδος: ⇨ 1 2 3 4
@@ -546,9 +568,11 @@ public:
                     g.fillRoundedRectangle (metroSliderRect.withWidth (jmax (3.0f, bw * lv)), 3.0f);
                     g.setColour (Colour (0xfff3f4f6));
                     g.fillEllipse (metroSliderRect.getX() + bw * lv - 6.0f, ly - 6.0f, 12.0f, 12.0f);
+                    tipZones.push_back ({ metroSliderRect.expanded (8.0f, 10.0f), String::fromUTF8 ("Ένταση μετρονόμου (0–100%)") });
                     x += bw + 22.0f;
                 }
                 const bool custom = metroIsCustom && metroIsCustom();
+                tipZones.push_back ({ Rectangle<float> (x - 12.0f, ly - 12.0f, 24.0f, 24.0f), custom ? String::fromUTF8 ("Επαναφορά στον αρχικό ήχο μετρονόμου") : String::fromUTF8 ("Διάλεξε δικό σου ήχο για το μετρονόμο") });
                 lampAt (x, custom, custom ? String::fromUTF8 ("\xe2\x86\xba") : String::fromUTF8 ("\xe2\x99\xaa"),
                         [this, custom] { if (onMetroSample) onMetroSample (custom ? 2 : 1); });   // ♪ διάλεξε δικό σου ήχο, ↺ γύρνα στον αρχικό
             }
@@ -581,27 +605,17 @@ public:
             }
             else
             {
-                const bool hot = cpu >= 0.85f;
-                g.setFont (hobby::makeFont (typeface, 13.0f));
-                g.setColour (hobby::kIconGrey);
-                g.drawText ("CPU", Rectangle<float> (cx - 88.0f, sy, 32.0f, sh), Justification::centredRight, false);
-                const Rectangle<float> bar (cx - 50.0f, sy + sh * 0.5f - 2.0f, 70.0f, 4.0f);
-                g.setColour (Colour (0xff3a3430));
-                g.fillRoundedRectangle (bar, 2.0f);
-                g.setColour (hot ? hobby::kRed : hobby::kOn);
-                g.fillRoundedRectangle (bar.withWidth (jmax (2.0f, bar.getWidth() * jlimit (0.0f, 1.0f, cpu))), 2.0f);
-                g.setColour (hot ? hobby::kRed : hobby::kIconGrey);
-                g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (cx + 26.0f, sy, 40.0f, sh), Justification::centredLeft, false);
-
-                float tx = cx + 100.0f;
+                // λάμπες εργαλείων στη μέση: σκέτα σύμβολα, φωτίζουν ή σβήνουν. Το μπαλούν λέει τι κάνει η καθεμία.
+                float tx = cx - (float) tools.size() * 13.0f + 13.0f;
                 for (auto& tl : tools)
                 {
-                    const Rectangle<float> r (tx - 9.0f, sy + sh * 0.5f - 9.0f, 18.0f, 18.0f);
+                    const Rectangle<float> r (tx - 12.0f, sy + sh * 0.5f - 11.0f, 24.0f, 22.0f);
                     const Colour c = tl.armed ? hobby::kRed : tl.colour;
-                    g.setColour (tl.enabled ? c : Colour (0xff4a433d));   // σκέτο σύμβολο: φωτίζει με το χρώμα του ή σβήνει
+                    g.setColour (tl.enabled ? c : Colour (0xff4a433d));
                     g.setFont (hobby::makeFont (typeface, 16.0f));
                     g.drawText (tl.glyph, r, Justification::centred, false);
-                    if (tl.enabled) this->hot.push_back ({ r.expanded (3.0f), tl.fn });
+                    if (tl.enabled) this->hot.push_back ({ r.expanded (1.0f), tl.fn });
+                    if (tl.tip.isNotEmpty()) tipZones.push_back ({ r, tl.tip });
                     tx += 26.0f;
                 }
             }
@@ -622,61 +636,64 @@ public:
                 const float total = 2.0f * R + 14.0f + (2.0f * R + valW) + 14.0f + (2.0f * R + valW);
                 float lx = (float) w - 44.0f - total + R;
 
-                auto lamp = [&] (float x, bool on, Colour c, std::function<void (Rectangle<float>, Colour)> glyph)
+                // σκέτα σύμβολα (χωρίς κυκλάκι): φωτίζουν όταν είναι ενεργά. Κάθε πάτημα αλλάζει επίπεδο.
+                auto zone = [&] (float x, const String& tip, std::function<void()> fn)
                 {
-                    const Rectangle<float> r (x - R, ly - R, 2.0f * R, 2.0f * R);
-                    g.setColour (on ? c : Colour (0xff3a3430));
-                    g.fillEllipse (r);
-                    glyph (r, on ? Colour (0xff262220) : Colour (0xff6b625a));
+                    const Rectangle<float> r (x - R, ly - R - 2.0f, 2.0f * R + valW, 2.0f * R + 4.0f);
+                    hot.push_back ({ r, fn });
+                    tipZones.push_back ({ r, tip });
                 };
-
                 const bool aOn = mode != 0 && ! paused;
                 const double pul = ready ? hobby::pulse (Time::getMillisecondCounterHiRes() * 0.001 * 1.5) : 0.0;
-                lamp (lx, aOn, mode == 2 ? hobby::mix (hobby::kLilac, Colours::white, (float) pul * 0.6f) : hobby::kOn,
-                      [&] (Rectangle<float> r, Colour c)
-                      {
-                          g.setColour (c);
-                          g.setFont (hobby::makeFont (typeface, 12.0f));
-                          g.drawText ("A", r, Justification::centred, false);
-                      });
+
+                {   // A: ανίχνευση επανάληψης
+                    const Colour c = aOn ? (mode == 2 ? hobby::mix (hobby::kLilac, Colours::white, (float) pul * 0.6f) : hobby::kOn) : Colour (0xff6b625a);
+                    g.setColour (c);
+                    g.setFont (hobby::makeFont (typeface, 16.0f));
+                    g.drawText ("A", Rectangle<float> (lx - R, ly - R, 2.0f * R, 2.0f * R), Justification::centred, false);
+                    zone (lx, String::fromUTF8 ("Αυτόματη ανίχνευση επανάληψης: Off → Auto (ξεκινά μόνη) → με πάτημα Rec MIDI loop"),
+                          [this] { engine.autoLoop = (engine.autoLoop.load() + 1) % 3; if (onMetroChange) onMetroChange(); });
+                }
                 lx += 2.0f * R + 14.0f;
 
-                lamp (lx, true, hobby::kPeach,
-                      [&] (Rectangle<float> r, Colour c)
-                      {
-                          g.setColour (c);
-                          for (float dy : { -2.4f, 2.4f })
-                          {
-                              Path p;
-                              p.startNewSubPath (r.getCentreX() - 5.0f, r.getCentreY() + dy);
-                              p.cubicTo (r.getCentreX() - 2.5f, r.getCentreY() + dy - 2.5f, r.getCentreX() - 1.2f, r.getCentreY() + dy - 2.5f, r.getCentreX(), r.getCentreY() + dy);
-                              p.cubicTo (r.getCentreX() + 1.2f, r.getCentreY() + dy + 2.5f, r.getCentreX() + 2.5f, r.getCentreY() + dy + 2.5f, r.getCentreX() + 5.0f, r.getCentreY() + dy);
-                              g.strokePath (p, PathStrokeType (1.4f, PathStrokeType::curved, PathStrokeType::rounded));
-                          }
-                      });
-                if (showVals)
-                {
-                    g.setColour (hobby::kIconGrey);
-                    g.setFont (hobby::makeFont (typeface, 11.0f));
-                    g.drawText (String ((double) engine.tapMs.load() / 1000.0, 1) + "s", (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
+                {   // ≈: αναμονή πατημάτων πεταλιού
+                    const Rectangle<float> r (lx - R, ly - R, 2.0f * R, 2.0f * R);
+                    g.setColour (hobby::kPeach);
+                    for (float dy : { -2.4f, 2.4f })
+                    {
+                        Path p;
+                        p.startNewSubPath (r.getCentreX() - 6.0f, r.getCentreY() + dy);
+                        p.cubicTo (r.getCentreX() - 3.0f, r.getCentreY() + dy - 3.0f, r.getCentreX() - 1.4f, r.getCentreY() + dy - 3.0f, r.getCentreX(), r.getCentreY() + dy);
+                        p.cubicTo (r.getCentreX() + 1.4f, r.getCentreY() + dy + 3.0f, r.getCentreX() + 3.0f, r.getCentreY() + dy + 3.0f, r.getCentreX() + 6.0f, r.getCentreY() + dy);
+                        g.strokePath (p, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
+                    }
+                    if (showVals)
+                    {
+                        g.setColour (hobby::kIconGrey);
+                        g.setFont (hobby::makeFont (typeface, 11.0f));
+                        g.drawText (String ((double) engine.tapMs.load() / 1000.0, 1) + "s", (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
+                    }
+                    zone (lx, String::fromUTF8 ("Αναμονή πατημάτων πεταλιού (0.5 / 0.7 / 1.0 δευτ.)"),
+                          [this] { const int t = engine.tapMs.load(); engine.tapMs = t < 600 ? 700 : t < 900 ? 1000 : 500; if (onMetroChange) onMetroChange(); });
                 }
                 lx += 2.0f * R + valW + 14.0f;
 
-                lamp (lx, snap != 0, hobby::kLilac,
-                      [&] (Rectangle<float> r, Colour c)
-                      {
-                          g.setColour (c);
-                          const float a = 2.6f, b = 5.0f;
-                          g.fillRect (r.getCentreX() - a - 0.7f, r.getCentreY() - b, 1.4f, 2.0f * b);
-                          g.fillRect (r.getCentreX() + a - 0.7f, r.getCentreY() - b, 1.4f, 2.0f * b);
-                          g.fillRect (r.getCentreX() - b, r.getCentreY() - a - 0.7f, 2.0f * b, 1.4f);
-                          g.fillRect (r.getCentreX() - b, r.getCentreY() + a - 0.7f, 2.0f * b, 1.4f);
-                      });
-                if (showVals)
-                {
-                    g.setColour (hobby::kIconGrey);
-                    g.setFont (hobby::makeFont (typeface, 11.0f));
-                    g.drawText (snap == 0 ? String ("Off") : snap == 1 ? String ("1/8") : String ("1/16"), (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
+                {   // #: quantize νοτών
+                    const Rectangle<float> r (lx - R, ly - R, 2.0f * R, 2.0f * R);
+                    g.setColour (snap != 0 ? hobby::kLilac : Colour (0xff6b625a));
+                    const float a = 2.8f, b = 6.0f;
+                    g.fillRect (r.getCentreX() - a - 0.8f, r.getCentreY() - b, 1.6f, 2.0f * b);
+                    g.fillRect (r.getCentreX() + a - 0.8f, r.getCentreY() - b, 1.6f, 2.0f * b);
+                    g.fillRect (r.getCentreX() - b, r.getCentreY() - a - 0.8f, 2.0f * b, 1.6f);
+                    g.fillRect (r.getCentreX() - b, r.getCentreY() + a - 0.8f, 2.0f * b, 1.6f);
+                    if (showVals)
+                    {
+                        g.setColour (hobby::kIconGrey);
+                        g.setFont (hobby::makeFont (typeface, 11.0f));
+                        g.drawText (snap == 0 ? String ("Off") : snap == 1 ? String ("1/8") : String ("1/16"), (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
+                    }
+                    zone (lx, String::fromUTF8 ("Quantize νοτών στη λούπα: Off → 1/8 → 1/16"),
+                          [this] { engine.snapQ = (engine.snapQ.load() + 1) % 3; if (onMetroChange) onMetroChange(); });
                 }
             }
             g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
@@ -702,6 +719,14 @@ public:
             onSelect (list[i].getIntValue());
     }
 
+    String getTooltip() override
+    {
+        const auto p = getMouseXYRelative().toFloat();
+        for (auto& z : tipZones)
+            if (z.first.contains (p)) return z.second;
+        return {};
+    }
+
     void mouseDrag (const MouseEvent& e) override { if (draggingMetro) setMetroLevelFromX (e.position.x); }
     void mouseUp (const MouseEvent&) override { if (draggingMetro) { draggingMetro = false; if (onMetroChange) onMetroChange(); } }
 
@@ -714,6 +739,7 @@ private:
 
     Rectangle<float> metroSliderRect;
     bool draggingMetro = false;
+    std::vector<std::pair<Rectangle<float>, String>> tipZones;   // μπαλούν βοήθειας ανά φωτάκι
     flow::Engine& engine;
     const int& selected;
     Typeface::Ptr typeface;
