@@ -177,6 +177,16 @@ public:
         for (int i = 0; i < flow::numControls; ++i)
             engine.mapCode[(size_t) i] = settings->getIntValue ("ctl" + String (i), 0);
 
+        for (auto& row : knobParam) row.fill (-1);
+        for (int k = 0; k < 8; ++k)
+        {
+            engine.knobCc[(size_t) k] = settings->getIntValue ("knobcc" + String (k), 0);
+            engine.knobIn[(size_t) k] = -1.0f;
+        }
+        loopsView.onKnobClick = [this] (int k) { return knobClick (k); };
+        loopsView.onKnobDrag = [this] (int k, float v) { knobDragged (k, v); };
+        loopsView.knobTip = [this] (int k) { return knobTipText (k); };
+
         const String savedFolder = settings->getValue ("tapeFolder");
         engine.recorder.setFolder (savedFolder.isNotEmpty() ? File (savedFolder)
                                                             : File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow"));
@@ -214,6 +224,7 @@ public:
 
     ~MainComponent() override
     {
+        stopKnobLearn();
         lightsPump.stopTimer();
         stopTimer();
         dockTimer.stopTimer();
@@ -508,7 +519,7 @@ private:
     //==========================================================================
     // γεωμετρία παραθύρου: μία στήλη (κεφαλίδα, οθόνη loops, κουμπιά, πλήκτρα). Τα plugin ανοίγουν σε δικά τους παράθυρα.
     static constexpr int topH = 14, botH = 14, gapPx = 8, sideM = 11, headerBarH = 34;
-    static constexpr int minLoopsH = 160, stripH = 72, keysH = 120, minContentW = 724, defaultLoopsH = 250;
+    static constexpr int minLoopsH = 270, stripH = 72, keysH = 120, minContentW = 724, defaultLoopsH = 390;
     static constexpr int minContentH() { return minLoopsH + gapPx + stripH + gapPx + keysH; }
     static constexpr int chromeH() { return topH + headerBarH + gapPx + botH; }
     static constexpr int minWinW() { return minContentW + 2 * sideM; }
@@ -931,6 +942,128 @@ private:
     int statTicks = 0, statWindows = 0, lastXRuns = -1;
     bool lightsTried = false;
     int learnMode = 0;
+
+    // ποτενσιόμετρα: knobParam[block][θέση] = δείκτης παραμέτρου του plugin (-1 = καμία)
+    std::array<std::array<int, 8>, flow::numBlocks> knobParam;
+    int knobStage = 0, knobSlot = -1;   // 1 = περιμένει να κουνηθεί παράμετρος στο plugin, 2 = περιμένει φυσικό κουμπί
+    uint32 knobStageStart = 0;
+
+    struct ParamWatch : AudioProcessorParameter::Listener
+    {
+        AudioPluginInstance* plugin = nullptr;
+        std::atomic<int> touched { -1 };
+        uint32 ignoreUntil = 0;
+        void attach (AudioPluginInstance* p)
+        {
+            detach();
+            plugin = p; touched = -1; ignoreUntil = Time::getMillisecondCounter() + 400;
+            for (auto* prm : p->getParameters()) prm->addListener (this);
+        }
+        void detach()
+        {
+            if (plugin != nullptr) for (auto* prm : plugin->getParameters()) prm->removeListener (this);
+            plugin = nullptr;
+        }
+        void parameterValueChanged (int i, float) override { hit (i); }
+        void parameterGestureChanged (int i, bool starting) override { if (starting) hit (i); }
+        void hit (int i) { if (Time::getMillisecondCounter() >= ignoreUntil && touched.load() < 0) touched = i; }
+        ~ParamWatch() override { detach(); }
+    } paramWatch;
+
+    void stopKnobLearn()
+    {
+        paramWatch.detach();
+        if (knobStage != 0) engine.knobLearnSlot = -1;
+        knobStage = 0; knobSlot = -1;
+    }
+
+    bool knobClick (int k)
+    {
+        if (learnMode == 0) return false;
+        if (! isActive (selected)) { setMessage (gr ("Διάλεξε πρώτα block με plugin")); return true; }
+        if (learnMode == 2)
+        {
+            knobParam[(size_t) selected][(size_t) k] = -1;
+            engine.knobCc[(size_t) k] = 0;
+            learnMode = 0; stopKnobLearn();
+            setMessage (gr ("Ποτενσιόμετρο ") + String (k + 1) + " " + String::fromUTF8 ("â"));
+            saveNow(); updateToolLamps();
+            return true;
+        }
+        auto* p = engine.getPlugin (selected);
+        if (p == nullptr || p->getParameters().isEmpty()) { setMessage (gr ("Αυτό το plugin δεν δείχνει παραμέτρους")); return true; }
+        stopKnobLearn();
+        engine.cancelLearns();
+        knobStage = 1; knobSlot = k; knobStageStart = Time::getMillisecondCounter();
+        paramWatch.attach (p);
+        setMessage (gr ("Κούνησε μια παράμετρο στο παράθυρο του plugin"));
+        return true;
+    }
+
+    void knobDragged (int k, float v)
+    {
+        auto* p = engine.getPlugin (selected);
+        const int idx = knobParam[(size_t) selected][(size_t) k];
+        if (p == nullptr || idx < 0 || idx >= p->getParameters().size()) return;
+        p->getParameters()[idx]->setValueNotifyingHost (v);
+    }
+
+    String knobTipText (int k)
+    {
+        auto* p = engine.getPlugin (selected);
+        const int idx = knobParam[(size_t) jlimit (0, flow::numBlocks - 1, selected)][(size_t) k];
+        const int cc = engine.knobCc[(size_t) k].load();
+        String s = gr ("Ποτενσιόμετρο ") + String (k + 1);
+        if (p != nullptr && idx >= 0 && idx < p->getParameters().size())
+            s << ": " << p->getParameters()[idx]->getName (40);
+        else
+            s << gr (": ελεύθερο (◎ και πάτημα εδώ για ανάθεση)");
+        if (cc != 0) s << "  Â·  " << pedalCodeText (cc);
+        return s;
+    }
+
+    void knobTick()
+    {
+        auto* p = isActive (selected) ? engine.getPlugin (selected) : nullptr;
+
+        if (knobStage != 0)
+        {
+            if (p == nullptr || (knobStage == 1 && paramWatch.plugin != p) || Time::getMillisecondCounter() - knobStageStart > 30000)
+            {
+                stopKnobLearn(); learnMode = 0; setMessage (gr ("Η ανάθεση ποτενσιομέτρου ακυρώθηκε")); updateToolLamps();
+            }
+            else if (knobStage == 1 && paramWatch.touched.load() >= 0)
+            {
+                knobParam[(size_t) selected][(size_t) knobSlot] = paramWatch.touched.load();
+                paramWatch.detach();
+                knobStage = 2; knobStageStart = Time::getMillisecondCounter();
+                engine.knobLearnedSlot = -1;
+                engine.knobLearnSlot = knobSlot;
+                setMessage (gr ("Κούνησε τώρα το φυσικό ποτενσιόμετρο"));
+            }
+            else if (knobStage == 2 && engine.knobLearnedSlot.load() >= 0)
+            {
+                const int ks = engine.knobLearnedSlot.exchange (-1);
+                setMessage (gr ("Ποτενσιόμετρο ") + String (ks + 1) + " " + String::fromUTF8 ("â") + " " + pedalCodeText (engine.knobCc[(size_t) ks].load()));
+                knobStage = 0; knobSlot = -1; learnMode = 0;
+                saveNow(); updateToolLamps();
+            }
+        }
+
+        std::array<LoopsView::KnobState, 8> st;
+        for (int k = 0; k < 8; ++k)
+        {
+            const float in = engine.knobIn[(size_t) k].exchange (-1.0f);
+            const int idx = p != nullptr ? knobParam[(size_t) selected][(size_t) k] : -1;
+            if (p != nullptr && idx >= 0 && idx < p->getParameters().size())
+            {
+                auto* prm = p->getParameters()[idx];
+                if (in >= 0.0f) prm->setValueNotifyingHost (in);
+                st[(size_t) k] = { true, prm->getValue() };
+            }
+        }
+        loopsView.setKnobs (st, knobStage != 0 ? knobSlot : -1, learnMode);
+    }
     bool learnClick (int ctl)
     {
         if (learnMode == 0) return false;
@@ -989,7 +1122,7 @@ private:
         l.push_back ({ String::fromUTF8 ("\xe2\x86\x94"), engine.lengthQ.load() != 0 ? hobby::kOn : hobby::kIconGrey, true, false,
                        [this, q3] { q3 (engine.lengthQ, "Length quantize", "Off", "beat", "bar (4/4)"); }, gr ("Length quantize: η διάρκεια της λούπας σε ολόκληρα beat ή μέτρα") });
         l.push_back ({ String::fromUTF8 ("\xe2\x97\x8e"), learnMode == 0 ? hobby::kIconGrey : learnMode == 1 ? hobby::kOn : hobby::kRed, true, false,
-                       [this] { learnMode = (learnMode + 1) % 3; if (learnMode == 1) setMessage (gr ("Πάτησε το κουμπί που θέλεις να αναθέσεις σε πετάλι")); updateToolLamps(); },
+                       [this] { learnMode = (learnMode + 1) % 3; stopKnobLearn(); if (learnMode == 1) setMessage (gr ("Πάτησε το κουμπί ή ποτενσιόμετρο που θέλεις να αναθέσεις")); updateToolLamps(); },
                        gr ("MIDI learn: πράσινο = ανάθεση πεταλιού, κόκκινο = σβήσιμο ανάθεσης") });
         loopsView.setToolLamps (std::move (l));
     }
@@ -1282,8 +1415,10 @@ private:
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
             engine.transpose[(size_t) block] = 0;
+            knobParam[(size_t) block].fill (-1);
         }
 
+        stopKnobLearn();
         auto old = engine.swapPlugin (block, std::move (instance), captureZone);
         if (old != nullptr) stateCache.erase (old.get());
         old.reset();
@@ -1437,6 +1572,7 @@ private:
         if (! isActive (block)) return;
 
         closeEditor();
+        stopKnobLearn();
 
         auto extras = engine.takeExtras (block);
         for (auto& p : extras) stateCache.erase (p.get());
@@ -1454,6 +1590,7 @@ private:
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
         engine.transpose[(size_t) block] = 0;
+        knobParam[(size_t) block].fill (-1);
 
         if (selected == block)
         {
@@ -1896,6 +2033,11 @@ private:
             e->setAttribute ("vol", (double) engine.volPos[(size_t) b].load());
             e->setAttribute ("vmap", engine.volMap[(size_t) b].load());
             e->setAttribute ("tr", engine.transpose[(size_t) b].load());
+            {
+                StringArray kp;
+                for (int k = 0; k < 8; ++k) kp.add (String (knobParam[(size_t) b][(size_t) k]));
+                e->setAttribute ("knobs", kp.joinIntoString (","));
+            }
 
             pluginElement (*e, "Instrument", engine.getPlugin (b), fresh);
             if (auto* m = engine.getMidiFx (b)) pluginElement (*e, "MidiFx", m, fresh);
@@ -2045,6 +2187,12 @@ private:
             engine.volPos[(size_t) slot]    = (float) jlimit (0.0, 1.0, e->getDoubleAttribute ("vol", 1.0));
             engine.volMap[(size_t) slot]    = e->getIntAttribute ("vmap", 0);
             {
+                StringArray kp;
+                kp.addTokens (e->getStringAttribute ("knobs"), ",", "");
+                for (int k = 0; k < 8; ++k)
+                    knobParam[(size_t) slot][(size_t) k] = kp.size() == 8 ? jmax (-1, kp[k].getIntValue()) : -1;
+            }
+            {
                 const int trLoaded = jlimit (-48, 48, e->getIntAttribute ("tr", 0));
                 engine.transpose[(size_t) slot] = ((trLoaded + (trLoaded >= 0 ? 6 : -6)) / 12) * 12;   // παλιά sets: στρογγυλοποίηση στην πλησιέστερη οκτάβα
             }
@@ -2188,6 +2336,8 @@ private:
 
         for (int i = 0; i < flow::numControls; ++i)
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
+        for (int k = 0; k < 8; ++k)
+            settings->setValue ("knobcc" + String (k), engine.knobCc[(size_t) k].load());
 
         if (pendingLoads == 0)    // όσο φορτώνονται plugins δεν αντικαθιστούμε το session (θα χανόταν ό,τι δεν έχει φορτώσει ακόμη)
         {
@@ -2404,6 +2554,7 @@ private:
         loopsView.title = header.title; loopsView.chordName = header.chordName; loopsView.notice = header.notice;
         loopsView.noticeColour = header.noticeColour; loopsView.cpu = cpuSmooth;
         updateToolLamps();
+        knobTick();
 
         loopsView.repaint();
         keyboardView.repaint();

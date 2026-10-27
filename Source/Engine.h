@@ -124,6 +124,10 @@ namespace flow
         std::array<std::atomic<int>, numControls> mapCode;   // MIDI learn πεταλιών / πλήκτρων
         std::atomic<int> mapLearnTarget { -1 }, learnedCount { 0 }, learnedTarget { -1 }, learnedCode { 0 };
         std::atomic<int> volLearn { -1 }, volLearnedCount { 0 }, volLearnedBlock { -1 }, volLearnedCode { 0 };
+        // 8 φυσικά ποτενσιόμετρα (CC): κωδικός ανά θέση (0 = καμία ανάθεση), τιμή που περιμένει το UI (-1 = τίποτα), learn
+        std::array<std::atomic<int>, 8> knobCc {};
+        std::array<std::atomic<float>, 8> knobIn {};
+        std::atomic<int> knobLearnSlot { -1 }, knobLearnedSlot { -1 };
         std::atomic<int> sceneRequest { -1 };   // από πετάλι: -2 = προηγούμενη, -3 = επόμενη (το διαβάζει το UI)
         std::atomic<int> selectedBlock { 0 };   // το block στο οποίο δρουν Hold και looper
         std::atomic<int> lastPlayed { -1 };     // το block που έπαιξες τελευταίο: εκεί γράφει το Rec MIDI loop από πετάλι
@@ -278,7 +282,7 @@ namespace flow
         }
 
         void startVolumeLearn (int b) { mapLearnTarget = -1; volLearn = b; }
-        void cancelLearns()           { mapLearnTarget = -1; volLearn = -1; }
+        void cancelLearns()           { mapLearnTarget = -1; volLearn = -1; knobLearnSlot = -1; }
 
         double getSampleRate() const { return sampleRate.load(); }
 
@@ -1154,6 +1158,26 @@ namespace flow
             if (kind == 0) return false;
 
             const int code = (kind << 16) | (msg.getChannel() << 8) | num;
+
+            // ποτενσιόμετρα: learn (πρώτο CC που κινείται) και κανονική λειτουργία (η τιμή περνά στο UI, το plugin δεν παίρνει το CC)
+            if (kind == 2)
+            {
+                const float kv = (float) msg.getControllerValue() / 127.0f;
+                const int ks = knobLearnSlot.load();
+                if (ks >= 0 && ks < 8)
+                {
+                    for (int k = 0; k < 8; ++k)
+                        if (knobCc[(size_t) k].load() == code) knobCc[(size_t) k] = 0;
+                    knobCc[(size_t) ks] = code;
+                    knobIn[(size_t) ks] = kv;
+                    knobLearnedSlot = ks;
+                    knobLearnSlot = -1;
+                    ++changeCount;
+                    return true;
+                }
+                for (int k = 0; k < 8; ++k)
+                    if (knobCc[(size_t) k].load() == code) { knobIn[(size_t) k] = kv; return true; }
+            }
 
             // MIDI learn πεταλιού έντασης: η πρώτη κίνηση ενός CC το αναθέτει στο block
             const int vl = volLearn.load();

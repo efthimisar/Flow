@@ -339,6 +339,26 @@ public:
     PluginListView& getList() { return list; }
 
     std::function<void()> onMetroChange;
+
+    // 8 ποτενσιόμετρα κάτω στην οθόνη (ανάθεση σε παραμέτρους του επιλεγμένου block)
+    struct KnobState { bool bound = false; float value = 0.0f; };
+    std::array<KnobState, 8> knobs;
+    int knobLearning = -1;      // θέση που περιμένει learn (αναβοσβήνει)
+    int learnVisual = 0;        // 0 κανονικά, 1 πράσινο (ανάθεση), 2 κόκκινο (σβήσιμο)
+    std::function<bool (int)> onKnobClick;            // true = το κλικ το πήρε το learn
+    std::function<void (int, float)> onKnobDrag;      // νέα τιμή 0..1 από το ποντίκι
+    std::function<String (int)> knobTip;
+    static constexpr int knobAreaH = 104;
+    static constexpr int stripY = 16;                 // λωρίδα λαμπακιών κάτω από την progress bar
+    void setKnobs (const std::array<KnobState, 8>& k, int learning, int visual)
+    {
+        bool same = learning == knobLearning && visual == learnVisual;
+        for (size_t i = 0; same && i < 8; ++i)
+            same = k[i].bound == knobs[i].bound && std::abs (k[i].value - knobs[i].value) < 0.004f;
+        if (same) return;
+        knobs = k; knobLearning = learning; learnVisual = visual;
+        repaint (0, getHeight() - knobAreaH, getWidth(), knobAreaH);
+    }
     std::function<bool()> metroIsCustom;   // έχει φορτωθεί δικός ήχος μετρονόμου;
     std::function<void (int)> onMetroSample;   // 1 = διάλεξε ήχο, 2 = αρχικός ήχος
 
@@ -373,8 +393,8 @@ public:
 
     void resized() override
     {
-        list.setBounds (0, 0, getWidth(), jmax (60, getHeight() - 38));
-        const int by = getHeight() - 22 - 7;
+        list.setBounds (0, 44, getWidth(), jmax (60, getHeight() - 44 - knobAreaH - 4));
+        const int by = stripY;
         tempoBox.setBounds (getWidth() / 2 - 150, by, 100, 22);
         tapDot.setBounds (tempoBox.getRight() + 8, by, 22, 22);
         tempoBox.setVisible (metroStrip);
@@ -408,7 +428,7 @@ public:
         const auto list = activeBlocks (engine);
         const int count = list.size();
         const int top = 48;
-        const int room = jmax (40, getHeight() - top - 12 - 26);   // το ύψος της οθόνης loops αλλάζει με το plugin
+        const int room = jmax (40, getHeight() - top - 12 - knobAreaH);   // το ύψος της οθόνης loops αλλάζει με το plugin
         const int step = count > 0 ? jmin (44, room / count) : 44;
         const int laneH = jmax (6, step - 6);
         const float laneX = 14.0f, laneW = (float) (w - 14) - laneX;
@@ -509,23 +529,20 @@ public:
 
         // κάτω λωρίδα ενδείξεων
         {
-            const float sh = 22.0f, sy = (float) getHeight() - sh - 6.0f;
-            g.setFont (hobby::makeFont (typeface, 16.0f));
-            g.setColour (hobby::kText);
-            g.drawText (title, 14, (int) sy, w / 2 - 150, (int) sh, Justification::centredLeft, false);
+            const float sh = 22.0f, sy = (float) stripY;
             const float cx = (float) w * 0.5f;
             const bool showRec = recording >= 0 || taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error;
             hot.clear();
             tipZones.clear();
-            const float titleW = std::ceil (textWidth (g.getCurrentFont(), title));
-            float chordX = 14.0f + titleW + 14.0f;
+            const float titleW = 0.0f;   // ο τίτλος του block είναι πια πάνω από τα ποτενσιόμετρα
+            float chordX = 14.0f;
             // διάταξη: τα σύμβολα σπρώχνουν το ένα το άλλο. Αν δεν χωράνε όλα, πρώτα φεύγουν οι τιμές δεξιά, μετά το CPU.
-            const float chordW = chordName.isNotEmpty() ? std::ceil (textWidth (hobby::makeFont (typeface, 16.0f), chordName)) + 14.0f : 0.0f;
+            const float chordW = 0.0f;   // η συγχορδία γράφεται δίπλα στον τίτλο του block
             const float toolsW = (float) tools.size() * 26.0f;
             auto needed = [&] (bool cpuOn, bool valsOn)
             {
                 const float right = 3.0f * 18.0f + 28.0f + (valsOn ? 60.0f : 0.0f) + 44.0f;
-                return 14.0f + titleW + 14.0f + chordW + (cpuOn ? 150.0f : 0.0f) + 16.0f + toolsW + 16.0f + right;
+                return 14.0f + titleW + chordW + (cpuOn ? 150.0f : 0.0f) + 16.0f + toolsW + 16.0f + right;
             };
             const bool cpuAllowed = ! metroStrip && notice.isEmpty() && ! showRec;
             bool layoutCpu = true, layoutVals = true;
@@ -548,12 +565,6 @@ public:
                 g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (c0 + 100.0f, sy, 40.0f, sh), Justification::centredLeft, false);
                 tipZones.push_back ({ Rectangle<float> (c0, sy, 140.0f, sh), String::fromUTF8 ("Φόρτος επεξεργαστή (CPU)") });
                 chordX = c0 + 150.0f;
-            }
-            if (chordName.isNotEmpty())
-            {
-                g.setFont (hobby::makeFont (typeface, 16.0f));
-                g.setColour (hobby::kLilac);
-                g.drawText (chordName, (int) chordX, (int) sy, 140, (int) sh, Justification::centredLeft, false);
             }
             if (metroStrip)
             {
@@ -618,7 +629,7 @@ public:
             else
             {
                 // λάμπες εργαλείων στη μέση: σκέτα σύμβολα, φωτίζουν ή σβήνουν. Το μπαλούν λέει τι κάνει η καθεμία.
-                const float leftEnd = 14.0f + titleW + 14.0f + chordW + (showCpu ? 150.0f : 0.0f);
+                const float leftEnd = 14.0f + titleW + chordW + (showCpu ? 150.0f : 0.0f);
                 const float rightStart = (float) w - 44.0f - (3.0f * 18.0f + 28.0f + (layoutVals ? 60.0f : 0.0f));
                 float tx = jmin (jmax (cx - toolsW * 0.5f, leftEnd + 16.0f), rightStart - 16.0f - toolsW) + 13.0f;
                 for (auto& tl : tools)
@@ -713,6 +724,102 @@ public:
             g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
             g.fillEllipse ((float) w - 24.0f, sy + sh * 0.5f - 3.5f, 7.0f, 7.0f);
         }
+
+        paintKnobs (g);
+    }
+
+    Point<float> knobCentre (int k) const
+    {
+        const float cw = (float) (getWidth() - 28) / 8.0f;
+        return { 14.0f + cw * ((float) k + 0.5f), (float) getHeight() - 14.0f - knobR };
+    }
+
+    int knobAt (Point<float> p) const
+    {
+        for (int k = 0; k < 8; ++k)
+            if (p.getDistanceFrom (knobCentre (k)) <= knobR + 4.0f) return k;
+        return -1;
+    }
+
+    // κουκκιδωτή υφή: φωτεινά 2x2 pixel με σκοτεινά κενά
+    static const Image& dotGaps()
+    {
+        static Image tex = [] { Image im (Image::ARGB, 3, 3, true);
+                                for (int y = 0; y < 3; ++y) for (int x = 0; x < 3; ++x)
+                                    if (x == 2 || y == 2) im.setPixelAt (x, y, Colours::black.withAlpha (0.42f));
+                                return im; }();
+        return tex;
+    }
+
+    void paintKnobs (Graphics& g)
+    {
+        const int w = getWidth(), h = getHeight();
+        const float sepY = (float) (h - knobAreaH);
+        g.setColour (Colour (0xff3a3430));
+        g.fillRect (14.0f, sepY, (float) (w - 28), 1.0f);
+
+        // τίτλος block και συγχορδία πάνω από τα ποτενσιόμετρα
+        g.setFont (hobby::makeFont (typeface, 16.0f));
+        g.setColour (hobby::kText);
+        const float titleW = std::ceil (textWidth (g.getCurrentFont(), title));
+        g.drawText (title, 14, (int) sepY + 6, (int) titleW + 4, 22, Justification::centredLeft, false);
+        if (chordName.isNotEmpty())
+        {
+            g.setColour (hobby::kLilac);
+            g.drawText (chordName, 14 + (int) titleW + 18, (int) sepY + 6, 160, 22, Justification::centredLeft, false);
+        }
+
+        const Colour dash = blockLight (jlimit (0, flow::numBlocks - 1, selected));
+        const double nowMs = Time::getMillisecondCounterHiRes();
+        for (int k = 0; k < 8; ++k)
+        {
+            const auto c = knobCentre (k);
+            const float R = knobR;
+            const auto& ks = knobs[(size_t) k];
+            const float v = jlimit (0.0f, 1.0f, ks.value);
+            const Rectangle<float> disc (c.x - R, c.y - R, 2.0f * R, 2.0f * R);
+
+            Path circle; circle.addEllipse (disc);
+            g.setColour (Colour (0xff3a3430).withAlpha (ks.bound ? 1.0f : 0.55f));
+            g.fillPath (circle);
+
+            if (ks.bound && v > 0.001f)
+            {
+                Path pie;
+                const float a0 = MathConstants<float>::pi * -0.75f;
+                pie.addPieSegment (disc, a0, a0 + MathConstants<float>::pi * 1.5f * v, 0.0f);
+                g.setColour (Colour (0xff6b625a).interpolatedWith (Colour (0xffcfc9c0), v));
+                g.fillPath (pie);
+            }
+            g.saveState();
+            g.reduceClipRegion (circle);
+            g.setTiledImageFill (dotGaps(), 0, 0, 1.0f);
+            g.fillRect (disc);
+            g.restoreState();
+
+            if (ks.bound)
+            {
+                const float ang = MathConstants<float>::pi * (-0.75f + 1.5f * v) - MathConstants<float>::halfPi;
+                const Point<float> p0 (c.x + R * 0.55f * std::cos (ang), c.y + R * 0.55f * std::sin (ang));
+                const Point<float> p1 (c.x + (R - 1.0f) * std::cos (ang), c.y + (R - 1.0f) * std::sin (ang));
+                g.setColour (dash);
+                g.drawLine (Line<float> (p0, p1), 3.0f);
+            }
+
+            // learn: δαχτυλίδι γύρω από κάθε ποτενσιόμετρο (πράσινο ανάθεση, κόκκινο σβήσιμο), αναβοσβήνει εκείνο που περιμένει
+            if (learnVisual != 0 || k == knobLearning)
+            {
+                const bool waiting = k == knobLearning;
+                const float a = waiting ? 0.35f + 0.65f * (float) hobby::pulse (nowMs * 0.001 * 2.0) : 0.55f;
+                g.setColour ((learnVisual == 2 ? hobby::kRed : hobby::kOn).withAlpha (a));
+                g.drawEllipse (disc.expanded (3.0f), 1.6f);
+            }
+            if (knobTip)
+            {
+                const auto tip = knobTip (k);
+                if (tip.isNotEmpty()) tipZones.push_back ({ disc.expanded (3.0f), tip });
+            }
+        }
     }
 
     void mouseDown (const MouseEvent& e) override
@@ -726,6 +833,15 @@ public:
         }
         for (auto& h : hot)
             if (h.first.contains (e.position)) { h.second(); repaint(); return; }
+        {
+            const int k = knobAt (e.position);
+            if (k >= 0)
+            {
+                if (onKnobClick && onKnobClick (k)) { repaint(); return; }
+                if (knobs[(size_t) k].bound) { dragKnob = k; dragStartY = e.position.y; dragStartVal = knobs[(size_t) k].value; }
+                return;
+            }
+        }
         if (stepOut <= 0) return;
         const auto list = activeBlocks (engine);
         const int i = (e.y - topOut) / stepOut;
@@ -741,8 +857,18 @@ public:
         return {};
     }
 
-    void mouseDrag (const MouseEvent& e) override { if (draggingMetro) setMetroLevelFromX (e.position.x); }
-    void mouseUp (const MouseEvent&) override { if (draggingMetro) { draggingMetro = false; if (onMetroChange) onMetroChange(); } }
+    void mouseDrag (const MouseEvent& e) override
+    {
+        if (draggingMetro) setMetroLevelFromX (e.position.x);
+        else if (dragKnob >= 0 && onKnobDrag)
+        {
+            const float nv = jlimit (0.0f, 1.0f, dragStartVal + (dragStartY - e.position.y) / 160.0f);
+            knobs[(size_t) dragKnob].value = nv;
+            onKnobDrag (dragKnob, nv);
+            repaint (0, getHeight() - knobAreaH, getWidth(), knobAreaH);
+        }
+    }
+    void mouseUp (const MouseEvent&) override { dragKnob = -1; if (draggingMetro) { draggingMetro = false; if (onMetroChange) onMetroChange(); } }
 
 private:
     void setMetroLevelFromX (float px)
@@ -753,6 +879,9 @@ private:
 
     Rectangle<float> metroSliderRect;
     bool draggingMetro = false;
+    int dragKnob = -1;
+    float dragStartY = 0.0f, dragStartVal = 0.0f;
+    static constexpr float knobR = 24.0f;
     std::vector<std::pair<Rectangle<float>, String>> tipZones;   // μπαλούν βοήθειας ανά φωτάκι
     flow::Engine& engine;
     const int& selected;
