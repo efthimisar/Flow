@@ -2249,7 +2249,7 @@ private:
             setMessage (gr ("Πάτησε το πετάλι για: ") + controlName (i));
     }
 
-    void setMessage (const String& m) { message = m; messageTicks = 300; }
+    void setMessage (const String& m) { message = m; messageTicks = 60; }
 
     void refreshAll()
     {
