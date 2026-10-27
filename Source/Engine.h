@@ -143,6 +143,8 @@ namespace flow
         std::atomic<int> startQ { 1 }, lengthQ { 2 }, snapQ { 2 };   // startQ/lengthQ: 0 Off, 1 Beat, 2 Bar. snapQ: 0 Off, 1 = 1/8, 2 = 1/16
         std::atomic<int> tapRequest { 0 };
         std::atomic<int> afterFirst { 0 };      // μετά το πρώτο loop: 0 = Play, 1 = Overdub
+        std::atomic<int> statCalls { 0 }, statOver { 0 }, statOverFull { 0 };   // μετρήσεις callback ήχου (διαβάζονται κάθε λίγα δευτερόλεπτα από το Main)
+        std::atomic<float> statMaxCb { 0.0f }, statMaxLock { 0.0f }, statBudget { 0.0f };
         std::atomic<int> midiCount { 0 };       // μετρά τα μηνύματα MIDI που έρχονται (για την ένδειξη στην κεφαλίδα)
         std::atomic<int> tapActiveOut { 0 };
 
@@ -512,11 +514,31 @@ namespace flow
         {
             juce::ScopedNoDenormals noDenormals;
 
+            // μετρήσεις για τις διακοπές ήχου: συνολικός χρόνος του callback και πόσο περιμένει το κλείδωμα (π.χ. όταν η οθόνη το κρατά)
+            struct Probe
+            {
+                Engine& en; int n; const juce::int64 t0 = juce::Time::getHighResolutionTicks(); float lockWait = 0.0f;
+                Probe (Engine& e, int ns) : en (e), n (ns) {}
+                ~Probe()
+                {
+                    const double total = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0);
+                    const double budget = (double) n / std::max (1.0, en.sampleRate.load());
+                    en.statCalls.fetch_add (1);
+                    if ((float) total > en.statMaxCb.load()) en.statMaxCb = (float) total;
+                    if (lockWait > en.statMaxLock.load()) en.statMaxLock = lockWait;
+                    if (total > 0.8 * budget) en.statOver.fetch_add (1);
+                    if (total > budget) en.statOverFull.fetch_add (1);
+                    en.statBudget = (float) budget;
+                }
+            } probe (*this, numSamples);
+
             for (int c = 0; c < numOutputChannels; ++c)
                 juce::FloatVectorOperations::clear (outputChannelData[c], numSamples);
             numOutChannels = numOutputChannels;
 
+            const auto tLock0 = juce::Time::getHighResolutionTicks();
             const juce::ScopedLock sl (lock);
+            probe.lockWait = (float) juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - tLock0);
 
             const double sr = sampleRate.load();
             const int64_t gs = globalPos;

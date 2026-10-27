@@ -922,6 +922,7 @@ private:
         }
     }
 
+    int statTicks = 0, statWindows = 0, lastXRuns = -1;
     bool lightsTried = false;
     int learnMode = 0;
     bool learnClick (int ctl)
@@ -2373,6 +2374,25 @@ private:
         header.activeCircle = (master || panelMode == panelFx) ? panelIndex : -1;
         header.canAdd = (master || valid) && header.numCircles < maxFxPerChain;
         cpuSmooth = 0.85f * cpuSmooth + 0.15f * (float) deviceManager.getCpuUsage();
+
+        // μετρήσεις ήχου: γράφονται στο Flow-log (σημαντικά γεγονότα αμέσως, αλλιώς σύνοψη κάθε 60 s)
+        if (++statTicks >= 300)
+        {
+            statTicks = 0;
+            ++statWindows;
+            const int calls = engine.statCalls.exchange (0);
+            const int over = engine.statOver.exchange (0), full = engine.statOverFull.exchange (0);
+            const float maxCb = engine.statMaxCb.exchange (0.0f), maxLock = engine.statMaxLock.exchange (0.0f);
+            const float budget = engine.statBudget.load();
+            int xr = -1;
+            if (auto* dev = deviceManager.getCurrentAudioDevice()) xr = dev->getXRunCount();
+            const int xrDelta = (xr >= 0 && lastXRuns >= 0) ? xr - lastXRuns : 0;
+            lastXRuns = xr;
+            const bool notable = full > 0 || xrDelta > 0 || maxLock > 0.002f || maxCb > 0.6f * budget;
+            if (calls > 0 && (notable || statWindows % 6 == 0))
+                flow::flowLog (String::formatted ("ήχος: buffer %d, callbacks %d, μέγιστο %.2f ms από %.2f ms, >80%%: %d, >100%%: %d, μέγιστη αναμονή κλειδώματος %.2f ms, xruns +%d",
+                                                  currentBufferSize(), calls, maxCb * 1000.0f, budget * 1000.0f, over, full, maxLock * 1000.0f, xrDelta));
+        }
         header.cpu = cpuSmooth;
         header.repaint();
         loopsView.title = header.title; loopsView.chordName = header.chordName; loopsView.notice = header.notice;
