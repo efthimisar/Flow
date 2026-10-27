@@ -1592,7 +1592,8 @@ namespace flow
             const double rawElapsed = std::max (1.0e-6, beatNow - B.recStart);
             const double elapsed = std::max (1.0e-6, std::min (len, rawElapsed));
             // το μήκος στρογγυλεύτηκε στο πλησιέστερο μέτρο: αν η διαφορά είναι μέχρι ένα beat, οι νότες προσαρμόζονται αναλογικά
-            const double warp = (std::abs (rawElapsed - len) <= 1.0 && rawElapsed > 1.0e-3) ? len / rawElapsed : 1.0;
+            // χωρίς τέντωμα: οι νότες μένουν εκεί που τις έπαιξες. Αν σταμάτησες πριν το τέλος του μέτρου, η λούπα συμπληρώνεται με παύση.
+            const double warp = 1.0; juce::ignoreUnused (rawElapsed);
 
             for (int n = 0; n < 128; ++n)    // νότες που κρατιούνται όταν τελειώνει η ηχογράφηση σταματούν στο τέλος
                 if (B.recOpen[(size_t) n])
