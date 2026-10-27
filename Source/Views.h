@@ -482,7 +482,7 @@ public:
                 const double elapsed = jlimit (0.0, axisBeats, now - start);
                 if (elapsed > 0.0)
                 {
-                    const double p0 = std::fmod (start, axisBeats);
+                    const double p0 = std::fmod (start, 2.0 * flow::beatsPerBar);   // ο κύκλος 2 μέτρων ξεκινά στο τέρμα αριστερά (ο άξονας είναι 4+ μέτρα)
                     auto piece = [&] (double from, double len)
                     {
                         const float x = laneX + laneW * (float) (from / axisBeats);
