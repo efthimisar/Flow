@@ -433,7 +433,7 @@ public:
             const float by = 6.0f, bh = 5.0f;
             g.setColour (Colour (0xff3a3430));
             g.fillRoundedRectangle (laneX, by, laneW, bh, bh * 0.5f);
-            g.setColour (hobby::kRed);
+            g.setColour (Colour (0xffc9c3ba));   // φωτεινό γκρι (όχι κόκκινο)
             g.fillRoundedRectangle (laneX, by, jmax (bh, laneW * p), bh, bh * 0.5f);
             g.setColour (Colour (0xff6b625a));
             g.fillRect (laneX + laneW * 0.5f - 0.5f, by - 1.0f, 1.0f, bh + 2.0f);
