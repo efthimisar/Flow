@@ -214,6 +214,7 @@ public:
 
     ~MainComponent() override
     {
+        lightsPump.stopTimer();
         stopTimer();
         dockTimer.stopTimer();
         scanTimer.stopTimer();
@@ -806,6 +807,28 @@ private:
     // ◎ φωτάκι: πετάλι. 1ο πάτημα = ανάθεση (πράσινο): πάτα ένα κουμπί της εφαρμογής και μετά το πετάλι. 2ο = διαγραφή ανάθεσης (κόκκινο). 3ο = κλείνει.
     // ---- φώτα πλήκτρων Komplete Kontrol MK2: κάθε block παίρνει το χρώμα του, το ειδικό block ανάβει άσπρο στο πρώτο και στο τελευταίο πλήκτρο
     KeyLights keyLights;
+    // Το Komplete Kontrol plugin γράφει κι αυτό φώτα. Γρήγορο ρολόι (200 Hz) ξαναστέλνει τα δικά μας μόλις έρθει νότα και για ~1 s μετά.
+    CriticalSection lightsLock;
+    std::array<uint8_t, 88> lightsBuf {};
+    struct LightsPump : public HighResolutionTimer
+    {
+        std::function<void()> f;
+        void hiResTimerCallback() override { if (f) f(); }
+    } lightsPump;
+    int pumpMc = 0;
+    uint32 pumpBurstUntil = 0, pumpLast = 0;
+    void pumpLights()
+    {
+        const int mc = engine.midiCount.load();
+        const uint32 now = Time::getMillisecondCounter();
+        if (mc != pumpMc) { pumpMc = mc; pumpBurstUntil = now + 1200; }
+        if (now < pumpBurstUntil || now - pumpLast >= 100)
+        {
+            pumpLast = now;
+            const ScopedLock sl (lightsLock);
+            if (keyLights.isOn()) keyLights.sendKeys (lightsBuf.data(), 88);
+        }
+    }
     bool lightsWanted = false;
     int lightsTick = 0;
     std::array<uint8_t, 88> lastLights {};
@@ -815,14 +838,22 @@ private:
         lightsWanted = on;
         if (on)
         {
-            const bool ok = keyLights.start();
+            bool ok;
+            { const ScopedLock sl (lightsLock); ok = keyLights.start(); }
             flow::flowLog ("φώτα πλήκτρων: " + keyLights.getStatus());
             if (ok) setMessage (gr ("Φώτα πλήκτρων: ") + keyLights.getStatus());
-            if (ok) { lastLights.fill (0xff); updateLights (true); }
+            if (ok)
+            {
+                lastLights.fill (0xff);
+                updateLights (true);
+                lightsPump.f = [this] { pumpLights(); };
+                lightsPump.startTimer (5);
+            }
         }
         else
         {
-            keyLights.stop();
+            lightsPump.stopTimer();
+            { const ScopedLock sl (lightsLock); keyLights.stop(); }
             flow::flowLog ("φώτα πλήκτρων: κλειστά");
         }
         saveNow();
@@ -870,19 +901,21 @@ private:
                 if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);   // άσπρο
             }
 
-        // Το Komplete Kontrol plugin γράφει κι αυτό φώτα όταν πατάς πλήκτρο. Μόλις έρθει νότα, το Flow ξαναστέλνει τα δικά του για λίγο κάθε ~33 ms, μετά κάθε ~0.25 s.
-        const int mc = engine.midiCount.load();
-        if (mc != lastMidiCountLights) { lastMidiCountLights = mc; lightsBurst = 30; }
-        const bool burst = lightsBurst > 0;
-        if (burst) --lightsBurst;
-        if (force || buf != lastLights || burst || ++lightsTick >= 4)
+        if (force || buf != lastLights || ++lightsTick >= 4)
         {
             lightsTick = 0;
             lastLights = buf;
-            if (! keyLights.sendKeys (buf.data(), 88))
+            bool ok;
+            {
+                const ScopedLock sl (lightsLock);
+                lightsBuf = buf;
+                ok = keyLights.sendKeys (buf.data(), 88);
+            }
+            if (! ok)
             {
                 flow::flowLog ("φώτα πλήκτρων: " + keyLights.getStatus());
-                keyLights.stop();
+                lightsPump.stopTimer();
+                { const ScopedLock sl (lightsLock); keyLights.stop(); }
                 lightsWanted = true;
                 updateToolLamps();
             }
@@ -890,7 +923,6 @@ private:
     }
 
     bool lightsTried = false;
-    int lastMidiCountLights = 0, lightsBurst = 0;
     int learnMode = 0;
     bool learnClick (int ctl)
     {
