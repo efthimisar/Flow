@@ -897,6 +897,12 @@ public:
         const auto numFont = hobby::makeFont (typeface, 13.0f);
         const auto smallFont = hobby::makeFont (typeface, 11.0f);
 
+        if (sel != lastSelSeen)   // όταν επιλέγεται άλλο block, κλείνει το μενού του ανοιχτού
+        {
+            lastSelSeen = sel;
+            if (expanded >= 0 && expanded != sel) expanded = -1;
+        }
+
         std::array<int, flow::numBlocks> order {};
         {
             int k = 0;
@@ -929,7 +935,7 @@ public:
             const bool showCurve = open, showHold = open, showTr = open, showSilent = open && ! isSpecial, showX = open;
             const int shown = 1 + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showSilent ? 1 : 0) + (showX ? 1 : 0);
             const float total = (float) shown * D + (float) (shown - 1) * gap;
-            float x = isSpecial && ! open ? s.l : s.l + (width - total) * 0.5f;
+            float x = isSpecial ? s.l : s.l + (width - total) * 0.5f;   // το ειδικό block: τα κυκλάκια τέρμα αριστερά στη λωρίδα του
             if (open)
             {
                 x = jlimit (14.0f, (float) getWidth() - 14.0f - total, x);
@@ -1237,6 +1243,7 @@ private:
     Typeface::Ptr typeface;
     std::array<Span, flow::numBlocks> spans;
     int expanded = -1;
+    int lastSelSeen = -2;
     std::array<Rectangle<float>, flow::numBlocks> silentRect;
     std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect, xRect;
     int armedBlock = -1;
