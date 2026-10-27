@@ -872,10 +872,10 @@ private:
 
         // Το Komplete Kontrol plugin γράφει κι αυτό φώτα όταν πατάς πλήκτρο. Μόλις έρθει νότα, το Flow ξαναστέλνει τα δικά του για λίγο κάθε ~33 ms, μετά κάθε ~0.25 s.
         const int mc = engine.midiCount.load();
-        if (mc != lastMidiCountLights) { lastMidiCountLights = mc; lightsBurst = 12; }
+        if (mc != lastMidiCountLights) { lastMidiCountLights = mc; lightsBurst = 30; }
         const bool burst = lightsBurst > 0;
         if (burst) --lightsBurst;
-        if (force || buf != lastLights || burst || ++lightsTick >= 8)
+        if (force || buf != lastLights || burst || ++lightsTick >= 4)
         {
             lightsTick = 0;
             lastLights = buf;
