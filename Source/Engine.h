@@ -1645,6 +1645,37 @@ namespace flow
                 dst.push_back ({ p, e.on, e.note, e.vel });
             }
 
+            // Η ίδια νότα που παίζεται γρήγορα: μετά το snap το off της πρώτης μπορεί να πέσει μετά το on της δεύτερης και να την κόψει.
+            // Κάθε νότα λήγει πριν ξεκινήσει η επόμενη του ίδιου ύψους.
+            {
+                struct Pair { int on, off; };
+                std::array<int, 128> openIdx;
+                openIdx.fill (-1);
+                std::array<std::vector<Pair>, 128> byNote;
+                for (int i = 0; i < (int) dst.size(); ++i)
+                {
+                    const auto& ev = dst[(size_t) i];
+                    if (ev.isRaw || ev.note < 0 || ev.note > 127) continue;
+                    if (ev.on) openIdx[(size_t) ev.note] = i;
+                    else if (openIdx[(size_t) ev.note] >= 0) { byNote[(size_t) ev.note].push_back ({ openIdx[(size_t) ev.note], i }); openIdx[(size_t) ev.note] = -1; }
+                }
+                for (auto& list : byNote)
+                {
+                    const size_t m = list.size();
+                    if (m == 0) continue;
+                    std::sort (list.begin(), list.end(), [&] (const Pair& a, const Pair& b) { return dst[(size_t) a.on].phase < dst[(size_t) b.on].phase; });
+                    for (size_t k = 0; k < m; ++k)
+                    {
+                        const double on = dst[(size_t) list[k].on].phase;
+                        double gap = m == 1 ? len : std::fmod (dst[(size_t) list[(k + 1) % m].on].phase - on + len, len);
+                        if (gap < 1.0e-6) gap = len;
+                        double d = std::fmod (dst[(size_t) list[k].off].phase - on + len, len);
+                        if (d > gap - 0.004) d = std::max (0.004, gap - 0.004);
+                        dst[(size_t) list[k].off].phase = std::fmod (on + d, len);
+                    }
+                }
+            }
+
             B.rec.clear();
             B.recOpen.reset();
 
