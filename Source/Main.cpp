@@ -870,7 +870,12 @@ private:
                 if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);   // άσπρο
             }
 
-        if (force || buf != lastLights || ++lightsTick >= 15)   // ξαναστέλνει κάθε ~0.5 s: τα φώτα του Flow επικρατούν όποιο plugin κι αν γράψει
+        // Το Komplete Kontrol plugin γράφει κι αυτό φώτα όταν πατάς πλήκτρο. Μόλις έρθει νότα, το Flow ξαναστέλνει τα δικά του για λίγο κάθε ~33 ms, μετά κάθε ~0.25 s.
+        const int mc = engine.midiCount.load();
+        if (mc != lastMidiCountLights) { lastMidiCountLights = mc; lightsBurst = 12; }
+        const bool burst = lightsBurst > 0;
+        if (burst) --lightsBurst;
+        if (force || buf != lastLights || burst || ++lightsTick >= 8)
         {
             lightsTick = 0;
             lastLights = buf;
@@ -885,6 +890,7 @@ private:
     }
 
     bool lightsTried = false;
+    int lastMidiCountLights = 0, lightsBurst = 0;
     int learnMode = 0;
     bool learnClick (int ctl)
     {
