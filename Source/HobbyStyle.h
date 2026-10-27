@@ -44,6 +44,7 @@ namespace hobby
     // ανάγλυφο πλαίσιο με βαθουλωμένη οθόνη (οθόνη: innerShadow ~18, λωρίδα: ~15)
     void drawBezel (juce::Graphics&, juce::Rectangle<float> bezel, juce::Rectangle<float> screen,
                     juce::Colour screenColour, float innerShadow);
+    void drawGlass (juce::Graphics&, juce::Rectangle<int> screen);   // ελαφρύ τζάμι πάνω από οθόνη (προσωρινή εικόνα, ζωγραφίζεται μία φορά ανά μέγεθος)
     void drawTileShadow (juce::Graphics&, juce::Rectangle<float> tile);                  // σκιά κάτω από τετράγωνο κουμπί
 }
 

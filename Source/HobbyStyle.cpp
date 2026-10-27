@@ -1,6 +1,7 @@
 #include "HobbyStyle.h"
 #include "BinaryData.h"
 #include <cmath>
+#include <map>
 
 namespace { enum PadSymbol { symNone = -1 }; }
 
@@ -74,6 +75,46 @@ namespace hobby
     }
 
     // ανάγλυφο πλαίσιο με βαθουλωμένη οθόνη μέσα του
+
+    void drawGlass (juce::Graphics& g, juce::Rectangle<int> screen)
+    {
+        if (screen.isEmpty()) return;
+        static std::map<std::pair<int, int>, juce::Image> cache;
+        auto key = std::make_pair (screen.getWidth(), screen.getHeight());
+        auto it = cache.find (key);
+        if (it == cache.end())
+        {
+            const int w = screen.getWidth(), h = screen.getHeight();
+            juce::Image img (juce::Image::ARGB, w, h, true);
+            juce::Graphics ig (img);
+            juce::Path clip;
+            clip.addRoundedRectangle (juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h), 12.0f);
+            ig.reduceClipRegion (clip);
+            // λεπτός κόκκος
+            juce::Random rnd (7);
+            juce::Image noise (juce::Image::ARGB, 128, 128, true);
+            for (int y = 0; y < 128; ++y)
+                for (int x = 0; x < 128; ++x)
+                {
+                    const bool lite = rnd.nextBool();
+                    noise.setPixelAt (x, y, (lite ? juce::Colours::white : juce::Colours::black).withAlpha (rnd.nextFloat() * 0.035f));
+                }
+            ig.setTiledImageFill (noise, 0, 0, 1.0f);
+            ig.fillAll();
+            // διαγώνια ανταύγεια πάνω-αριστερά
+            ig.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.11f), 0.0f, 0.0f,
+                                                      juce::Colours::transparentWhite, (float) w * 0.55f, (float) h * 0.95f, false));
+            ig.fillAll();
+            // λεπτές ακμές τζαμιού
+            ig.setColour (juce::Colours::white.withAlpha (0.27f));
+            ig.drawRoundedRectangle (juce::Rectangle<float> (1.0f, 1.0f, (float) w - 2.0f, (float) h - 2.0f), 11.0f, 1.0f);
+            ig.setColour (juce::Colours::black.withAlpha (0.35f));
+            ig.drawRoundedRectangle (juce::Rectangle<float> (0.5f, 0.5f, (float) w - 1.0f, (float) h - 1.0f), 12.0f, 1.0f);
+            it = cache.emplace (key, img).first;
+        }
+        g.drawImageAt (it->second, screen.getX(), screen.getY());
+    }
+
     void drawBezel (juce::Graphics& g, juce::Rectangle<float> bezel, juce::Rectangle<float> screen,
                     juce::Colour screenColour, float innerShadow)
     {
