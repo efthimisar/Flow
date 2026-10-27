@@ -750,6 +750,7 @@ namespace flow
             double recStart = 0.0, loopBeats = 0.0;
             bool panicPending = false;
             std::vector<LoopEvent> rec;
+            double stopAt = -1.0;            // το τέλος της εγγραφής περιμένει αυτή τη γραμμή μέτρου (-1 = καμία)
             std::vector<LoopEvent> preRec;   // τελευταίες νότες πριν ξεκινήσει η εγγραφή: μπαίνουν στη λούπα όταν η αρχή κουμπώνει πίσω στον κύκλο
 
             void resetState()
@@ -1574,6 +1575,7 @@ namespace flow
 
         void stopLoop (Block& B)
         {
+            B.stopAt = -1.0;
             cutLoopNotes (B);
             B.recOpen.reset();
             B.rec.clear();
@@ -1819,7 +1821,14 @@ namespace flow
                     B.loopState = loopRec;
                     break;
                 }
-                case loopRec:  finishRecording (B, beat); break;
+                case loopRec:
+                {
+                    // το τέλος περιμένει την επόμενη γραμμή μέτρου. Αν πατήσεις λίγο μετά τη γραμμή (μέχρι μισό beat), κλείνει στη γραμμή που μόλις πέρασε.
+                    const double prev = std::floor (beat / beatsPerBar + 1.0e-9) * beatsPerBar;
+                    if (B.stopAt >= 0.0 || beat - prev <= 0.5) { B.stopAt = -1.0; finishRecording (B, beat); }
+                    else B.stopAt = prev + beatsPerBar;
+                    break;
+                }
                 case loopPlay:
                     if (false)   // μία λούπα ανά block: δεν υπάρχει overdub
                     {
@@ -2210,6 +2219,13 @@ namespace flow
 
             // ---- loop: εντολές (κουμπιά ή πετάλια)
             const int64_t tapWindow = (int64_t) (sr * 0.7);
+
+            if (B.stopAt >= 0.0 && B.loopState == loopRec && beat1 >= B.stopAt - 1.0e-9)
+            {
+                const double t = B.stopAt;
+                B.stopAt = -1.0;
+                finishRecording (B, t);
+            }
 
             if (rerecReq[(size_t) b].exchange (0) != 0)
             {
