@@ -29,6 +29,7 @@ public:
           fxTile (Symbol::Fx, typeface),
           holdTile (Symbol::Hold, typeface),
           chordTile (Symbol::Chord, typeface),
+          motionTile (Symbol::Orb, typeface),
           recTile (Symbol::PadRecord, typeface),
           undoTile (Symbol::Cancel, typeface),
           stopTile (Symbol::Undo, typeface),
@@ -76,6 +77,8 @@ public:
 
         holdTile.onClick = [this] { cycleHold (selected); };
         chordTile.onClick = [this] { if (learnClick (flow::ctlHold)) return; cycleAl (selected); };
+        motionTile.onClick = [this] { toggleOrbRec(); };
+        motionTile.setTooltip (gr ("Rec motion: press, then drag a circle in the orb (click flow, top left). The movement is recorded and loops with the cycle."));
         recTile.onClick  = [this]
         {
             if (learnClick (flow::ctlRec)) return;
@@ -179,7 +182,7 @@ public:
             engine.mapCode[(size_t) i] = settings->getIntValue ("ctl" + String (i), 0);
 
         knobBlock.fill (-1); knobParamIdx.fill (-1);
-        if (std::unique_ptr<XmlElement> lib { settings->getXmlValue ("knobLibrary") })
+        if (std::unique_ptr<XmlElement> lib { settings->getXmlValue ("orbLibrary") })
             for (auto* pe : lib->getChildWithTagNameIterator ("Plugin"))
                 readKnobs (*pe, knobLibrary[pe->getStringAttribute ("key")]);
         for (int k = 0; k < 8; ++k)
@@ -187,9 +190,15 @@ public:
             engine.knobCc[(size_t) k] = settings->getIntValue ("knobcc" + String (k), 0);
             engine.knobIn[(size_t) k] = -1.0f;
         }
-        loopsView.onKnobClick = [this] (int k) { return knobClick (k); };
-        loopsView.onKnobDrag = [this] (int k, float v) { knobDragged (k, v); };
-        loopsView.knobTip = [this] (int k) { return knobTipText (k); };
+        for (int b = 0; b < flow::numBlocks; ++b)
+            for (int c = 0; c < 4; ++c) orbPos[(size_t) b][(size_t) c] = orbDefault (c);
+        loopsView.onOrbAssign = [this] (int slot) { startKnobLearn (slot); };
+        loopsView.onOrbClear = [this] (int slot) { clearKnobSlot (slot); };
+        loopsView.onOrbMove = [this] (int corner, Point<float> p) { orbMoved (corner, p); };
+        loopsView.onOrbTouch = [this] (int corner, bool down) { orbTouch (corner, down); };
+        loopsView.onOrbClearMotion = [this] { orbClearMotion(); };
+        loopsView.onOrbImage = [this] { pickOrbImage(); };
+        loopsView.onOrbImageClear = [this] { setOrbImage ({}); };
 
         const String savedFolder = settings->getValue ("tapeFolder");
         engine.recorder.setFolder (savedFolder.isNotEmpty() ? File (savedFolder)
@@ -299,6 +308,9 @@ public:
         // κλικ στο "π / -": μενού (ρυθμίσεις ήχου, set, panic, Link)
         if (e.y >= pluginBezel.getY() && e.y < pluginBezel.getBottom() && std::abs (e.x - getWidth() / 2) < 40 && ! e.mouseWasDraggedSinceMouseDown())
             showPiMenu();
+        // κλικ στη λέξη "flow" (πάνω αριστερά): οθόνη orb
+        else if (e.x >= sideM && e.x < sideM + 70 && e.y >= (int) hobby::kBrandY - 6 && e.y < (int) hobby::kBrandY + 24 && ! e.mouseWasDraggedSinceMouseDown())
+            loopsView.setOrbMode (! loopsView.orbMode);
     }
 
     bool keyPressed (const KeyPress& k) override
@@ -306,15 +318,15 @@ public:
         if (k.getModifiers().isAnyModifierKeyDown()) return false;
         const auto c = k.getTextCharacter();
         if (c == 'm' || c == 'M') { toggleMetronome(); return true; }
-        if (k == KeyPress::escapeKey) { doPanic(); return true; }
+        if (k == KeyPress::escapeKey) { if (loopsView.orbMode) { loopsView.setOrbMode (false); return true; } doPanic(); return true; }
         return false;
     }
 
 private:
     //==========================================================================
-    std::array<ValueTile*, 11> tiles()
+    std::array<ValueTile*, 12> tiles()
     {
-        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
+        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &motionTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
     }
 
     bool isActive (int b) const { return b >= 0 && b < flow::numBlocks && engine.active[(size_t) b].load() != 0; }
@@ -528,7 +540,7 @@ private:
     //==========================================================================
     // γεωμετρία παραθύρου: μία στήλη (κεφαλίδα, οθόνη loops, κουμπιά, πλήκτρα). Τα plugin ανοίγουν σε δικά τους παράθυρα.
     static constexpr int topH = 14, botH = 14, gapPx = 8, sideM = 11, headerBarH = 34;
-    static constexpr int minLoopsH = 230, stripH = 72, keysH = 120, minContentW = 724, defaultLoopsH = 340;
+    static constexpr int minLoopsH = 230, stripH = 72, keysH = 120, minContentW = 760, defaultLoopsH = 340;
     static constexpr int minContentH() { return minLoopsH + gapPx + stripH + gapPx + keysH; }
     static constexpr int chromeH() { return topH + headerBarH + gapPx + botH; }
     static constexpr int minWinW() { return minContentW + 2 * sideM; }
@@ -561,11 +573,11 @@ private:
         const int leftX = strip.getX() + 14;
         const int midW = 4 * 52 + 3 * 8;
         const int rightX = strip.getRight() - 14 - 52;
-        const int leftEnd = leftX + 5 * 60 - 8, rightStart = rightX - 60;
+        const int leftEnd = leftX + 6 * 60 - 8, rightStart = rightX - 60;
         const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);
 
         int x = leftX;
-        for (auto* t : { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile })
+        for (auto* t : { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &motionTile })
         {
             t->setBounds (x, ty, 52, 52);
             x += 60;
@@ -955,13 +967,11 @@ private:
     bool lightsTried = false;
     int learnMode = 0;
 
-    // 8 ποτενσιόμετρα γενικά (όχι ανά block): η κάθε θέση δείχνει σε μία παράμετρο ενός plugin οποιουδήποτε block
-    std::array<int, 8> knobBlock, knobParamIdx;     // block και δείκτης παραμέτρου (-1 = ελεύθερο)
-    int knobStage = 0, knobSlot = -1;   // 1 = περιμένει να κουνηθεί παράμετρος σε plugin, 2 = περιμένει φυσικό κουμπί
+    // Orb: 4 γωνίες × 4 αναθέσεις = 16 θέσεις (slot = γωνία * 4 + γραμμή). Κάθε θέση δείχνει σε μία παράμετρο του plugin του επιλεγμένου block.
+    static constexpr int kSlots = 16;
+    std::array<int, kSlots> knobBlock, knobParamIdx;     // block και δείκτης παραμέτρου (-1 = ελεύθερο)
+    int knobStage = 0, knobSlot = -1;   // 1 = περιμένει να κουνηθεί παράμετρος σε plugin
     uint32 knobStageStart = 0;
-    std::array<int, 8> knobSig { { -2, -2, -2, -2, -2, -2, -2, -2 } };
-    std::array<bool, 8> knobPicked {};
-    std::array<float, 8> knobLastIn { { -1, -1, -1, -1, -1, -1, -1, -1 } }, knobSet {}, knobHw { { -1, -1, -1, -1, -1, -1, -1, -1 } };
     std::atomic<int> knobTouched { -1 };   // (block << 20) | δείκτης
 
     struct ParamWatch : AudioProcessorParameter::Listener
@@ -995,8 +1005,8 @@ private:
     // Οι αναθέσεις ανήκουν στο plugin κάθε block (σώζονται μέσα στο set) και θυμούνται και σε μια βιβλιοθήκη ανά plugin για νέα blocks.
     // Τα CC του hardware (knobCc) είναι ξεχωριστά και μένουν πάντα. Τα knobBlock/knobParamIdx είναι η τρέχουσα όψη για το επιλεγμένο block.
     struct KnobAssign { int idx = -1; String name; };
-    std::array<std::array<KnobAssign, 8>, (size_t) flow::numBlocks> blockKnobs;
-    std::map<String, std::array<KnobAssign, 8>> knobLibrary;
+    std::array<std::array<KnobAssign, kSlots>, (size_t) flow::numBlocks> blockKnobs;
+    std::map<String, std::array<KnobAssign, kSlots>> knobLibrary;
 
     String knobKey (int block)
     {
@@ -1007,7 +1017,7 @@ private:
     void syncKnobView()
     {
         const int sel = isActive (selected) ? selected : -1;
-        for (int k = 0; k < 8; ++k)
+        for (int k = 0; k < kSlots; ++k)
         {
             const int idx = sel >= 0 ? blockKnobs[(size_t) sel][(size_t) k].idx : -1;
             knobBlock[(size_t) k] = idx >= 0 ? sel : -1;
@@ -1053,11 +1063,12 @@ private:
     void clearKnobsOf (int block)
     {
         for (auto& a : blockKnobs[(size_t) block]) a = KnobAssign();
+        for (auto& l : orbLane[(size_t) block]) l = OrbLane();
     }
 
-    static void writeKnobs (XmlElement& parent, const std::array<KnobAssign, 8>& arr)
+    static void writeKnobs (XmlElement& parent, const std::array<KnobAssign, kSlots>& arr)
     {
-        for (int k = 0; k < 8; ++k)
+        for (int k = 0; k < kSlots; ++k)
             if (arr[(size_t) k].idx >= 0)
             {
                 auto* ki = parent.createNewChildElement ("K");
@@ -1067,13 +1078,13 @@ private:
             }
     }
 
-    static void readKnobs (const XmlElement& parent, std::array<KnobAssign, 8>& arr)
+    static void readKnobs (const XmlElement& parent, std::array<KnobAssign, kSlots>& arr)
     {
         for (auto& a : arr) a = KnobAssign();
         for (auto* ki : parent.getChildWithTagNameIterator ("K"))
         {
             const int k = ki->getIntAttribute ("i", -1), idx = ki->getIntAttribute ("p", -1);
-            if (k >= 0 && k < 8 && idx >= 0) arr[(size_t) k] = { idx, ki->getStringAttribute ("n") };
+            if (k >= 0 && k < kSlots && idx >= 0) arr[(size_t) k] = { idx, ki->getStringAttribute ("n") };
         }
     }
 
@@ -1093,56 +1104,180 @@ private:
         knobStage = 0; knobSlot = -1;
     }
 
-    bool knobClick (int k)
+    // ---- Orb: αναθέσεις (learn) ----
+    void startKnobLearn (int k)
     {
-        if (learnMode == 0)
-        {
-            if (knobTarget (k) == nullptr)
-                setMessage (gr ("To assign: press ◎ (green), then the knob"));
-            return false;
-        }
-        if (learnMode == 2)
-        {
-            if (knobBlock[(size_t) k] >= 0)      // πρώτο πάτημα: σβήνει την παράμετρο του plugin, δεύτερο: ξεχνά το φυσικό κουμπί
-            {
-                blockKnobs[(size_t) selected][(size_t) k] = KnobAssign();
-                rememberKnobs (selected);
-            }
-            else engine.knobCc[(size_t) k] = 0;
-            learnMode = 0; stopKnobLearn();
-            setMessage (gr ("Knob ") + String (k + 1) + " " + String::fromUTF8 ("\xe2\x9c\x95"));
-            saveNow(); updateToolLamps();
-            return true;
-        }
         stopKnobLearn();
         engine.cancelLearns();
         knobTouched = -1;
-        {
-            // η ανάθεση γίνεται για το plugin του επιλεγμένου block
-            auto* p = isActive (selected) ? engine.getPlugin (selected) : nullptr;
-            if (p == nullptr || p->getParameters().isEmpty()) { setMessage (gr ("The selected block has no parameters")); return true; }
-            watches[(size_t) selected].attach (p, selected, &knobTouched);
-        }
+        // η ανάθεση γίνεται για το plugin του επιλεγμένου block
+        auto* p = isActive (selected) ? engine.getPlugin (selected) : nullptr;
+        if (p == nullptr || p->getParameters().isEmpty()) { setMessage (gr ("The selected block has no parameters")); return; }
+        watches[(size_t) selected].attach (p, selected, &knobTouched);
         knobStage = 1; knobSlot = k; knobStageStart = Time::getMillisecondCounter();
         setMessage (gr ("Move a parameter in a plugin window"));
-        return true;
     }
 
-    void knobDragged (int k, float v)
+    void clearKnobSlot (int k)
     {
-        if (auto* prm = knobTarget (k)) prm->setValueNotifyingHost (v);
+        if (! isActive (selected)) return;
+        blockKnobs[(size_t) selected][(size_t) k] = KnobAssign();
+        rememberKnobs (selected);
+        stopKnobLearn();
+        saveNow();
     }
 
-    String knobTipText (int k)
+    // ---- Orb: εικόνα (σώζεται με το set) ----
+    Image orbImage;
+    std::unique_ptr<FileChooser> orbChooser;
+
+    void setOrbImage (Image img, bool save = true)
     {
-        String s = gr ("Knob ") + String (k + 1);
-        if (auto* prm = knobTarget (k))
-            s << ": Block " << (knobBlock[(size_t) k] + 1) << " \xc2\xb7 " << prm->getName (40);
-        else
-            s << gr (": free (◎ and press here to assign)");
-        const int cc = engine.knobCc[(size_t) k].load();
-        if (cc != 0) s << "  \xc2\xb7  " << pedalCodeText (cc);
-        return s;
+        if (img.isValid() && (img.getWidth() > 512 || img.getHeight() > 512))
+        {
+            const float k = 512.0f / (float) jmax (img.getWidth(), img.getHeight());
+            img = img.rescaled (jmax (1, roundToInt ((float) img.getWidth() * k)), jmax (1, roundToInt ((float) img.getHeight() * k)), Graphics::highResamplingQuality);
+        }
+        orbImage = img;
+        loopsView.orbImage = img;
+        loopsView.repaint();
+        if (save) saveNow();
+    }
+
+    void pickOrbImage()
+    {
+        orbChooser = std::make_unique<FileChooser> (gr ("Choose an image for the orb"), File::getSpecialLocation (File::userPicturesDirectory), "*.png;*.jpg;*.jpeg");
+        orbChooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles, [this] (const FileChooser& fc)
+        {
+            const auto f = fc.getResult();
+            if (f == File()) return;
+            auto img = ImageFileFormat::loadFrom (f);
+            if (img.isValid()) setOrbImage (img); else setMessage (gr ("Could not read the image"));
+        });
+    }
+
+    // ---- Orb: θέση κύκλων, macro, κίνηση ----
+    static constexpr int orbN = 96;   // δείγματα κίνησης ανά κύκλο
+    struct OrbLane { std::vector<Point<float>> s; std::vector<char> ok; bool has = false, recording = false; };
+    std::array<std::array<Point<float>, 4>, (size_t) flow::numBlocks> orbPos;
+    std::array<std::array<OrbLane, 4>, (size_t) flow::numBlocks> orbLane;
+    std::array<bool, 4> orbTouching { { false, false, false, false } };
+    bool orbRecArmed = false;
+
+    static Point<float> orbClamp (int corner, Point<float> p)
+    {
+        const float sx = (corner == 1 || corner == 2) ? 1.0f : -1.0f;
+        const float sy = corner >= 2 ? 1.0f : -1.0f;
+        float x = jmax (0.0f, p.x * sx), y = jmax (0.0f, p.y * sy);
+        const float len = std::sqrt (x * x + y * y);
+        if (len > 1.0f) { x /= len; y /= len; }
+        return { x * sx, y * sy };
+    }
+    static Point<float> orbDefault (int corner) { return orbClamp (corner, { ((corner == 1 || corner == 2) ? 1.0f : -1.0f) * 0.3536f, (corner >= 2 ? 1.0f : -1.0f) * 0.3536f }); }
+    static float orbValue (Point<float> p) { return jlimit (0.0f, 1.0f, p.getDistanceFromOrigin()); }
+
+    double orbPhase() const
+    {
+        const double cyc = jmax (1.0, engine.metroCycleOut.load());
+        return std::fmod (jmax (0.0, engine.beatPosOut.load()), cyc) / cyc;
+    }
+
+    AudioProcessorParameter* orbTarget (int block, int slot)
+    {
+        if (block < 0 || block >= flow::numBlocks || ! isActive (block)) return nullptr;
+        const int idx = blockKnobs[(size_t) block][(size_t) slot].idx;
+        auto* p = engine.getPlugin (block);
+        if (idx < 0 || p == nullptr || idx >= p->getParameters().size()) return nullptr;
+        return p->getParameters()[idx];
+    }
+
+    void orbApply (int block, int corner, float v)
+    {
+        for (int r = 0; r < 4; ++r)
+            if (auto* prm = orbTarget (block, corner * 4 + r))
+                if (std::abs (prm->getValue() - v) > 0.002f) prm->setValueNotifyingHost (v);
+    }
+
+    void orbFinishLane (OrbLane& l)
+    {
+        l.recording = false;
+        int first = -1;
+        for (int i = 0; i < orbN; ++i) if (l.ok[(size_t) i]) { first = i; break; }
+        if (first < 0) { l.has = false; l.s.clear(); l.ok.clear(); return; }
+        Point<float> last = l.s[(size_t) first];
+        for (int n = 0; n < orbN; ++n)   // κρατά την τελευταία θέση στα κενά (κυκλικά)
+        {
+            const int i = (first + n) % orbN;
+            if (l.ok[(size_t) i]) last = l.s[(size_t) i]; else l.s[(size_t) i] = last;
+        }
+        l.has = true;
+    }
+
+    void orbTouch (int corner, bool down)
+    {
+        orbTouching[(size_t) corner] = down;
+        if (! isActive (selected)) return;
+        auto& l = orbLane[(size_t) selected][(size_t) corner];
+        if (down && orbRecArmed)
+        {
+            l.recording = true; l.has = false;
+            l.s.assign ((size_t) orbN, {}); l.ok.assign ((size_t) orbN, 0);
+        }
+        else if (! down && l.recording) orbFinishLane (l);
+    }
+
+    void orbMoved (int corner, Point<float> p)
+    {
+        if (! isActive (selected)) return;
+        p = orbClamp (corner, p);
+        orbPos[(size_t) selected][(size_t) corner] = p;
+        orbApply (selected, corner, orbValue (p));
+    }
+
+    void orbClearMotion()
+    {
+        if (! isActive (selected)) return;
+        for (auto& l : orbLane[(size_t) selected]) { l = OrbLane(); }
+        setMessage (gr ("Motion cleared"));
+    }
+
+    void toggleOrbRec()
+    {
+        orbRecArmed = ! orbRecArmed;
+        if (! orbRecArmed)
+            for (auto& bl : orbLane) for (auto& l : bl) if (l.recording) orbFinishLane (l);
+        setMessage (orbRecArmed ? gr ("Rec motion: drag a circle in the orb") : gr ("Rec motion off"));
+        motionTile.setIconColour (orbRecArmed ? hobby::kRed : hobby::kIconGrey);
+    }
+
+    void orbTick()   // εγγραφή και αναπαραγωγή κίνησης (30 φορές το δευτερόλεπτο)
+    {
+        const int i = jlimit (0, orbN - 1, (int) (orbPhase() * orbN));
+        for (int b = 0; b < flow::numBlocks; ++b)
+        {
+            if (! isActive (b)) continue;
+            for (int c = 0; c < 4; ++c)
+            {
+                auto& l = orbLane[(size_t) b][(size_t) c];
+                if (l.recording && b == selected)
+                {
+                    if (orbTouching[(size_t) c]) { l.s[(size_t) i] = orbPos[(size_t) b][(size_t) c]; l.ok[(size_t) i] = 1; }
+                }
+                else if (l.has && ! (b == selected && orbTouching[(size_t) c]))
+                {
+                    const auto p = l.s[(size_t) i];
+                    orbPos[(size_t) b][(size_t) c] = p;
+                    orbApply (b, c, orbValue (p));
+                }
+            }
+        }
+    }
+
+    bool anyOrbMotion() const
+    {
+        if (! isActive (selected)) return false;
+        for (auto& l : orbLane[(size_t) selected]) if (l.has) return true;
+        return false;
     }
 
     void knobTick()
@@ -1158,7 +1293,7 @@ private:
         {
             if (Time::getMillisecondCounter() - knobStageStart > 30000)
             {
-                stopKnobLearn(); learnMode = 0; setMessage (gr ("Knob assignment cancelled")); updateToolLamps();
+                stopKnobLearn(); setMessage (gr ("Assignment cancelled"));
             }
             else if (knobStage == 1 && knobTouched.load() >= 0)
             {
@@ -1171,67 +1306,26 @@ private:
                         {
                             blockKnobs[(size_t) tb][(size_t) knobSlot] = { ti, tp->getParameters()[ti]->getName (64) };
                             rememberKnobs (tb);
+                            setMessage (tp->getParameters()[ti]->getName (40));
                         }
-                if (engine.knobCc[(size_t) knobSlot].load() != 0)   // το hardware το θυμάται ήδη: τέλος
-                {
-                    setMessage (gr ("Knob ") + String (knobSlot + 1) + " " + String::fromUTF8 ("\xe2\x86\x90") + " " + pedalCodeText (engine.knobCc[(size_t) knobSlot].load()));
-                    knobStage = 0; knobSlot = -1; learnMode = 0;
-                    saveNow(); updateToolLamps();
-                }
-                else
-                {
-                    knobStage = 2; knobStageStart = Time::getMillisecondCounter();
-                    engine.knobLearnedSlot = -1;
-                    engine.knobLearnSlot = knobSlot;
-                    setMessage (gr ("Now move the physical knob"));
-                }
-            }
-            else if (knobStage == 2 && engine.knobLearnedSlot.load() >= 0)
-            {
-                const int ks = engine.knobLearnedSlot.exchange (-1);
-                setMessage (gr ("Knob ") + String (ks + 1) + " " + String::fromUTF8 ("\xe2\x86\x90") + " " + pedalCodeText (engine.knobCc[(size_t) ks].load()));
-                knobStage = 0; knobSlot = -1; learnMode = 0;
-                saveNow(); updateToolLamps();
+                knobStage = 0; knobSlot = -1;
+                saveNow();
             }
         }
 
-        std::array<LoopsView::KnobState, 8> st;
-        for (int k = 0; k < 8; ++k)
-        {
-            const float in = engine.knobIn[(size_t) k].exchange (-1.0f);
-            const int sig = knobBlock[(size_t) k] * 100000 + knobParamIdx[(size_t) k];
-            if (sig != knobSig[(size_t) k]) { knobSig[(size_t) k] = sig; knobPicked[(size_t) k] = false; knobLastIn[(size_t) k] = -1.0f; knobHw[(size_t) k] = -1.0f; }
+        orbTick();
+
+        std::array<LoopsView::KnobState, kSlots> st;
+        for (int k = 0; k < kSlots; ++k)
             if (auto* prm = knobTarget (k))
             {
-                if (in >= 0.0f)
-                {
-                    // soft takeover: το φυσικό κουμπί αρχίζει να αλλάζει την παράμετρο μόνο όταν περάσει από την τρέχουσα τιμή της
-                    const float cur = prm->getValue();
-                    if (knobPicked[(size_t) k] && std::abs (cur - knobSet[(size_t) k]) > 0.05f) knobPicked[(size_t) k] = false;   // άλλαξε αλλού
-                    if (! knobPicked[(size_t) k])
-                    {
-                        const float last = knobLastIn[(size_t) k];
-                        if (std::abs (in - cur) < 0.03f || (last >= 0.0f && (last - cur) * (in - cur) <= 0.0f))
-                            knobPicked[(size_t) k] = true;
-                    }
-                    knobLastIn[(size_t) k] = in;
-                    if (knobPicked[(size_t) k])
-                    {
-                        prm->setValueNotifyingHost (in);
-                        knobSet[(size_t) k] = prm->getValue();
-                        knobHw[(size_t) k] = -1.0f;
-                    }
-                    else knobHw[(size_t) k] = in;
-                }
-                else if (knobHw[(size_t) k] >= 0.0f && std::abs (prm->getValue() - knobHw[(size_t) k]) < 0.03f)
-                    knobHw[(size_t) k] = -1.0f;
-                st[(size_t) k].hw = knobHw[(size_t) k];
                 st[(size_t) k].bound = true;
                 st[(size_t) k].value = prm->getValue();
-                st[(size_t) k].colour = blockLight (knobBlock[(size_t) k]);
+                st[(size_t) k].name = prm->getName (24);
             }
-        }
-        loopsView.setKnobs (st, knobStage != 0 ? knobSlot : -1, learnMode);
+        std::array<Point<float>, 4> pos;
+        for (int c = 0; c < 4; ++c) pos[(size_t) c] = isActive (selected) ? orbPos[(size_t) jlimit (0, flow::numBlocks - 1, selected)][(size_t) c] : orbDefault (c);
+        loopsView.setOrb (st, pos, knobStage != 0 ? knobSlot : -1, orbRecArmed, anyOrbMotion());
     }
     bool learnClick (int ctl)
     {
@@ -2320,11 +2414,18 @@ private:
         root->setAttribute ("autoLoop", engine.autoLoop.load());
         root->setAttribute ("tempoManual", engine.tempoUserSet.load() ? 1 : 0);
         root->setAttribute ("selected", selected);
+        if (orbImage.isValid())   // η εικόνα του orb σώζεται μέσα στο set (μικρογραφία JPEG)
+        {
+            MemoryOutputStream mo;
+            JPEGImageFormat jf; jf.setQuality (0.82f);
+            if (jf.writeImageToStream (orbImage, mo))
+                root->createNewChildElement ("OrbImage")->addTextElement (Base64::toBase64 (mo.getData(), mo.getDataSize()));
+        }
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             if (! isActive (b)) continue;
             auto* e = root->createNewChildElement ("Block");
-            writeKnobs (*e->createNewChildElement ("Knobs"), blockKnobs[(size_t) b]);
+            writeKnobs (*e->createNewChildElement ("Orb"), blockKnobs[(size_t) b]);
             e->setAttribute ("slot", b);
             e->setAttribute ("lo", engine.lo[(size_t) b].load());
             e->setAttribute ("hi", engine.hi[(size_t) b].load());
@@ -2427,6 +2528,16 @@ private:
     void applySet (const XmlElement& root, const StringArray& crashed)
     {
         clearEverything();
+        {
+            Image img;
+            if (auto* oe = root.getChildByName ("OrbImage"))
+            {
+                MemoryOutputStream mo;
+                if (Base64::convertFromBase64 (mo, oe->getAllSubText().trim()))
+                    img = ImageFileFormat::loadFrom (mo.getData(), mo.getDataSize());
+            }
+            setOrbImage (img, false);
+        }
 
         // Έκδοση αρχείου: τα παλιά sets (16 blocks) μετατρέπονται, όσα blocks είναι σε θέσεις πάνω από το 9 πάνε στις ελεύθερες θέσεις
         setNewer = root.getIntAttribute ("version", 1) > 2 ? 1 : 0;
@@ -2459,19 +2570,6 @@ private:
             return it != slotMap.end() ? it->second : -1;
         };
 
-        {
-            StringArray kp;
-            kp.addTokens (root.getStringAttribute ("knobmap"), ",", "");
-            // sets 0.37 (καθολικά ποτενσιόμετρα): η ανάθεση περνά στο plugin του block
-            for (int k = 0; k < 8 && k < kp.size(); ++k)
-            {
-                StringArray bp;
-                bp.addTokens (kp[k], ":", "");
-                const int kb = bp.size() == 2 ? mapSlot (bp[0].getIntValue()) : -1;
-                if (kb >= 0 && bp[1].getIntValue() >= 0)
-                    blockKnobs[(size_t) kb][(size_t) k] = { bp[1].getIntValue(), String() };
-            }
-        }
         engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 110.0));
         engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 1));
         engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 2));
@@ -2526,7 +2624,7 @@ private:
                 continue;
             }
 
-            if (auto* ke = e->getChildByName ("Knobs")) readKnobs (*ke, blockKnobs[(size_t) slot]);
+            if (auto* ke = e->getChildByName ("Orb")) readKnobs (*ke, blockKnobs[(size_t) slot]);
 
             engine.holdMode[(size_t) slot]  = jlimit (0, 4, e->getIntAttribute ("hold", 0));
             engine.setAlText (slot, e->getStringAttribute ("al"));
@@ -2705,14 +2803,14 @@ private:
         for (int k = 0; k < 8; ++k)
             settings->setValue ("knobcc" + String (k), engine.knobCc[(size_t) k].load());
         {
-            XmlElement lib ("KnobLib");
+            XmlElement lib ("OrbLib");
             for (auto& kv : knobLibrary)
             {
                 auto* pe = lib.createNewChildElement ("Plugin");
                 pe->setAttribute ("key", kv.first);
                 writeKnobs (*pe, kv.second);
             }
-            settings->setValue ("knobLibrary", &lib);
+            settings->setValue ("orbLibrary", &lib);
         }
 
         if (pendingLoads == 0)    // όσο φορτώνονται plugins δεν αντικαθιστούμε το session (θα χανόταν ό,τι δεν έχει φορτώσει ακόμη)
@@ -3078,7 +3176,7 @@ private:
     LoopsView loopsView;
     KeyboardView keyboardView;
     PanelHeader header;
-    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
+    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, motionTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

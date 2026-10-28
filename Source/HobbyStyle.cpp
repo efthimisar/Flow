@@ -217,6 +217,14 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (line (-5.5f, 4.6f, 5.5f, 4.6f), 1.5f);
             break;
         }
+        case Symbol::Orb:   // Rec motion: δαχτυλίδι με τελεία στο κέντρο
+        {
+            juce::Path ring; ring.addEllipse (-9.0f, -9.0f, 18.0f, 18.0f);
+            stroke (ring, 1.8f);
+            juce::Path dot; dot.addEllipse (-3.6f, -3.6f, 7.2f, 7.2f);
+            fill (dot, col);
+            break;
+        }
         case Symbol::Cancel:
         {
             juce::Path p;

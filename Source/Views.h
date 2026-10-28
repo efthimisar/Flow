@@ -382,24 +382,34 @@ public:
 
     std::function<void()> onMetroChange;
 
-    // 8 ποτενσιόμετρα κάτω στην οθόνη (ανάθεση σε παραμέτρους του επιλεγμένου block)
-    struct KnobState { bool bound = false; float value = 0.0f; Colour colour { Colours::white }; float hw = -1.0f; };   // hw ≥ 0: το φυσικό κουμπί δεν έχει φτάσει ακόμη την τιμή
-    std::array<KnobState, 8> knobs;
-    int knobLearning = -1;      // θέση που περιμένει learn (αναβοσβήνει)
-    int learnVisual = 0;        // 0 κανονικά, 1 πράσινο (ανάθεση), 2 κόκκινο (σβήσιμο)
-    std::function<bool (int)> onKnobClick;            // true = το κλικ το πήρε το learn
-    std::function<void (int, float)> onKnobDrag;      // νέα τιμή 0..1 από το ποντίκι
-    std::function<String (int)> knobTip;
-    static constexpr int knobAreaH = 66;
-    static constexpr int stripY = 16;                 // λωρίδα λαμπακιών κάτω από την progress bar
-    void setKnobs (const std::array<KnobState, 8>& k, int learning, int visual)
+    // Orb: 16 αναθέσεις (4 γωνίες × 4 γραμμές). Η οθόνη ανοίγει πατώντας τη λέξη "flow".
+    struct KnobState { bool bound = false; float value = 0.0f; String name; };
+    std::array<KnobState, 16> knobs;
+    static constexpr int knobAreaH = 0;
+    bool orbMode = false;
+    Image orbImage;
+    std::function<void (int)> onOrbAssign, onOrbClear;      // θέση 0..15
+    std::function<void (int, Point<float>)> onOrbMove;      // γωνία, θέση (-1..1) μέσα στον orb
+    std::function<void (int, bool)> onOrbTouch;
+    std::function<void()> onOrbClearMotion, onOrbImage, onOrbImageClear;
+    void setOrbMode (bool on)
     {
-        bool same = learning == knobLearning && visual == learnVisual;
-        for (size_t i = 0; same && i < 8; ++i)
-            same = k[i].bound == knobs[i].bound && k[i].colour == knobs[i].colour && std::abs (k[i].value - knobs[i].value) < 0.004f;
-        if (same) return;
-        knobs = k; knobLearning = learning; learnVisual = visual;
-        repaint (0, getHeight() - knobAreaH, getWidth(), knobAreaH);
+        if (on == orbMode) return;
+        orbMode = on;
+        if (on) { list.close(); openMenu (false); orbDrag = -1; orbHover = -1; }
+        resized(); repaint();
+    }
+    void setOrb (const std::array<KnobState, 16>& k, const std::array<Point<float>, 4>& pos, int learning, bool rec, bool motion)
+    {
+        for (int c = 0; c < 4; ++c)
+        {
+            auto& t = orbTrail[(size_t) c];
+            if (t.empty() || t.back().getDistanceFrom (pos[(size_t) c]) > 0.004f) t.push_back (pos[(size_t) c]);
+            else if (t.size() > 1) t.erase (t.begin());     // όταν σταθεί, η σκιά σιγά-σιγά μαζεύεται στον κύκλο
+            while (t.size() > 36) t.erase (t.begin());
+        }
+        knobs = k; orbPos = pos; orbLearning = learning; orbRec = rec; orbMotion = motion;
+        if (orbMode) repaint();
     }
     std::function<bool()> metroIsCustom;   // έχει φορτωθεί δικός ήχος μετρονόμου;
     std::function<void (int)> onMetroSample;   // 1 = διάλεξε ήχο, 2 = αρχικός ήχος
@@ -534,6 +544,13 @@ public:
 
     void mouseMove (const MouseEvent& e) override
     {
+        if (orbMode)
+        {
+            int h = -1;
+            for (int slot = 0; slot < 16; ++slot) if (orbRowRect (slot).contains (e.position)) h = slot;
+            if (h != orbHover) { orbHover = h; repaint(); }
+            return;
+        }
         if (! menuOpen) return;
         int h = -1;
         for (auto& z : menuHot) if (z.idx >= 0 && z.r.contains (e.position)) h = z.idx;
@@ -552,12 +569,13 @@ public:
         const int by = stripY;
         tempoBox.setBounds (getWidth() / 2 - 150, by, 100, 22);
         tapDot.setBounds (tempoBox.getRight() + 8, by, 22, 22);
-        tempoBox.setVisible (metroStrip);
-        tapDot.setVisible (metroStrip);
+        tempoBox.setVisible (metroStrip && ! orbMode);
+        tapDot.setVisible (metroStrip && ! orbMode);
     }
 
     void paint (Graphics& g) override
     {
+        if (orbMode) { hot.clear(); tipZones.clear(); paintOrb (g); return; }
         const int w = getWidth();
         const int axisBars = engine.axisBarsOut.load();
         const double axisBeats = (double) axisBars * flow::beatsPerBar;
@@ -906,20 +924,6 @@ public:
             g.fillEllipse ((float) w - 24.0f, sy + sh * 0.5f - 3.5f, 7.0f, 7.0f);
         }
 
-        paintKnobs (g);
-    }
-
-    Point<float> knobCentre (int k) const
-    {
-        const float cw = (float) (getWidth() - 28) / 8.0f;
-        return { 14.0f + cw * ((float) k + 0.5f), (float) getHeight() - 10.0f - knobR };
-    }
-
-    int knobAt (Point<float> p) const
-    {
-        for (int k = 0; k < 8; ++k)
-            if (p.getDistanceFrom (knobCentre (k)) <= knobR + 4.0f) return k;
-        return -1;
     }
 
     // κουκκιδωτή υφή: φωτεινά 2x2 pixel με σκοτεινά κενά
@@ -932,83 +936,246 @@ public:
         return tex;
     }
 
-    void paintKnobs (Graphics& g)
+    // ---------------------------------------------------------------- Orb
+    struct OrbGeom { float cx, cy, R; };
+    OrbGeom orbGeom() const
     {
-        const int w = getWidth(), h = getHeight();
-        const float sepY = (float) (h - knobAreaH);
-        g.setColour (Colour (0xff3a3430));
-        g.fillRect (14.0f, sepY, (float) (w - 28), 1.0f);
+        const float w = (float) getWidth(), h = (float) getHeight();
+        return { w * 0.5f, h * 0.5f + 6.0f, jmax (40.0f, jmin ((h - 70.0f) * 0.5f, w * 0.2f)) };
+    }
+    static Colour orbColour (int c)
+    {
+        static const Colour col[4] { Colour (0xffe8a06a), Colour (0xff7cc97f), Colour (0xffe578b8), Colour (0xff6f8fe8) };
+        return col[c & 3];
+    }
+    static bool orbLeft (int c) { return c == 0 || c == 3; }
+    Point<float> orbListOrigin (int c) const     // γωνία κειμένου της λίστας (αριστερά: δεξιό άκρο, δεξιά: αριστερό άκρο)
+    {
+        const auto gm = orbGeom();
+        return { orbLeft (c) ? gm.cx - gm.R - 22.0f : gm.cx + gm.R + 22.0f, c < 2 ? gm.cy - gm.R + 12.0f : gm.cy + gm.R - 64.0f };
+    }
+    Rectangle<float> orbRowRect (int slot) const
+    {
+        const int c = slot / 4, r = slot % 4;
+        const auto o = orbListOrigin (c);
+        const float y = o.y + 16.0f * (float) r - 8.0f;
+        return orbLeft (c) ? Rectangle<float> (o.x - 170.0f, y, 170.0f, 16.0f) : Rectangle<float> (o.x, y, 170.0f, 16.0f);
+    }
+    Rectangle<float> orbDotRect (int c) const
+    {
+        const auto o = orbListOrigin (c);
+        return Rectangle<float> (0, 0, 22.0f, 22.0f).withCentre ({ orbLeft (c) ? o.x - 6.0f : o.x + 6.0f, o.y - 22.0f });
+    }
+    Point<float> orbDotPoint (int c) const
+    {
+        const auto gm = orbGeom();
+        const float k = gm.R - 12.0f;
+        return { gm.cx + orbPos[(size_t) c].x * k, gm.cy + orbPos[(size_t) c].y * k };
+    }
+    Rectangle<float> orbBottomRect() const   // "✕ motion"
+    {
+        const auto gm = orbGeom();
+        return Rectangle<float> (gm.cx + 60.0f, gm.cy + gm.R + 24.0f, 90.0f, 16.0f);
+    }
+    Rectangle<float> orbImageClearRect() const
+    {
+        const auto gm = orbGeom();
+        return Rectangle<float> (0, 0, 24.0f, 24.0f).withCentre ({ gm.cx, gm.cy + gm.R * 0.82f });
+    }
 
-        const Colour dash = blockLight (jlimit (0, flow::numBlocks - 1, selected));
+    void paintOrb (Graphics& g)
+    {
+        const auto gm = orbGeom();
+        const float cx = gm.cx, cy = gm.cy, R = gm.R;
         const double nowMs = Time::getMillisecondCounterHiRes();
-        for (int k = 0; k < 8; ++k)
+
+        g.setFont (hobby::makeFont (typeface, 13.0f));
+        g.setColour (Colour (0xffc9c3ba));
+        g.drawText (title, 40, 8, getWidth() - 80, 22, Justification::centred, true);
+
+        // ο orb: δική σου εικόνα (σώζεται με το set), αλλιώς ουδέτερη κουκκιδωτή επιφάνεια
+        Path circle; circle.addEllipse (cx - R, cy - R, 2.0f * R, 2.0f * R);
+        g.setColour (Colour (0xff2e2a27));
+        g.fillPath (circle);
+        g.saveState();
+        g.reduceClipRegion (circle);
+        if (orbImage.isValid())
+            g.drawImage (orbImage, Rectangle<float> (cx - R, cy - R, 2.0f * R, 2.0f * R), RectanglePlacement::fillDestination | RectanglePlacement::centred);
+        else
         {
-            const auto c = knobCentre (k);
-            const float R = knobR;
-            const auto& ks = knobs[(size_t) k];
-            const float v = jlimit (0.0f, 1.0f, ks.value);
-            const Rectangle<float> disc (c.x - R, c.y - R, 2.0f * R, 2.0f * R);
-
-            Path circle; circle.addEllipse (disc);
-            g.setColour (Colour (0xff3a3430));
-            g.fillPath (circle);
-
-            if (ks.bound && v > 0.001f)
-            {
-                Path pie;
-                const float a0 = MathConstants<float>::pi * -0.75f;
-                pie.addPieSegment (disc, a0, a0 + MathConstants<float>::pi * 1.5f * v, 0.0f);
-                g.setColour (Colour (0xff6b625a).interpolatedWith (Colour (0xffcfc9c0), v));
-                g.fillPath (pie);
-            }
-            g.saveState();
-            g.reduceClipRegion (circle);
             g.setTiledImageFill (dotGaps(), 0, 0, 1.0f);
-            g.fillRect (disc);
-            g.restoreState();
+            g.fillRect (Rectangle<float> (cx - R, cy - R, 2.0f * R, 2.0f * R));
+        }
+        g.restoreState();
+        g.setColour (Colour (0xff4a423c));
+        g.drawEllipse (cx - R, cy - R, 2.0f * R, 2.0f * R, 1.4f);
+        g.setFont (hobby::makeFont (typeface, 11.0f));
+        if (! orbImage.isValid())
+        {
+            g.setColour (Colour (0xff78706a));
+            g.drawText ("+ image", Rectangle<float> (cx - 50.0f, cy + R * 0.7f, 100.0f, 18.0f), Justification::centred, false);
+        }
+        else
+        {
+            g.setColour (Colours::white.withAlpha (0.55f));
+            g.drawText (String::fromUTF8 ("\xe2\x9c\x95"), orbImageClearRect(), Justification::centred, false);
+        }
 
-            if (! ks.bound)   // ελεύθερο ποτενσιόμετρο: αχνή παύλα στην αρχή της διαδρομής (7 η ώρα)
+        // σκιές κίνησης και κύκλοι
+        for (int c = 0; c < 4; ++c)
+        {
+            const auto col = orbColour (c);
+            const float k = R - 12.0f;
+            const auto& t = orbTrail[(size_t) c];
+            for (size_t i = 0; i < t.size(); ++i)
             {
-                const float ang = MathConstants<float>::pi * -0.75f - MathConstants<float>::halfPi;
-                g.setColour (dash.withAlpha (0.55f));
-                g.drawLine (Line<float> (Point<float> (c.x + R * 0.55f * std::cos (ang), c.y + R * 0.55f * std::sin (ang)),
-                                         Point<float> (c.x + (R - 1.0f) * std::cos (ang), c.y + (R - 1.0f) * std::sin (ang))), 3.0f);
-            }
-            if (ks.bound)
-            {
-                const float ang = MathConstants<float>::pi * (-0.75f + 1.5f * v) - MathConstants<float>::halfPi;
-                const Point<float> p0 (c.x + R * 0.55f * std::cos (ang), c.y + R * 0.55f * std::sin (ang));
-                const Point<float> p1 (c.x + (R - 1.0f) * std::cos (ang), c.y + (R - 1.0f) * std::sin (ang));
-                g.setColour (ks.colour);
-                g.drawLine (Line<float> (p0, p1), 3.0f);
-            }
-
-            if (ks.bound && ks.hw >= 0.0f)   // soft takeover: τελεία εκεί που είναι το φυσικό κουμπί
-            {
-                const float ang = MathConstants<float>::pi * (-0.75f + 1.5f * jlimit (0.0f, 1.0f, ks.hw)) - MathConstants<float>::halfPi;
-                g.setColour (Colours::white.withAlpha (0.9f));
-                g.fillEllipse (c.x + (R + 5.0f) * std::cos (ang) - 2.0f, c.y + (R + 5.0f) * std::sin (ang) - 2.0f, 4.0f, 4.0f);
-            }
-
-            // learn: δαχτυλίδι γύρω από κάθε ποτενσιόμετρο (πράσινο ανάθεση, κόκκινο σβήσιμο), αναβοσβήνει εκείνο που περιμένει
-            if (learnVisual != 0 || k == knobLearning)
-            {
-                const bool waiting = k == knobLearning;
-                const float a = waiting ? 0.35f + 0.65f * (float) hobby::pulse (nowMs * 0.001 * 2.0) : 0.55f;
-                g.setColour ((learnVisual == 2 ? hobby::kRed : hobby::kOn).withAlpha (a));
-                g.drawEllipse (disc.expanded (3.0f), 1.6f);
-            }
-            if (knobTip)
-            {
-                const auto tip = knobTip (k);
-                if (tip.isNotEmpty()) tipZones.push_back ({ disc.expanded (3.0f), tip });
+                const float f = (float) (i + 1) / (float) t.size();
+                const float a = 0.30f * f * f;
+                const Point<float> p (cx + t[i].x * k, cy + t[i].y * k);
+                g.setColour (col.withAlpha (a * 0.45f));
+                g.fillEllipse (p.x - 16.0f * f - 3.0f, p.y - 16.0f * f - 3.0f, 2.0f * (16.0f * f + 3.0f), 2.0f * (16.0f * f + 3.0f));
+                g.setColour (col.withAlpha (a));
+                g.fillEllipse (p.x - 9.0f, p.y - 9.0f, 18.0f, 18.0f);
             }
         }
+        for (int c = 0; c < 4; ++c)
+        {
+            const auto col = orbColour (c);
+            const auto p = orbDotPoint (c);
+            const float r = c == orbDrag ? 12.0f : 10.5f;
+            g.setColour (col.withAlpha (0.35f));
+            g.drawEllipse (p.x - r - 3.0f, p.y - r - 3.0f, 2.0f * (r + 3.0f), 2.0f * (r + 3.0f), 1.2f);
+            g.setColour (col);
+            g.fillEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r);
+            g.setColour (Colours::white);
+            g.drawEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r, 1.5f);
+            g.setColour (Colour (0xff262220));
+            g.setFont (hobby::makeFont (typeface, 11.0f));
+            g.drawText (String (c + 1), Rectangle<float> (p.x - r, p.y - r, 2.0f * r, 2.0f * r), Justification::centred, false);
+        }
+
+        // λίστες αναθέσεων στις 4 γωνίες
+        for (int c = 0; c < 4; ++c)
+        {
+            const auto col = orbColour (c);
+            const bool left = orbLeft (c);
+            const auto o = orbListOrigin (c);
+            const auto dr = orbDotRect (c);
+            const bool learningHere = orbLearning >= c * 4 && orbLearning < c * 4 + 4;
+            if (learningHere)
+            {
+                g.setColour (hobby::kOn.withAlpha (0.35f + 0.65f * (float) hobby::pulse (nowMs * 0.001 * 2.0)));
+                g.drawEllipse (dr.reduced (3.0f), 2.0f);
+            }
+            g.setColour (col);
+            g.fillEllipse (dr.withSizeKeepingCentre (10.0f, 10.0f));
+            for (int r = 0; r < 4; ++r)
+            {
+                const int slot = c * 4 + r;
+                const auto& ks = knobs[(size_t) slot];
+                const float y = o.y + 16.0f * (float) r - 8.0f;
+                const bool hov = slot == orbHover && ks.bound;
+                if (ks.bound)
+                {
+                    g.setFont (hobby::makeFont (typeface, 12.0f));
+                    g.setColour (Colour (0xffe6e0d8));
+                    const String pct = String (roundToInt (jlimit (0.0f, 1.0f, ks.value) * 100.0f)) + "%";
+                    g.setFont (hobby::makeFont (typeface, 10.0f));
+                    g.setColour (hov ? hobby::kRed : Colour (0xff9a8f84));
+                    const String nm = hov ? String::fromUTF8 ("\xe2\x9c\x95 ") + ks.name : ks.name;
+                    if (left)
+                    {
+                        g.setFont (hobby::makeFont (typeface, 12.0f)); g.setColour (Colour (0xffe6e0d8));
+                        g.drawText (pct, Rectangle<float> (o.x - 40.0f, y, 40.0f, 16.0f), Justification::centredRight, false);
+                        g.setFont (hobby::makeFont (typeface, 10.0f)); g.setColour (hov ? hobby::kRed : Colour (0xff9a8f84));
+                        g.drawText (nm, Rectangle<float> (o.x - 170.0f, y, 126.0f, 16.0f), Justification::centredRight, true);
+                    }
+                    else
+                    {
+                        g.setFont (hobby::makeFont (typeface, 12.0f)); g.setColour (Colour (0xffe6e0d8));
+                        g.drawText (pct, Rectangle<float> (o.x, y, 40.0f, 16.0f), Justification::centredLeft, false);
+                        g.setFont (hobby::makeFont (typeface, 10.0f)); g.setColour (hov ? hobby::kRed : Colour (0xff9a8f84));
+                        g.drawText (nm, Rectangle<float> (o.x + 44.0f, y, 126.0f, 16.0f), Justification::centredLeft, true);
+                    }
+                }
+                else
+                {
+                    const bool waiting = slot == orbLearning;
+                    g.setFont (hobby::makeFont (typeface, 10.0f));
+                    g.setColour (waiting ? hobby::kOn : Colour (0xff5f5852));
+                    g.drawText (waiting ? String (String::fromUTF8 ("touch a parameter\xe2\x80\xa6")) : String (String::fromUTF8 ("\xe2\x80\x94")),
+                                left ? Rectangle<float> (o.x - 170.0f, y, 170.0f, 16.0f) : Rectangle<float> (o.x, y, 170.0f, 16.0f),
+                                left ? Justification::centredRight : Justification::centredLeft, false);
+                }
+            }
+        }
+
+        // μπάρα θέσης στον κύκλο + ένδειξη εγγραφής κίνησης
+        {
+            const double cyc = jmax (1.0, engine.metroCycleOut.load());
+            const float ph = (float) (std::fmod (jmax (0.0, engine.beatPosOut.load()), cyc) / cyc);
+            const float bw = 240.0f, bx = cx - bw * 0.5f, by = cy + R + 12.0f;
+            g.setColour (Colour (0xff3a3430));
+            g.fillRoundedRectangle (bx, by, bw, 3.0f, 1.5f);
+            g.setColour (Colour (0xffc9c3ba));
+            g.fillRoundedRectangle (bx, by, bw * ph, 3.0f, 1.5f);
+            g.setFont (hobby::makeFont (typeface, 10.0f));
+            if (orbRec)
+            {
+                g.setColour (hobby::kCoral);
+                g.drawText ("REC motion", Rectangle<float> (bx, by + 8.0f, bw, 16.0f), Justification::centred, false);
+            }
+            if (orbMotion)
+            {
+                g.setColour (Colour (0xff9a8f84));
+                g.drawText (String::fromUTF8 ("\xe2\x9c\x95 motion"), orbBottomRect(), Justification::centredRight, false);
+            }
+        }
+    }
+
+    void orbMouseDown (const MouseEvent& e)
+    {
+        const auto p = e.position;
+        for (int c = 0; c < 4; ++c)
+            if (orbDotRect (c).contains (p))
+            {
+                for (int r = 0; r < 4; ++r)
+                    if (! knobs[(size_t) (c * 4 + r)].bound) { if (onOrbAssign) onOrbAssign (c * 4 + r); return; }
+                return;
+            }
+        for (int slot = 0; slot < 16; ++slot)
+            if (orbRowRect (slot).contains (p))
+            {
+                if (knobs[(size_t) slot].bound) { if (onOrbClear) onOrbClear (slot); }
+                else if (onOrbAssign) onOrbAssign (slot);
+                return;
+            }
+        for (int c = 0; c < 4; ++c)
+            if (orbDotPoint (c).getDistanceFrom (p) <= 18.0f)
+            {
+                orbDrag = c;
+                if (onOrbTouch) onOrbTouch (c, true);
+                orbDragTo (p);
+                return;
+            }
+        if (orbMotion && orbBottomRect().contains (p)) { if (onOrbClearMotion) onOrbClearMotion(); return; }
+        if (orbImage.isValid()) { if (orbImageClearRect().contains (p) && onOrbImageClear) onOrbImageClear(); return; }
+        const auto gm = orbGeom();
+        if (p.getDistanceFrom ({ gm.cx, gm.cy }) <= gm.R && onOrbImage) onOrbImage();
+    }
+
+    void orbDragTo (Point<float> p)
+    {
+        if (orbDrag < 0) return;
+        const auto gm = orbGeom();
+        const float k = gm.R - 12.0f;
+        if (onOrbMove) onOrbMove (orbDrag, { (p.x - gm.cx) / k, (p.y - gm.cy) / k });
     }
 
     void mouseDown (const MouseEvent& e) override
     {
         if (e.mods.isPopupMenu()) return;
+        if (orbMode) { orbMouseDown (e); return; }
         if (menuOpen)
         {
             for (auto& z : menuHot)
@@ -1024,15 +1191,6 @@ public:
         }
         for (auto& h : hot)
             if (h.first.contains (e.position)) { h.second(); repaint(); return; }
-        {
-            const int k = knobAt (e.position);
-            if (k >= 0)
-            {
-                if (onKnobClick && onKnobClick (k)) { repaint(); return; }
-                if (knobs[(size_t) k].bound) { dragKnob = k; dragStartY = e.position.y; dragStartVal = knobs[(size_t) k].value; }
-                return;
-            }
-        }
         if (stepOut <= 0) return;
         const auto list = activeBlocks (engine);
         const int i = (e.y - topOut) / stepOut;
@@ -1050,16 +1208,10 @@ public:
 
     void mouseDrag (const MouseEvent& e) override
     {
+        if (orbMode) { orbDragTo (e.position); return; }
         if (draggingMetro) setMetroLevelFromX (e.position.x);
-        else if (dragKnob >= 0 && onKnobDrag)
-        {
-            const float nv = jlimit (0.0f, 1.0f, dragStartVal + (dragStartY - e.position.y) / 160.0f);
-            knobs[(size_t) dragKnob].value = nv;
-            onKnobDrag (dragKnob, nv);
-            repaint (0, getHeight() - knobAreaH, getWidth(), knobAreaH);
-        }
     }
-    void mouseUp (const MouseEvent&) override { dragKnob = -1; if (draggingMetro) { draggingMetro = false; if (onMetroChange) onMetroChange(); } }
+    void mouseUp (const MouseEvent&) override { if (orbMode && orbDrag >= 0) { if (onOrbTouch) onOrbTouch (orbDrag, false); orbDrag = -1; repaint(); } if (draggingMetro) { draggingMetro = false; if (onMetroChange) onMetroChange(); } }
 
 private:
     void setMetroLevelFromX (float px)
@@ -1071,9 +1223,10 @@ private:
     Rectangle<float> metroSliderRect;
     bool draggingMetro = false;
     String lastChord;
-    int dragKnob = -1;
-    float dragStartY = 0.0f, dragStartVal = 0.0f;
-    static constexpr float knobR = 24.0f;
+    int orbDrag = -1, orbHover = -1, orbLearning = -1;
+    bool orbRec = false, orbMotion = false;
+    std::array<Point<float>, 4> orbPos {};
+    std::array<std::vector<Point<float>>, 4> orbTrail;
     std::vector<std::pair<Rectangle<float>, String>> tipZones;   // μπαλούν βοήθειας ανά φωτάκι
     flow::Engine& engine;
     const int& selected;
