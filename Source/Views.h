@@ -386,6 +386,7 @@ public:
     struct KnobState { bool bound = false; float value = 0.0f; String name; };
     std::array<KnobState, 16> knobs;
     static constexpr int knobAreaH = 0;
+    static constexpr int stripY = 16;                 // λωρίδα λαμπακιών κάτω από την progress bar
     bool orbMode = false;
     Image orbImage;
     std::function<void (int)> onOrbAssign, onOrbClear;      // θέση 0..15
