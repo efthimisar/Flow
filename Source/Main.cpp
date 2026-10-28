@@ -78,7 +78,7 @@ public:
         holdTile.onClick = [this] { cycleHold (selected); };
         chordTile.onClick = [this] { if (learnClick (flow::ctlHold)) return; cycleAl (selected); };
         motionTile.onClick = [this] { toggleOrbRec(); };
-        motionTile.setTooltip (gr ("Rec motion: press, then drag a circle in the orb (click flow, top left). The movement is recorded and loops with the cycle."));
+        motionTile.setTooltip (gr ("Rec motion: press, then drag a circle in the orb (click flow, top left). The movement is recorded over 16 bars and loops; you can record over it again."));
         recTile.onClick  = [this]
         {
             if (learnClick (flow::ctlRec)) return;
@@ -1158,7 +1158,9 @@ private:
     }
 
     // ---- Orb: θέση κύκλων, macro, κίνηση ----
-    static constexpr int orbN = 96;   // δείγματα κίνησης ανά κύκλο
+    static constexpr int orbBars = 16;                  // διάρκεια της κίνησης: 16 μέτρα (4/4)
+    static constexpr int orbPerBeat = 16;                // δείγματα ανά beat
+    static constexpr int orbN = orbBars * 4 * orbPerBeat;   // 1024 δείγματα
     struct OrbLane { std::vector<Point<float>> s; std::vector<char> ok; bool has = false, recording = false; };
     std::array<std::array<Point<float>, 4>, (size_t) flow::numBlocks> orbPos;
     std::array<std::array<OrbLane, 4>, (size_t) flow::numBlocks> orbLane;
@@ -1173,9 +1175,9 @@ private:
     static Point<float> orbDefault (int corner) { return orbClamp (corner, { ((corner == 1 || corner == 2) ? 1.0f : -1.0f) * 0.3536f, (corner >= 2 ? 1.0f : -1.0f) * 0.3536f }); }
     static float orbValue (Point<float> p) { return jlimit (0.0f, 1.0f, p.getDistanceFromOrigin()); }
 
-    double orbPhase() const
+    double orbPhase() const   // 0..1 μέσα στα 16 μέτρα
     {
-        const double cyc = jmax (1.0, engine.metroCycleOut.load());
+        constexpr double cyc = (double) (orbBars * 4);
         return std::fmod (jmax (0.0, engine.beatPosOut.load()), cyc) / cyc;
     }
 
@@ -1218,10 +1220,10 @@ private:
         orbTouching[(size_t) corner] = down;
         if (! isActive (selected)) return;
         auto& l = orbLane[(size_t) selected][(size_t) corner];
-        if (down && orbRecArmed)
+        if (down && orbRecArmed)   // overdub: γράφει μόνο εκεί που αγγίζεις, τα υπόλοιπα μένουν
         {
-            l.recording = true; l.has = false;
-            l.s.assign ((size_t) orbN, {}); l.ok.assign ((size_t) orbN, 0);
+            if (l.s.empty()) { l.s.assign ((size_t) orbN, {}); l.ok.assign ((size_t) orbN, 0); }
+            l.recording = true;
         }
         else if (! down && l.recording) orbFinishLane (l);
     }
@@ -1246,26 +1248,30 @@ private:
         orbRecArmed = ! orbRecArmed;
         if (! orbRecArmed)
             for (auto& bl : orbLane) for (auto& l : bl) if (l.recording) orbFinishLane (l);
-        setMessage (orbRecArmed ? gr ("Rec motion: drag a circle in the orb") : gr ("Rec motion off"));
+        setMessage (orbRecArmed ? gr ("Rec motion (16 bars): drag a circle in the orb") : gr ("Rec motion off"));
         motionTile.setIconColour (orbRecArmed ? hobby::kRed : hobby::kIconGrey);
     }
 
     void orbTick()   // εγγραφή και αναπαραγωγή κίνησης (30 φορές το δευτερόλεπτο)
     {
-        const int i = jlimit (0, orbN - 1, (int) (orbPhase() * orbN));
+        const double ph = orbPhase() * orbN;
+        const int i = jlimit (0, orbN - 1, (int) ph);
+        const int i2 = (i + 1) % orbN;
+        const float fr = (float) (ph - std::floor (ph));
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             if (! isActive (b)) continue;
             for (int c = 0; c < 4; ++c)
             {
                 auto& l = orbLane[(size_t) b][(size_t) c];
-                if (l.recording && b == selected)
+                const bool touching = b == selected && orbTouching[(size_t) c];
+                if (touching)
                 {
-                    if (orbTouching[(size_t) c]) { l.s[(size_t) i] = orbPos[(size_t) b][(size_t) c]; l.ok[(size_t) i] = 1; }
+                    if (l.recording) { l.s[(size_t) i] = orbPos[(size_t) b][(size_t) c]; l.ok[(size_t) i] = 1; }
                 }
-                else if (l.has && ! (b == selected && orbTouching[(size_t) c]))
+                else if (l.has)
                 {
-                    const auto p = l.s[(size_t) i];
+                    const auto p = l.s[(size_t) i] + (l.s[(size_t) i2] - l.s[(size_t) i]) * fr;   // ομαλή μετάβαση ανάμεσα στα δείγματα
                     orbPos[(size_t) b][(size_t) c] = p;
                     orbApply (b, c, p);
                 }

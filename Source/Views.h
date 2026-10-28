@@ -1115,7 +1115,7 @@ public:
 
         // μπάρα θέσης στον κύκλο + ένδειξη εγγραφής κίνησης
         {
-            const double cyc = jmax (1.0, engine.metroCycleOut.load());
+            const double cyc = 64.0;   // 16 μέτρα
             const float ph = (float) (std::fmod (jmax (0.0, engine.beatPosOut.load()), cyc) / cyc);
             const float bw = 240.0f, bx = cx - bw * 0.5f, by = cy + R + 12.0f;
             g.setColour (Colour (0xff3a3430));
@@ -1128,6 +1128,8 @@ public:
                 g.setColour (hobby::kCoral);
                 g.drawText ("REC motion", Rectangle<float> (bx, by + 8.0f, bw, 16.0f), Justification::centred, false);
             }
+            g.setColour (Colour (0xff9a8f84));
+            g.drawText (String (jlimit (1, 16, (int) (ph * 16.0f) + 1)) + " / 16", Rectangle<float> (cx - bw * 0.5f - 60.0f, by - 7.0f, 54.0f, 16.0f), Justification::centredRight, false);
             if (orbMotion)
             {
                 g.setColour (Colour (0xff9a8f84));
