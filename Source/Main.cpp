@@ -2490,7 +2490,26 @@ private:
         {
             if (! isActive (b)) continue;
             auto* e = root->createNewChildElement ("Block");
-            writeKnobs (*e->createNewChildElement ("Orb"), blockKnobs[(size_t) b]);
+            {
+                auto* oe = e->createNewChildElement ("Orb");
+                writeKnobs (*oe, blockKnobs[(size_t) b]);
+                // Rec motion: 1024 δείγματα ανά κύκλο, x και y ως int16 (±1 → ±32767), base64
+                for (int c = 0; c < 4; ++c)
+                {
+                    const auto& l = orbLane[(size_t) b][(size_t) c];
+                    if (! l.has || l.recording || (int) l.s.size() != orbN) continue;
+                    MemoryBlock mb ((size_t) orbN * 4);
+                    auto* q = static_cast<int16*> (mb.getData());
+                    for (int i = 0; i < orbN; ++i)
+                    {
+                        q[2 * i]     = (int16) std::lround (jlimit (-1.0f, 1.0f, l.s[(size_t) i].x) * 32767.0f);
+                        q[2 * i + 1] = (int16) std::lround (jlimit (-1.0f, 1.0f, l.s[(size_t) i].y) * 32767.0f);
+                    }
+                    auto* me = oe->createNewChildElement ("Motion");
+                    me->setAttribute ("c", c);
+                    me->addTextElement (Base64::toBase64 (mb.getData(), mb.getSize()));
+                }
+            }
             e->setAttribute ("slot", b);
             e->setAttribute ("lo", engine.lo[(size_t) b].load());
             e->setAttribute ("hi", engine.hi[(size_t) b].load());
@@ -2689,7 +2708,23 @@ private:
                 continue;
             }
 
-            if (auto* ke = e->getChildByName ("Orb")) readKnobs (*ke, blockKnobs[(size_t) slot]);
+            if (auto* ke = e->getChildByName ("Orb"))
+            {
+                readKnobs (*ke, blockKnobs[(size_t) slot]);
+                for (auto* me : ke->getChildWithTagNameIterator ("Motion"))
+                {
+                    const int c = me->getIntAttribute ("c", -1);
+                    if (c < 0 || c > 3) continue;
+                    MemoryOutputStream mo;
+                    if (! Base64::convertFromBase64 (mo, me->getAllSubText().trim()) || mo.getDataSize() != (size_t) orbN * 4) continue;
+                    const auto* q = static_cast<const int16*> (mo.getData());
+                    auto& l = orbLane[(size_t) slot][(size_t) c];
+                    l.s.assign ((size_t) orbN, {});
+                    l.ok.assign ((size_t) orbN, 1);
+                    for (int i = 0; i < orbN; ++i) l.s[(size_t) i] = { (float) q[2 * i] / 32767.0f, (float) q[2 * i + 1] / 32767.0f };
+                    l.has = true; l.recording = false;
+                }
+            }
 
             engine.holdMode[(size_t) slot]  = jlimit (0, 4, e->getIntAttribute ("hold", 0));
             engine.setAlText (slot, e->getStringAttribute ("al"));
@@ -3251,7 +3286,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.44.0"; }
+    const String getApplicationVersion() override { return "0.45.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
