@@ -219,6 +219,7 @@ public:
         webOrbToken = settings->getValue ("webOrbToken");
         if (webOrbToken.isEmpty()) webOrbToken = String::toHexString (Random::getSystemRandom().nextInt64()).paddedLeft ('0', 8).substring (0, 8);
         if (settings->getBoolValue ("webOrbOn", false)) startWebOrb();
+        orbStage = 1; loopsView.setOrbMode (true); orbRecTile.setState (orbStage, orbRecArmed);   // προεπιλογή: ανοίγει η οθόνη του orb
 
         const String savedFolder = settings->getValue ("tapeFolder");
         engine.recorder.setFolder (savedFolder.isNotEmpty() ? File (savedFolder)
@@ -3593,7 +3594,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.3"; }
+    const String getApplicationVersion() override { return "0.51.4"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
