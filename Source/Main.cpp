@@ -900,7 +900,9 @@ private:
             const int b = engine.blockForNote (n);
             if (b < 0) continue;
             if (engine.blockOff[(size_t) b].load() != 0) continue;
-            buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? 3 : 1);
+            const int hue = blockHue (b);
+            const int selBright = (hue == 3 || hue == 4) ? 2 : 3;   // τα κίτρινα LED στη μέγιστη φωτεινότητα φαίνονται σχεδόν λευκά
+            buf[(size_t) idx] = lightByte (hue, b == selected ? selBright : 1);
         }
 
         // ό,τι κρατιέται με Hold (και οι νότες συγχορδίας του) είναι λευκό και στο hardware, ακόμα κι αν είναι έξω από τη ζώνη
