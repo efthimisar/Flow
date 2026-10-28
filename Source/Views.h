@@ -666,6 +666,13 @@ public:
         const int axisBars = engine.axisBarsOut.load();
         const double axisBeats = (double) axisBars * flow::beatsPerBar;
         const double now = engine.beatPosOut.load();
+        double cycleBeats = 0.0;   // ο μεγαλύτερος κύκλος λούπας που παίζει (0 = καμία)
+        for (int b = 0; b < flow::numBlocks; ++b)
+        {
+            const int st = engine.loopStateOut[(size_t) b].load();
+            if (engine.active[(size_t) b].load() != 0 && (st == flow::loopPlay || st == flow::loopOver))
+                cycleBeats = jmax (cycleBeats, engine.loopBeatsOut[(size_t) b].load());
+        }
 
         int recording = -1;
         bool overdubbing = false;
@@ -747,9 +754,12 @@ public:
                 const bool allMuted = (layers > 0 && ((unsigned) engine.loopMuteOut[(size_t) b].load() & allMask) == allMask)
                                       || engine.loopStoppedOut[(size_t) b].load() != 0;
 
-                for (double k = 0.0; k < axisBeats - 1.0e-6; k += L)
+                // οι λούπες είναι αγκυρωμένες στο πλέγμα (beat 0) και ο κύκλος είναι η μεγαλύτερη λούπα:
+                // η λωρίδα σχεδιάζεται μόνο μέσα στον κύκλο, όπως κινείται και το playhead
+                const double drawEnd = jmin (axisBeats, jmax (L, cycleBeats));
+                for (double k = 0.0; k < drawEnd - 1.0e-6; k += L)
                 {
-                    const double len = jmin (L, axisBeats - k);
+                    const double len = jmin (L, drawEnd - k);
                     const Rectangle<float> seg (laneX + laneW * (float) (k / axisBeats) + 0.002f * laneW, y,
                                                 laneW * (float) (len / axisBeats) - 0.004f * laneW, lh);
                     const bool dimSeg = allMuted || engine.blockOff[(size_t) b].load() != 0;
@@ -803,7 +813,8 @@ public:
         for (int i = 0; i < count && ! anyLoop; ++i)
             if (engine.loopStateOut[(size_t) list[i].getIntValue()].load() != flow::loopOff) anyLoop = true;
         // χωρίς λούπα το playhead περιμένει στην αρχή: ξεκινά όταν πατηθεί το Rec MIDI loop
-        const float hx = laneX + (anyLoop ? laneW * (float) (std::fmod (now, axisBeats) / axisBeats) : 0.0f);
+        const double headBeats = (recording < 0 && cycleBeats > 0.0) ? jmin (axisBeats, cycleBeats) : axisBeats;
+        const float hx = laneX + (anyLoop ? laneW * (float) (std::fmod (now, headBeats) / axisBeats) : 0.0f);
         g.setColour (anyLoop ? Colours::white : Colours::white.withAlpha (0.25f));
         g.fillRect (hx - 1.0f, (float) (top - 8), 2.0f, (float) (gridBottom - top + 8));
 
