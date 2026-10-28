@@ -397,6 +397,20 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (s, 2.2f);
             break;
         }
+        case Symbol::Speaker:   // ηχείο με κύματα
+        {
+            juce::Path p;
+            p.addRectangle (-9.0f, -3.5f, 5.0f, 7.0f);
+            p.startNewSubPath (-4.0f, -3.5f); p.lineTo (2.0f, -8.0f); p.lineTo (2.0f, 8.0f); p.lineTo (-4.0f, 3.5f); p.closeSubPath();
+            fill (p, col);
+            for (float r : { 5.0f, 9.0f })
+            {
+                juce::Path w;
+                w.addCentredArc (3.0f, 0.0f, r, r, 0.0f, 0.75f, 2.4f, true);
+                stroke (w, 1.8f);
+            }
+            break;
+        }
         case Symbol::Fx:
         {
             juce::Path p;

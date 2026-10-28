@@ -2148,7 +2148,7 @@ private:
         add (String::fromUTF8 ("\xe2\x96\xad"), gr ("Rec Audio folder\xe2\x80\xa6"), act ([this] { chooseTapeFolder(); }));
 
         {
-            LoopsView::MenuEntry m; m.glyph = String::fromUTF8 ("\xe2\x96\x82\xe2\x96\x84\xe2\x96\x86"); m.text = gr ("Master volume");
+            LoopsView::MenuEntry m; m.glyph = "v"; m.symbol = (int) Symbol::Speaker; m.text = gr ("Master volume");
             const float pos = engine.masterPos.load();
             const float steps[4] { 1.0f, 0.85f, 0.7f, 0.5f };
             for (int i = 0; i < 4; ++i)
@@ -3218,7 +3218,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.42.0"; }
+    const String getApplicationVersion() override { return "0.43.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

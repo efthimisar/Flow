@@ -442,7 +442,7 @@ public:
     }
 
     // μενού μέσα στην οθόνη (κουμπί φακέλου): αριστερά επιλογές, δεξιά πληροφορίες
-    struct MenuEntry { String glyph, text; bool enabled = true, checked = false; std::function<void()> fn; std::vector<MenuEntry> sub; };
+    struct MenuEntry { String glyph, text; bool enabled = true, checked = false; int symbol = -1; std::function<void()> fn; std::vector<MenuEntry> sub; };
     bool menuOpen = false;
     std::function<void()> onMenuOpen;   // το Main γεμίζει τις επιλογές και τις πληροφορίες
     void setMenu (std::vector<MenuEntry> items) { menuItems = std::move (items); if (menuOpen) repaint(); }
@@ -473,35 +473,42 @@ public:
         g.setColour (Colour (0xff3a3430));
         g.drawRoundedRectangle (panel.reduced (0.5f), 10.0f, 1.0f);
 
-        const float split = panel.getX() + panel.getWidth() * 0.52f;
+        const float split = panel.getX() + 52.0f;
         g.setColour (Colour (0xff3a3430));
-        g.fillRect (split - 12.0f, panel.getY() + 12.0f, 1.0f, panel.getHeight() - 24.0f);
+        g.fillRect (split, panel.getY() + 12.0f, 1.0f, panel.getHeight() - 24.0f);
 
         const Colour dim (0xff6b625a), txt (0xfff3f4f6);
         g.setFont (hobby::makeFont (typeface, 11.0f));
         g.setColour (dim);
-        g.drawText ("MENU", (int) panel.getX() + 18, (int) panel.getY() + 8, 120, 16, Justification::centredLeft, false);
-        g.drawText ("INFO", (int) split + 6, (int) panel.getY() + 8, 120, 16, Justification::centredLeft, false);
+        g.drawText ("INFO", (int) split + 14, (int) panel.getY() + 8, 120, 16, Justification::centredLeft, false);
 
-        const int rows = jmax (1, jmax ((int) menuItems.size(), (int) menuInfo.size()));
-        const float rowH = jlimit (18.0f, 28.0f, (panel.getHeight() - 38.0f) / (float) rows);
-        const float y0 = panel.getY() + 30.0f;
-        const float colW = split - panel.getX() - 28.0f;
-
+        // αριστερή στήλη: μικροί κύκλοι με σύμβολο, το όνομα φαίνεται στο hover
+        const int n = jmax (1, (int) menuItems.size());
+        const float step = (panel.getHeight() - 20.0f) / (float) n;
+        const float rad = jlimit (8.0f, 13.0f, step * 0.5f - 2.0f);
+        const float cx = panel.getX() + 26.0f;
         std::function<void()> closeFn = [this] { openMenu (false); };
+        std::vector<Rectangle<float>> circles;
         for (int i = 0; i < (int) menuItems.size(); ++i)
         {
             const auto& it = menuItems[(size_t) i];
-            const Rectangle<float> r (panel.getX() + 10.0f, y0 + rowH * (float) i, colW, rowH);
+            const float cy = panel.getY() + 10.0f + step * ((float) i + 0.5f);
+            const Rectangle<float> c (cx - rad, cy - rad, 2.0f * rad, 2.0f * rad);
+            circles.push_back (c);
+            const Rectangle<float> r = c.expanded (4.0f, jmax (0.0f, (step - 2.0f * rad) * 0.5f));
             const bool hot_ = i == menuHover || i == menuSub;
-            if (hot_ && it.enabled) { g.setColour (Colour (0xff3a332e)); g.fillRoundedRectangle (r, 6.0f); }
-            g.setFont (hobby::makeFont (typeface, jlimit (12.0f, 16.0f, rowH * 0.6f)));
-            g.setColour (it.enabled ? hobby::kOn : dim);
-            g.drawText (it.glyph, (int) r.getX(), (int) r.getY(), 28, (int) r.getHeight(), Justification::centred, false);
-            g.setColour (it.enabled ? txt : dim);
-            g.drawText (it.text + (it.sub.empty() ? String() : String::fromUTF8 ("  \xe2\x96\xb8")),
-                        (int) r.getX() + 34, (int) r.getY(), (int) r.getWidth() - 34, (int) r.getHeight(), Justification::centredLeft, true);
-            if (it.checked) { g.setColour (hobby::kOn); g.drawText (String::fromUTF8 ("\xe2\x9c\x93"), (int) r.getRight() - 24, (int) r.getY(), 20, (int) r.getHeight(), Justification::centred, false); }
+            g.setColour (hot_ && it.enabled ? Colour (0xff54493f) : Colour (0xff3a332e));
+            g.fillEllipse (c);
+            g.setColour (it.checked ? hobby::kOn : Colour (0xff4a423b));
+            g.drawEllipse (c.reduced (0.5f), it.checked ? 1.6f : 1.0f);
+            const Colour ic = it.enabled ? (it.glyph == "!" ? Colour (0xffff7a6e) : hobby::kOn) : dim;
+            if (it.symbol >= 0) hobby::drawSymbol (g, (hobby::Symbol) it.symbol, c.getCentre(), rad * 1.15f, ic);
+            else
+            {
+                g.setColour (ic);
+                g.setFont (hobby::makeFont (typeface, rad * 1.05f));
+                g.drawText (it.glyph, c.toNearestInt(), Justification::centred, false);
+            }
             if (it.enabled)
             {
                 if (! it.sub.empty()) menuHot.push_back ({ r, [this, i] { menuSub = menuSub == i ? -1 : i; }, i });
@@ -509,14 +516,30 @@ public:
             }
         }
 
-        // υπομενού (flyout) δίπλα στην επιλογή που το έχει
+        // όνομα στο hover
+        if (menuHover >= 0 && menuHover < (int) menuItems.size() && menuHover != menuSub)
+        {
+            const auto& it = menuItems[(size_t) menuHover];
+            const auto c = circles[(size_t) menuHover];
+            g.setFont (hobby::makeFont (typeface, 12.0f));
+            const float tw = (float) g.getCurrentFont().getStringWidth (it.text) + 18.0f;
+            const Rectangle<float> tr (c.getRight() + 10.0f, c.getCentreY() - 11.0f, tw, 22.0f);
+            g.setColour (Colour (0xff2f2a27)); g.fillRoundedRectangle (tr, 7.0f);
+            g.setColour (Colour (0xff4a423b)); g.drawRoundedRectangle (tr.reduced (0.5f), 7.0f, 1.0f);
+            g.setColour (it.enabled ? txt : dim);
+            g.drawText (it.text, tr.toNearestInt(), Justification::centred, false);
+        }
+
+        // υπομενού (flyout) δίπλα στον κύκλο
         if (menuSub >= 0 && menuSub < (int) menuItems.size() && ! menuItems[(size_t) menuSub].sub.empty())
         {
             const auto& subs = menuItems[(size_t) menuSub].sub;
-            const float fw = jmin (260.0f, colW * 0.6f), fh = rowH * (float) subs.size() + 12.0f;
-            const float fx = panel.getX() + 10.0f + colW - fw - 4.0f;
-            float fy = y0 + rowH * (float) menuSub;
-            fy = jmin (fy, panel.getBottom() - fh - 6.0f);
+            const float subH = jlimit (20.0f, 28.0f, step);
+            const float fw = 260.0f, fh = subH * (float) subs.size() + 12.0f;
+            const auto c = circles[(size_t) menuSub];
+            const float fx = c.getRight() + 12.0f;
+            float fy = c.getCentreY() - subH * 0.5f - 6.0f;
+            fy = jmax (panel.getY() + 4.0f, jmin (fy, panel.getBottom() - fh - 6.0f));
             const Rectangle<float> fr (fx, fy, fw, fh);
             g.setColour (Colour (0xff2f2a27)); g.fillRoundedRectangle (fr, 8.0f);
             g.setColour (Colour (0xff4a423b)); g.drawRoundedRectangle (fr.reduced (0.5f), 8.0f, 1.0f);
@@ -524,8 +547,8 @@ public:
             for (int j = 0; j < (int) subs.size(); ++j)
             {
                 const auto& sj = subs[(size_t) j];
-                const Rectangle<float> rr (fr.getX() + 6.0f, fr.getY() + 6.0f + rowH * (float) j, fr.getWidth() - 12.0f, rowH);
-                g.setFont (hobby::makeFont (typeface, jlimit (11.0f, 14.0f, rowH * 0.55f)));
+                const Rectangle<float> rr (fr.getX() + 6.0f, fr.getY() + 6.0f + subH * (float) j, fr.getWidth() - 12.0f, subH);
+                g.setFont (hobby::makeFont (typeface, 13.0f));
                 g.setColour (sj.enabled ? txt : dim);
                 g.drawText (sj.text, (int) rr.getX() + 8, (int) rr.getY(), (int) rr.getWidth() - 34, (int) rr.getHeight(), Justification::centredLeft, true);
                 if (sj.checked) { g.setColour (hobby::kOn); g.drawText (String::fromUTF8 ("\xe2\x9c\x93"), (int) rr.getRight() - 24, (int) rr.getY(), 20, (int) rr.getHeight(), Justification::centred, false); }
@@ -534,15 +557,17 @@ public:
         }
 
         // πληροφορίες
+        const float rowH = jlimit (18.0f, 28.0f, (panel.getHeight() - 38.0f) / (float) jmax (1, (int) menuInfo.size()));
+        const float y0 = panel.getY() + 30.0f;
         for (int i = 0; i < (int) menuInfo.size(); ++i)
         {
             const float y = y0 + rowH * (float) i;
             g.setFont (hobby::makeFont (typeface, 12.0f));
             g.setColour (dim);
-            g.drawText (menuInfo[(size_t) i].first, (int) split + 6, (int) y, 100, (int) rowH, Justification::centredLeft, true);
+            g.drawText (menuInfo[(size_t) i].first, (int) split + 14, (int) y, 100, (int) rowH, Justification::centredLeft, true);
             g.setFont (hobby::makeFont (typeface, 13.0f));
             g.setColour (txt);
-            g.drawText (menuInfo[(size_t) i].second, (int) split + 110, (int) y, (int) (panel.getRight() - split - 120.0f), (int) rowH, Justification::centredLeft, true);
+            g.drawText (menuInfo[(size_t) i].second, (int) split + 120, (int) y, (int) (panel.getRight() - split - 130.0f), (int) rowH, Justification::centredLeft, true);
         }
     }
 
