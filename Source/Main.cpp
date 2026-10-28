@@ -606,7 +606,16 @@ private:
     void refreshSize()
     {
         if (getWidth() <= 0 || getHeight() <= 0)
-            setSize (minWinW(), defaultWinH());
+        {
+            // προεπιλεγμένο μέγεθος: 1157 x 806 (όπως το ρύθμισε ο χρήστης), μικρότερο μόνο αν δεν χωράει στην οθόνη
+            int w = 1157, h = 806;
+            if (auto* d = Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            {
+                w = jmin (w, d->userArea.getWidth() - 40);
+                h = jmin (h, d->userArea.getHeight() - 28 - 40);
+            }
+            setSize (jmax (minWinW(), w), jmax (defaultWinH(), h));
+        }
 
         if (auto* w = findParentComponentOfClass<DocumentWindow>())
             w->setResizeLimits (minWinW(), minWinH() + 28, 4000, 3000);
@@ -3465,7 +3474,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.48.5"; }
+    const String getApplicationVersion() override { return "0.48.6"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
