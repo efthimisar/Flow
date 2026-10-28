@@ -208,7 +208,7 @@ private:
         const PathStrokeType st (2.2f, PathStrokeType::curved, PathStrokeType::rounded);
         switch (kind)
         {
-            case 0: hobby::drawSymbol (g, hobby::Symbol::Sliders, c, 30.0f, col); break;
+            case 0: drawSymbol (g, Symbol::Sliders, c, 30.0f, col); break;
             case 1: // save: βέλος κάτω προς δίσκο
                 p.startNewSubPath (c.x, c.y - 11.0f); p.lineTo (c.x, c.y + 3.0f);
                 p.startNewSubPath (c.x - 7.0f, c.y - 3.0f); p.lineTo (c.x, c.y + 5.0f); p.lineTo (c.x + 7.0f, c.y - 3.0f);
@@ -224,11 +224,11 @@ private:
                 g.strokePath (p, st);
                 { Path a; a.startNewSubPath (c.x + 10.0f, c.y - 11.0f); a.lineTo (c.x + 10.0f, c.y - 2.0f); a.lineTo (c.x + 2.0f, c.y - 6.0f); a.closeSubPath(); g.fillPath (a); }
                 break;
-            case 4: hobby::drawSymbol (g, hobby::Symbol::Folder, c, 30.0f, col); break;
-            case 5: hobby::drawSymbol (g, hobby::Symbol::Speaker, c, 30.0f, col); break;
+            case 4: drawSymbol (g, Symbol::Folder, c, 30.0f, col); break;
+            case 5: drawSymbol (g, Symbol::Speaker, c, 30.0f, col); break;
             case 6: g.setFont (font (30.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x88\x9e"), Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 7: g.setColour (Colour (0xfff26b6b)); g.setFont (font (30.0f, true)); g.drawText ("!", Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
-            case 8: hobby::drawSymbol (g, hobby::Symbol::Window, c, 30.0f, col); break;
+            case 8: drawSymbol (g, Symbol::Window, c, 30.0f, col); break;
             default: break;
         }
     }
@@ -405,7 +405,7 @@ private:
         const Rectangle<int> r (40, 98, juce::jmin (620, getWidth() - 80), 42);
         g.setColour (Colour (0xff36322f)); g.fillRoundedRectangle (r.toFloat(), 10.0f);
         g.setColour (lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 10.0f, 1.0f);
-        hobby::drawSymbol (g, hobby::Symbol::Folder, { (float) r.getX() + 26.0f, (float) r.getCentreY() }, 20.0f, txt());
+        drawSymbol (g, Symbol::Folder, { (float) r.getX() + 26.0f, (float) r.getCentreY() }, 20.0f, txt());
         String path = cur.getFullPathName();
         const auto home = File::getSpecialLocation (File::userHomeDirectory).getFullPathName();
         if (home.isNotEmpty() && path.startsWith (home)) path = "~" + path.substring (home.length());
@@ -443,7 +443,7 @@ private:
     {
         using namespace juce;
         const float v = host.masterGet ? host.masterGet() : 1.0f;
-        hobby::drawSymbol (g, hobby::Symbol::Speaker, { 64.0f, 130.0f }, 38.0f, txt());
+        drawSymbol (g, Symbol::Speaker, { 64.0f, 130.0f }, 38.0f, txt());
         const int tw = juce::jmin (640, getWidth() - 40 - 100 - 120);
         sliderRect = { 110, 114, tw, 32 };
         g.setColour (Colour (0xff36322f)); g.fillRoundedRectangle (sliderRect.toFloat(), 16.0f);
@@ -558,7 +558,7 @@ private:
         const Rectangle<int> r (40, 98, juce::jmin (620, getWidth() - 80), 42);
         g.setColour (Colour (0xff36322f)); g.fillRoundedRectangle (r.toFloat(), 10.0f);
         g.setColour (lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 10.0f, 1.0f);
-        hobby::drawSymbol (g, hobby::Symbol::Folder, { (float) r.getX() + 26.0f, (float) r.getCentreY() }, 20.0f, txt());
+        drawSymbol (g, Symbol::Folder, { (float) r.getX() + 26.0f, (float) r.getCentreY() }, 20.0f, txt());
         g.setColour (txt()); g.setFont (font (14.0f));
         g.drawText (host.orbFolderText ? host.orbFolderText() : String(), r.withTrimmedLeft (48).withTrimmedRight (12), Justification::centredLeft, true);
         pill (g, { 40, 164, 230, 46 }, "Choose folder...", false, true, [this] { if (host.chooseOrbFolder) host.chooseOrbFolder(); });

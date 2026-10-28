@@ -1387,23 +1387,25 @@ private:
         });
     }
 
+    // ολόκληρη η εικόνα χωράει μέσα στον κύκλο (χωρίς zoom και χωρίς κόψιμο): η διαγώνιός της = η διάμετρος
+    static Image orbFit (const Image& src, bool flipIt = false, int quarterTurns = 0)
+    {
+        constexpr int N = 512;
+        Image out (Image::ARGB, N, N, true);
+        Graphics g (out);
+        g.setImageResamplingQuality (Graphics::highResamplingQuality);
+        const float w = (float) src.getWidth(), h = (float) src.getHeight();
+        const float k = (float) N / std::sqrt (w * w + h * h);
+        g.addTransform (AffineTransform::translation (-w * 0.5f, -h * 0.5f).scaled (flipIt ? -k : k, k)
+                            .rotated ((float) quarterTurns * MathConstants<float>::halfPi).translated ((float) N * 0.5f, (float) N * 0.5f));
+        g.drawImageAt (src, 0, 0);
+        return out;
+    }
+
     static Image orbVariation (const Image& src, Random& rnd)
     {
         constexpr int N = 512;
-        const int s0 = jmin (src.getWidth(), src.getHeight());
-        const int s = jmax (16, (int) ((float) s0 / (1.0f + rnd.nextFloat() * 0.8f)));      // ζουμ 1x έως 1.8x
-        const Image crop = src.getClippedImage ({ rnd.nextInt (jmax (1, src.getWidth() - s + 1)), rnd.nextInt (jmax (1, src.getHeight() - s + 1)), s, s });
-
-        Image out (Image::ARGB, N, N, true);
-        {
-            Graphics g (out);
-            g.setImageResamplingQuality (Graphics::highResamplingQuality);
-            const float angle = (float) rnd.nextInt (4) * MathConstants<float>::halfPi + (rnd.nextFloat() - 0.5f) * 0.5f;
-            const float flip = rnd.nextBool() ? -1.0f : 1.0f;
-            const float big = 1.5f * (float) N;   // μεγαλύτερο, ώστε η περιστροφή να μην αφήνει κενά στις γωνίες
-            g.addTransform (AffineTransform::scale (flip, 1.0f).rotated (angle).translated ((float) N * 0.5f, (float) N * 0.5f));
-            g.drawImage (crop, Rectangle<float> (-big * 0.5f, -big * 0.5f, big, big));
-        }
+        Image out = orbFit (src, rnd.nextBool(), rnd.nextInt (4));
 
         // χρώμα: μετατόπιση απόχρωσης, κορεσμός, φωτεινότητα
         const float hueShift = rnd.nextFloat(), satMul = 0.7f + rnd.nextFloat() * 0.6f, briMul = 0.8f + rnd.nextFloat() * 0.35f;
@@ -1441,7 +1443,7 @@ private:
             const auto f = fc.getResult();
             if (f == File()) return;
             auto img = ImageFileFormat::loadFrom (f);
-            if (img.isValid()) setOrbImage (img); else setMessage (gr ("Could not read the image"));
+            if (img.isValid()) setOrbImage (orbFit (img)); else setMessage (gr ("Could not read the image"));
         });
     }
 
@@ -3591,7 +3593,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.2"; }
+    const String getApplicationVersion() override { return "0.51.3"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
