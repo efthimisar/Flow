@@ -405,12 +405,7 @@ public:
     void setOrb (const std::array<KnobState, 16>& k, const std::array<Point<float>, 4>& pos, int learning, bool rec, bool motion)
     {
         for (int c = 0; c < 4; ++c)
-        {
-            auto& t = orbTrail[(size_t) c];
-            if (t.empty() || t.back().getDistanceFrom (pos[(size_t) c]) > 0.004f) t.push_back (pos[(size_t) c]);
-            else if (t.size() > 1) t.erase (t.begin());     // όταν σταθεί, η σκιά σιγά-σιγά μαζεύεται στον κύκλο
-            while (t.size() > 36) t.erase (t.begin());
-        }
+            orbLift[(size_t) c] += ((c == orbDrag ? 1.0f : 0.0f) - orbLift[(size_t) c]) * 0.25f;    // ο κύκλος σηκώνεται ομαλά όταν τον κρατάς
         knobs = k; orbPos = pos; orbLearning = learning; orbRec = rec; orbMotion = motion;
         if (orbMode) repaint();
         if (orbExternal) orbExternal->repaint();
@@ -1112,37 +1107,36 @@ public:
             g.drawText (String::fromUTF8 ("\xe2\x9c\x95"), orbImageClearRect(), Justification::centred, false);
         }
 
-        // σκιές κίνησης και κύκλοι
-        for (int c = 0; c < 4; ++c)
-        {
-            const auto col = orbColour (c);
-            const float k = R - 12.0f;
-            const auto& t = orbTrail[(size_t) c];
-            for (size_t i = 0; i < t.size(); ++i)
-            {
-                const float f = (float) (i + 1) / (float) t.size();
-                const float a = 0.30f * f * f;
-                const Point<float> p (cx + t[i].x * k, cy + t[i].y * k);
-                g.setColour (col.withAlpha (a * 0.45f));
-                g.fillEllipse (p.x - 16.0f * f - 3.0f, p.y - 16.0f * f - 3.0f, 2.0f * (16.0f * f + 3.0f), 2.0f * (16.0f * f + 3.0f));
-                g.setColour (col.withAlpha (a));
-                g.fillEllipse (p.x - 9.0f, p.y - 9.0f, 18.0f, 18.0f);
-            }
-        }
+        // κύκλοι που αιωρούνται: σκούρα μαλακή σκιά από κάτω. Όταν κρατάς έναν, σηκώνεται και η σκιά του απομακρύνεται και θολώνει.
         for (int c = 0; c < 4; ++c)
         {
             const auto col = orbColour (c);
             const auto p = orbDotPoint (c);
             const float r = c == orbDrag ? 12.0f : 10.5f;
-            g.setColour (col.withAlpha (0.35f));
-            g.drawEllipse (p.x - r - 3.0f, p.y - r - 3.0f, 2.0f * (r + 3.0f), 2.0f * (r + 3.0f), 1.2f);
+            const float lift = orbLift[(size_t) c];
+            const float bob = 0.5f + 0.5f * (float) std::sin (nowMs * 0.0018 + (double) c * 1.7);
+            const float h = 4.0f + 1.5f * bob * (1.0f - lift) + 9.0f * lift;     // «ύψος» σε εικονοστοιχεία
+
+            {
+                const float cxs = p.x + h * 0.35f, cys = p.y + h * 1.25f + 4.0f;
+                const float rx = r * (1.0f - h * 0.012f), bl = 2.2f + h * 0.55f;
+                const float a = jlimit (0.15f, 0.9f, 0.92f - h * 0.02f);
+                Graphics::ScopedSaveState ss (g);
+                g.addTransform (AffineTransform::scale (1.0f, 0.45f, cxs, cys));
+                g.setGradientFill (ColourGradient (Colours::black.withAlpha (a), cxs, cys, Colours::transparentBlack, cxs + rx + bl, cys, true));
+                g.fillEllipse (cxs - rx - bl, cys - rx - bl, 2.0f * (rx + bl), 2.0f * (rx + bl));
+            }
+
+            const float py = p.y - h * 0.45f;
             g.setColour (col);
-            g.fillEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r);
+            g.fillEllipse (p.x - r, py - r, 2.0f * r, 2.0f * r);
+            g.setColour (col.brighter (0.45f).withAlpha (0.85f));
+            g.fillEllipse (p.x - r * 0.55f, py - r * 0.7f, r * 0.65f, r * 0.5f);
             g.setColour (Colours::white);
-            g.drawEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r, 1.5f);
+            g.drawEllipse (p.x - r, py - r, 2.0f * r, 2.0f * r, 1.5f);
             g.setColour (Colour (0xff262220));
             g.setFont (hobby::makeFont (typeface, 11.0f));
-            g.drawText (String (c + 1), Rectangle<float> (p.x - r, p.y - r, 2.0f * r, 2.0f * r), Justification::centred, false);
+            g.drawText (String (c + 1), Rectangle<float> (p.x - r, py - r + 1.0f, 2.0f * r, 2.0f * r), Justification::centred, false);
         }
 
         // λίστες αναθέσεων στις 4 γωνίες
@@ -1339,7 +1333,7 @@ private:
     int orbDrag = -1, orbHover = -1, orbLearning = -1;
     bool orbRec = false, orbMotion = false;
     std::array<Point<float>, 4> orbPos {};
-    std::array<std::vector<Point<float>>, 4> orbTrail;
+    std::array<float, 4> orbLift { { 0.0f, 0.0f, 0.0f, 0.0f } };
     std::vector<std::pair<Rectangle<float>, String>> tipZones;   // μπαλούν βοήθειας ανά φωτάκι
     flow::Engine& engine;
     const int& selected;
