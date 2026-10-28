@@ -1004,19 +1004,21 @@ public:
             const Colour switchOrange (0xffe8883a);
             const bool latchedKey = b >= 0 && engine.blockOff[(size_t) b].load() == 0
                                     && ((engine.latchBits[(size_t) b * 2 + (size_t) (n >> 6)].load() >> (n & 63)) & 1) != 0;
+            const bool pressedKey = ((engine.pressBits[(size_t) (n >> 6)].load() >> (n & 63)) & 1) != 0;   // το πλήκτρο που πατάς φαίνεται λευκό
+            const bool litKey = latchedKey || pressedKey;
 
             if (black)
             {
                 blackRects.push_back ({ l, keysY, r - l, 34.0f });
-                Colour c = latchedKey ? Colours::white : switchKey ? switchOrange.darker (0.25f) : (b >= 0 ? keyDeep (b) : (isFirst ? blockDeep (cb) : freeBlack));
+                Colour c = litKey ? Colours::white : switchKey ? switchOrange.darker (0.25f) : (b >= 0 ? keyDeep (b) : (isFirst ? blockDeep (cb) : freeBlack));
                 blackCols.push_back (c.withMultipliedAlpha (alpha));
             }
             else
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                Colour c = latchedKey ? Colours::white : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
+                Colour c = litKey ? Colours::white : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
                 const Colour cc = c.withMultipliedAlpha (alpha);
-                if (b >= 0 && ! latchedKey && ! switchKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
+                if (b >= 0 && ! litKey && ! switchKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
                     g.setGradientFill (ColourGradient (cc, 0.0f, kr.getY(), cc.interpolatedWith (hobby::kScreen, 0.3f), 0.0f, kr.getBottom(), false));
                 else
                     g.setColour (cc);

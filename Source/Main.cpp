@@ -901,6 +901,9 @@ private:
             if (b < 0) continue;
             if (engine.blockOff[(size_t) b].load() != 0) continue;
             buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? 3 : 1);
+            // πλήκτρα με Hold: λευκά και στο hardware, όπως στην οθόνη
+            if (((engine.latchBits[(size_t) b * 2 + (size_t) (n >> 6)].load() >> (n & 63)) & 1) != 0)
+                buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);
         }
 
         const int sb = engine.specialBlock.load();

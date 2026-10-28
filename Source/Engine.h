@@ -115,6 +115,7 @@ namespace flow
 
         //==================== controls and read-outs (message thread) ====================
         std::array<std::atomic<uint64_t>, numBlocks * 2> swBits;      // AL: πλήκτρα που είναι key switch (πορτοκαλί), για την οθόνη
+        std::array<std::atomic<uint64_t>, 2> pressBits {};              // πλήκτρα που πατιούνται τώρα (φυσικά), για την οθόνη
         std::array<std::atomic<uint64_t>, numBlocks * 2> latchBits;   // πλήκτρα που κρατιούνται από το Latch (και νότες συγχορδίας), για την οθόνη
         std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, blockOff, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
                                                 volMap, loopStateOut, loopLayersOut, loopMuteOut, loopTapsOut,
@@ -1072,6 +1073,13 @@ namespace flow
 
                 if (handlePedal (msg))
                     continue;
+
+                if ((msg.isNoteOn() || msg.isNoteOff()) && msg.getNoteNumber() != highestNote)
+                {
+                    const int pn = msg.getNoteNumber() & 127;
+                    if (msg.isNoteOn()) pressBits[(size_t) (pn >> 6)].fetch_or ((uint64_t) 1 << (pn & 63));
+                    else                pressBits[(size_t) (pn >> 6)].fetch_and (~((uint64_t) 1 << (pn & 63)));
+                }
 
                 if (msg.isNoteOn())
                 {
