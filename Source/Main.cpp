@@ -1207,13 +1207,6 @@ private:
                 }
         }
 
-        if (rnd.nextInt (3) == 0)   // μία στις τρεις: ελαφρύ θόλωμα
-        {
-            ImageConvolutionKernel k (9);
-            k.createGaussianBlur (1.0f + rnd.nextFloat() * 3.0f);
-            Image tmp = out.createCopy();
-            k.applyToImage (out, tmp, out.getBounds());
-        }
         return out;
     }
 
@@ -3343,7 +3336,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.46.0"; }
+    const String getApplicationVersion() override { return "0.46.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
