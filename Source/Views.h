@@ -71,7 +71,7 @@ public:
     explicit PluginListView (Typeface::Ptr face) : typeface (face)
     {
         search.setFont (hobby::makeFont (typeface, 15.0f));
-        search.setTextToShowWhenEmpty (String::fromUTF8 ("\xce\xb1\xce\xbd\xce\xb1\xce\xb6\xce\xae\xcf\x84\xce\xb7\xcf\x83\xce\xb7\xe2\x80\xa6"), hobby::kIconGrey);   // αναζήτηση…
+        search.setTextToShowWhenEmpty (String::fromUTF8 ("search\xe2\x80\xa6"), hobby::kIconGrey);   // αναζήτηση…
         search.setColour (TextEditor::backgroundColourId, Colour (0xff2d2926));
         search.setColour (TextEditor::textColourId, hobby::kText);
         search.setColour (TextEditor::outlineColourId, Colours::transparentBlack);
@@ -339,8 +339,8 @@ public:
         addChildComponent (list);
         addChildComponent (tempoBox);
         addChildComponent (tapDot);
-        tempoBox.setTooltip (gr ("Tempo (40-240): κλικ για να πληκτρολογήσεις, ή σύρε πάνω/κάτω"));
-        tapDot.setTooltip (gr ("Tap tempo: κλικ ή το τελευταίο πλήκτρο δεξιά"));
+        tempoBox.setTooltip (gr ("Tempo (40-240): click to type, or drag up/down"));
+        tapDot.setTooltip (gr ("Tap tempo: click or the last key on the right"));
     }
 
     std::function<void (int)> onSelect;
@@ -605,7 +605,7 @@ public:
                 g.setFont (hobby::makeFont (typeface, 13.0f));
                 g.setColour (load >= 0.85f ? hobby::kRed : hobby::kIconGrey);
                 g.drawText (String ((int) std::lround (load * 100.0f)) + "%", Rectangle<float> (c0 + 2.0f * R + 6.0f, sy, 40.0f, sh), Justification::centredLeft, false);
-                tipZones.push_back ({ Rectangle<float> (c0, sy, 2.0f * R + 46.0f, sh), String::fromUTF8 ("Φόρτος επεξεργαστή (CPU)") });
+                tipZones.push_back ({ Rectangle<float> (c0, sy, 2.0f * R + 46.0f, sh), String::fromUTF8 ("Processor load (CPU)") });
                 chordX = c0 + 2.0f * R + 56.0f;
             }
             if (lastChord.isNotEmpty())
@@ -630,7 +630,7 @@ public:
                 // τρία κουμπιά δίπλα στο tap: ένταση (κάθε πάτημα αλλάζει επίπεδο), ήχος (δικός σου ⇄ αρχικός). Η έξοδος του μετρονόμου (ακουστικά) μένει σταθερή, δεν έχει κουμπί
                 float x = (float) tapDot.getRight() + 26.0f;
                 const bool custom = metroIsCustom && metroIsCustom();
-                tipZones.push_back ({ Rectangle<float> (x - 12.0f, ly - 12.0f, 24.0f, 24.0f), custom ? String::fromUTF8 ("Επαναφορά στον αρχικό ήχο μετρονόμου") : String::fromUTF8 ("Διάλεξε δικό σου ήχο για το μετρονόμο") });
+                tipZones.push_back ({ Rectangle<float> (x - 12.0f, ly - 12.0f, 24.0f, 24.0f), custom ? String::fromUTF8 ("Back to the default metronome sound") : String::fromUTF8 ("Choose your own metronome sound") });
                 lampAt (x, custom, custom ? String::fromUTF8 ("\xe2\x86\xba") : String::fromUTF8 ("\xe2\x99\xaa"),
                         [this, custom] { if (onMetroSample) onMetroSample (custom ? 2 : 1); });   // ♪ διάλεξε δικό σου ήχο, ↺ γύρνα στον αρχικό
             }
@@ -711,7 +711,7 @@ public:
                     g.setColour (c);
                     g.setFont (hobby::makeFont (typeface, 16.0f));
                     g.drawText ("A", Rectangle<float> (lx - R, ly - R, 2.0f * R, 2.0f * R), Justification::centred, false);
-                    zone (lx, String::fromUTF8 ("Αυτόματη ανίχνευση επανάληψης: Off → Auto (ξεκινά μόνη) → με πάτημα Rec MIDI loop"),
+                    zone (lx, String::fromUTF8 ("Auto-detect repeat: Off → Auto (starts by itself) → on Rec MIDI loop press"),
                           [this] { engine.autoLoop = (engine.autoLoop.load() + 1) % 3; if (onMetroChange) onMetroChange(); });
                 }
                 lx += 2.0f * R + 14.0f;
@@ -733,7 +733,7 @@ public:
                         g.setFont (hobby::makeFont (typeface, 11.0f));
                         g.drawText (String ((double) engine.tapMs.load() / 1000.0, 1) + "s", (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
                     }
-                    zone (lx, String::fromUTF8 ("Αναμονή πατημάτων πεταλιού (0.5 / 0.7 / 1.0 δευτ.)"),
+                    zone (lx, String::fromUTF8 ("Pedal press wait (0.5 / 0.7 / 1.0 s)"),
                           [this] { const int t = engine.tapMs.load(); engine.tapMs = t < 600 ? 700 : t < 900 ? 1000 : 500; if (onMetroChange) onMetroChange(); });
                 }
                 lx += 2.0f * R + valW + 14.0f;
@@ -752,7 +752,7 @@ public:
                         g.setFont (hobby::makeFont (typeface, 11.0f));
                         g.drawText (snap == 0 ? String ("Off") : snap == 1 ? String ("1/8") : String ("1/16"), (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
                     }
-                    zone (lx, String::fromUTF8 ("Quantize νοτών στη λούπα: Off → 1/8 → 1/16"),
+                    zone (lx, String::fromUTF8 ("Note quantize in the loop: Off → 1/8 → 1/16"),
                           [this] { engine.snapQ = (engine.snapQ.load() + 1) % 3; if (onMetroChange) onMetroChange(); });
                 }
             }

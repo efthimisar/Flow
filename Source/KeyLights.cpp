@@ -41,7 +41,7 @@ bool KeyLights::start()
     status = {};
 
     impl->manager = IOHIDManagerCreate (kCFAllocatorDefault, kIOHIDOptionsTypeNone);
-    if (impl->manager == nullptr) return fail ("IOHIDManagerCreate απέτυχε");
+    if (impl->manager == nullptr) return fail ("IOHIDManagerCreate failed");
 
     int vid = 0x17cc;
     CFNumberRef vnum = CFNumberCreate (kCFAllocatorDefault, kCFNumberIntType, &vid);
@@ -53,13 +53,13 @@ bool KeyLights::start()
 
     const IOReturn r = IOHIDManagerOpen (impl->manager, kIOHIDOptionsTypeNone);
     if (r != kIOReturnSuccess)
-        return fail ("IOHIDManagerOpen: 0x" + juce::String::toHexString ((int) r) + " (ίσως χρειάζεται άδεια Input Monitoring στο Σύστημα > Απόρρητο)");
+        return fail ("IOHIDManagerOpen: 0x" + juce::String::toHexString ((int) r) + " (Input Monitoring permission may be needed in System Settings > Privacy)");
 
     CFSetRef set = IOHIDManagerCopyDevices (impl->manager);
     if (set == nullptr || CFSetGetCount (set) == 0)
     {
         if (set != nullptr) CFRelease (set);
-        return fail ("Δεν βρέθηκε συσκευή Native Instruments (USB)");
+        return fail ("No Native Instruments (USB) device found");
     }
 
     const CFIndex n = CFSetGetCount (set);
@@ -92,13 +92,13 @@ bool KeyLights::start()
     }
     CFRelease (set);
 
-    if (impl->device == nullptr) return fail ("Δεν βρέθηκε Komplete Kontrol MK2 (βρέθηκαν: " + found + ")");
+    if (impl->device == nullptr) return fail ("Komplete Kontrol MK2 not found (found: " + found + ")");
 
     active = true;
-    status = "OK (" + juce::String (keyCount) + " πλήκτρα)";
+    status = "OK (" + juce::String (keyCount) + " keys)";
     return true;
 #else
-    return fail ("Μόνο σε macOS");
+    return fail ("macOS only");
 #endif
 }
 
@@ -134,7 +134,7 @@ bool KeyLights::sendKeys (const uint8_t* keys, int count)
     const IOReturn r = IOHIDDeviceSetReport (impl->device, kIOHIDReportTypeOutput, data[0], data.data(), (CFIndex) data.size());
     if (r != kIOReturnSuccess)
     {
-        status = "αποτυχία εγγραφής 0x" + juce::String::toHexString ((int) r);
+        status = "write failed 0x" + juce::String::toHexString ((int) r);
         return false;
     }
     return true;

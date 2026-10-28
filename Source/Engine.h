@@ -1307,7 +1307,7 @@ namespace flow
 
                 if (edge && ! quiet)
                 {
-                    flowLog ("πετάλι: κουμπί " + juce::String (i) + " code " + juce::String (code));
+                    flowLog ("pedal: control " + juce::String (i) + " code " + juce::String (code));
                     const int sel = selectedBlock.load();
                     const bool ok = sel >= 0 && sel < numBlocks && active[(size_t) sel].load() != 0;
 
@@ -1578,7 +1578,7 @@ namespace flow
                 B.alSwitch.set ((size_t) sw);
                 B.alMute.set ((size_t) sw);
                 B.alHavePending = false;
-                flowLog ("AL: block " + juce::String (b + 1) + " πλήκτρο " + juce::String (sw) + " = συγχορδία " + juce::String ((int) B.alPending.count()) + " νοτών, αναθέσεις: " + juce::String ((int) B.alSwitch.count()));
+                flowLog ("AL: block " + juce::String (b + 1) + " key " + juce::String (sw) + " = chord of " + juce::String ((int) B.alPending.count()) + " notes, assignments: " + juce::String ((int) B.alSwitch.count()));
                 B.latched = B.alChord[(size_t) sw];
                 B.lastLatched = highestSet (B.latched);
                 for (int n = 0; n < 128; ++n)
