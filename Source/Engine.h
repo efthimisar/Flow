@@ -1078,6 +1078,11 @@ namespace flow
                 if (msg.isNoteOn())
                 {
                     const int n = msg.getNoteNumber();
+                    if (n == highestNote)     // το τελευταίο πλήκτρο δεξιά (C8) = tap tempo, δεν παίζει ήχο
+                    {
+                        registerTap (gs + pos, sr);
+                        continue;
+                    }
                     const int cb = captureTarget();
 
                     if (cb >= 0)    // ορισμός ζώνης: το πρώτο και το δεύτερο πλήκτρο (ίδιο πλήκτρο δύο φορές = ζώνη μίας νότας)
