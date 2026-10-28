@@ -340,7 +340,7 @@ public:
         addChildComponent (tempoBox);
         addChildComponent (tapDot);
         tempoBox.setTooltip (gr ("Tempo (40-240): κλικ για να πληκτρολογήσεις, ή σύρε πάνω/κάτω"));
-        tapDot.setTooltip (gr ("Tap tempo: κλικ, το τελευταίο πλήκτρο δεξιά ή δύο ελεύθερα μαύρα πλήκτρα μαζί"));
+        tapDot.setTooltip (gr ("Tap tempo: κλικ ή το τελευταίο πλήκτρο δεξιά"));
     }
 
     std::function<void (int)> onSelect;

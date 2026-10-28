@@ -881,8 +881,6 @@ namespace flow
         std::vector<int64_t> tapTimes;
         int64_t lastTapT = 0;
         int seenTap = 0, seenPanic = 0;
-        int lastFreeNote = -1;
-        int64_t lastFreeT = 0;
 
         // metronome
         int metroPos = -1;
@@ -1116,20 +1114,6 @@ namespace flow
                         Action a;
                         a.pos = pos; a.order = 1; a.kind = Kind::Live; a.note = n; a.vel = msg.getVelocity(); a.on = true;
                         inActions[(size_t) b].push_back (a);
-                    }
-                    else if (sp < 0 && isBlackKey (n))    // ελεύθερα μαύρα πλήκτρα: δύο μαζί (σε ~50 ms) = tap tempo
-                    {
-                        const int64_t t = gs + pos;
-                        if (lastFreeNote >= 0 && lastFreeNote != n && (double) (t - lastFreeT) <= 0.05 * sr)
-                        {
-                            registerTap (t, sr);
-                            lastFreeNote = -1;
-                        }
-                        else
-                        {
-                            lastFreeNote = n;
-                            lastFreeT = t;
-                        }
                     }
                 }
                 else if (msg.isNoteOff())
