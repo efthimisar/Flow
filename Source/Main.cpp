@@ -3,6 +3,7 @@
 
 #include "Views.h"
 #include "KeyLights.h"
+#include "WebOrb.h"
 #include <map>
 
 namespace
@@ -202,6 +203,10 @@ public:
         loopsView.onOrbMode = [this] { repaint(); };
         loopsView.onOrbImageClear = [this] { setOrbImage ({}); };
 
+        webOrbToken = settings->getValue ("webOrbToken");
+        if (webOrbToken.isEmpty()) webOrbToken = String::toHexString (Random::getSystemRandom().nextInt64()).paddedLeft ('0', 8).substring (0, 8);
+        if (settings->getBoolValue ("webOrbOn", false)) startWebOrb();
+
         const String savedFolder = settings->getValue ("tapeFolder");
         engine.recorder.setFolder (savedFolder.isNotEmpty() ? File (savedFolder)
                                                             : File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow"));
@@ -244,6 +249,7 @@ public:
 
     ~MainComponent() override
     {
+        webServer.stop();
         orbWindow.reset();
         stopKnobLearn();
         lightsPump.stopTimer();
@@ -1155,6 +1161,94 @@ private:
         repaint();
     }
 
+    // ---- Orb στο Safari του iPad (web server μέσα στο Flow) ----
+    webOrb::Server webServer;
+    bool webOrbOn = false;
+    String webOrbToken;
+    CriticalSection webImgLock;
+    MemoryBlock webImgJpeg;
+    int webImgVer = 0;
+    String lastWebState;
+
+    void updateWebImage()
+    {
+        MemoryBlock mb;
+        if (orbImage.isValid())
+        {
+            MemoryOutputStream mo (mb, false);
+            JPEGImageFormat jf; jf.setQuality (0.82f);
+            jf.writeImageToStream (orbImage, mo);
+        }
+        const ScopedLock sl (webImgLock);
+        webImgJpeg = mb;
+        ++webImgVer;
+    }
+
+    void startWebOrb()
+    {
+        if (webServer.port != 0) return;
+        webServer.token = webOrbToken;
+        webServer.getImage = [this] { const ScopedLock sl (webImgLock); return webImgJpeg; };
+        webServer.onMessage = [safe = SafePointer<MainComponent> (this)] (const String& msg)
+        {
+            MessageManager::callAsync ([safe, msg] { if (safe != nullptr) safe->webOrbMessage (msg); });
+        };
+        webOrbOn = webServer.start (8765);
+        if (! webOrbOn) setMessage (gr ("iPad orb: could not start the server"));
+        lastWebState = {};
+    }
+
+    void stopWebOrb()
+    {
+        webServer.stop();
+        webServer.port = 0;
+        webOrbOn = false;
+    }
+
+    void webOrbMessage (const String& msg)
+    {
+        const var v = JSON::parse (msg);
+        const String t = v.getProperty ("t", {}).toString();
+        const int c = (int) v.getProperty ("c", -1);
+        if (t == "rec") { toggleOrbRec(); return; }
+        if (t == "clear") { orbClearMotion(); return; }
+        if (c < 0 || c > 3) return;
+        if (t == "touch") orbTouch (c, (int) v.getProperty ("d", 0) != 0);
+        else if (t == "move")
+        {
+            const float x = (float) (double) v.getProperty ("x", 0.0), y = (float) (double) v.getProperty ("y", 0.0);
+            orbMoved (c, { x, y });
+        }
+    }
+
+    void pushWebState (const std::array<LoopsView::KnobState, kSlots>& st, const std::array<Point<float>, 4>& pos)
+    {
+        if (! webOrbOn) return;
+        auto* o = new DynamicObject();
+        Array<var> p, k;
+        for (int c = 0; c < 4; ++c) p.add (var (Array<var> { var ((double) pos[(size_t) c].x), var ((double) pos[(size_t) c].y) }));
+        for (int i = 0; i < kSlots; ++i)
+            k.add (var (Array<var> { var (st[(size_t) i].bound ? 1 : 0), var (std::round (st[(size_t) i].value * 100.0)), var (st[(size_t) i].name) }));
+        o->setProperty ("p", p);
+        o->setProperty ("k", k);
+        o->setProperty ("r", orbRecArmed ? 1 : 0);
+        o->setProperty ("m", anyOrbMotion() ? 1 : 0);
+        o->setProperty ("ph", std::round (orbPhase() * 1000.0) / 1000.0);
+        o->setProperty ("t", loopsView.title);
+        { const ScopedLock sl (webImgLock); o->setProperty ("iv", webImgVer); }
+        const String js = JSON::toString (var (o), true);
+        if (js != lastWebState) { lastWebState = js; webServer.setState (js); }
+    }
+
+    String webOrbUrl() const
+    {
+        String ip;
+        for (auto& a : IPAddress::getAllAddresses (false))
+            if (! a.isIPv6 && a.toString() != "127.0.0.1" && ! a.toString().startsWith ("169.254")) { ip = a.toString(); break; }
+        if (ip.isEmpty()) ip = "<ip>";
+        return "http://" + ip + ":" + String (webServer.port) + "/?k=" + webOrbToken;
+    }
+
     // ---- Orb: εικόνα (σώζεται με το set) ----
     Image orbImage;
     std::unique_ptr<FileChooser> orbChooser;
@@ -1167,6 +1261,7 @@ private:
             img = img.rescaled (jmax (1, roundToInt ((float) img.getWidth() * k)), jmax (1, roundToInt ((float) img.getHeight() * k)), Graphics::highResamplingQuality);
         }
         orbImage = img;
+        updateWebImage();
         loopsView.orbImage = img;
         loopsView.repaint();
         if (save) saveNow();
@@ -1408,6 +1503,7 @@ private:
         std::array<Point<float>, 4> pos;
         for (int c = 0; c < 4; ++c) pos[(size_t) c] = isActive (selected) ? orbPos[(size_t) jlimit (0, flow::numBlocks - 1, selected)][(size_t) c] : orbDefault (c);
         loopsView.setOrb (st, pos, knobStage != 0 ? knobSlot : -1, orbRecArmed, anyOrbMotion());
+        pushWebState (st, pos);
     }
     bool learnClick (int ctl)
     {
@@ -2234,6 +2330,12 @@ private:
                  engine.setLinkEnabled (on);
                  setMessage (on ? gr ("Ableton Link: on") : gr ("Ableton Link: off"));
              }), LinkBridge::isAvailable(), engine.isLinkEnabled());
+        add (String::fromUTF8 ("\xe2\x97\x89"), gr ("iPad orb (Safari)"),
+             act ([this]
+             {
+                 if (webOrbOn) stopWebOrb(); else startWebOrb();
+                 setMessage (webOrbOn ? gr ("iPad orb: on") : gr ("iPad orb: off"));
+             }), true, webOrbOn);
         add ("!", "Panic", act ([this] { doPanic(); }));
 
         {
@@ -2290,6 +2392,7 @@ private:
             r.push_back ({ "Rec Audio", folder });
         }
         r.push_back ({ "Key lights", keyLights.isOn() ? "on" : "off" });
+        if (webOrbOn) r.push_back ({ "iPad orb", webOrbUrl() + "  \xc2\xb7  " + String (webServer.getNumClients()) + " connected" });
         return r;
     }
 
@@ -2947,6 +3050,8 @@ private:
         settings->setValue ("metroSample", metroSamplePath);
         settings->setValue ("link", engine.isLinkEnabled());
         settings->setValue ("keyLights", lightsWanted);
+        settings->setValue ("webOrbOn", webOrbOn);
+        settings->setValue ("webOrbToken", webOrbToken);
 
         for (int i = 0; i < flow::numControls; ++i)
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
@@ -3336,7 +3441,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.47.0"; }
+    const String getApplicationVersion() override { return "0.48.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
