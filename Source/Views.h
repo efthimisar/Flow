@@ -994,7 +994,7 @@ public:
 
         g.setFont (hobby::makeFont (typeface, 13.0f));
         g.setColour (Colour (0xffc9c3ba));
-        g.drawText (title, 40, 8, getWidth() - 80, 22, Justification::centred, true);
+        g.drawText (title == "FLOW" ? String ("ORB") : title, 40, 8, getWidth() - 80, 22, Justification::centred, true);   // χωρίς επιλεγμένο block γράφει ORB
 
         // ο orb: δική σου εικόνα (σώζεται με το set), αλλιώς ουδέτερη κουκκιδωτή επιφάνεια
         Path circle; circle.addEllipse (cx - R, cy - R, 2.0f * R, 2.0f * R);
