@@ -1165,14 +1165,10 @@ private:
     std::array<bool, 4> orbTouching { { false, false, false, false } };
     bool orbRecArmed = false;
 
-    static Point<float> orbClamp (int corner, Point<float> p)
+    static Point<float> orbClamp (int, Point<float> p)   // ελεύθερη κίνηση σε όλον τον orb (όριο: ο κύκλος)
     {
-        const float sx = (corner == 1 || corner == 2) ? 1.0f : -1.0f;
-        const float sy = corner >= 2 ? 1.0f : -1.0f;
-        float x = jmax (0.0f, p.x * sx), y = jmax (0.0f, p.y * sy);
-        const float len = std::sqrt (x * x + y * y);
-        if (len > 1.0f) { x /= len; y /= len; }
-        return { x * sx, y * sy };
+        const float len = p.getDistanceFromOrigin();
+        return len > 1.0f ? Point<float> (p.x / len, p.y / len) : p;
     }
     static Point<float> orbDefault (int corner) { return orbClamp (corner, { ((corner == 1 || corner == 2) ? 1.0f : -1.0f) * 0.3536f, (corner >= 2 ? 1.0f : -1.0f) * 0.3536f }); }
     static float orbValue (Point<float> p) { return jlimit (0.0f, 1.0f, p.getDistanceFromOrigin()); }
