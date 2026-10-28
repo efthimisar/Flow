@@ -84,13 +84,15 @@ public:
         setVisible (false);
     }
 
-    void resized() override { search.setBounds (jmax (260, getWidth() - 94 - 14 - 190 - 10), 8, 190, 28); }
+    void resized() override { search.setBounds (jmax (260, getWidth() - 124 - 14 - 190 - 10), 8, 190, 28); }
 
     void open (const String& t, const String& s, Colour c, StringArray names, StringArray formats,
-               std::function<void (int)> pick, std::function<void()> rescan, std::function<void()> file)
+               std::function<void (int)> pick, std::function<void()> rescan, std::function<void()> file,
+               StringArray pluginKeys = {}, StringArray favourites = {}, std::function<void (const StringArray&)> favChangedFn = {})
     {
         title = t; sub = s; colour = c; items = names; fmts = formats;
         onPick = pick; onRescan = rescan; onFile = file;
+        keys = pluginKeys; favs = favourites; favChanged = favChangedFn; showAll = false;
         scroll = 0;
         search.clear();
         setVisible (true);
@@ -113,7 +115,8 @@ public:
         g.drawText (title, 26, 8, 200, 28, Justification::centredLeft, false);
         g.setFont (hobby::makeFont (typeface, 14.0f));
         g.setColour (hobby::kIconGrey);
-        g.drawText (sub, 26 + (int) std::ceil (textWidth (hobby::makeFont (typeface, 17.0f), title)) + 12, 8, 200, 28, Justification::centredLeft, false);
+        g.drawText (sub + String::fromUTF8 (anyFavForTitle() ? (showAll ? "  \xc2\xb7  all" : "  \xc2\xb7  favorites") : "  \xc2\xb7  mark favorites with f"),
+                    26 + (int) std::ceil (textWidth (hobby::makeFont (typeface, 17.0f), title)) + 12, 8, 300, 28, Justification::centredLeft, true);
 
         auto lamp = [&] (float cx, const String& glyph, Colour c, std::function<void()> fn)
         {
@@ -128,6 +131,8 @@ public:
         lamp ((float) w - 34.0f, String::fromUTF8 ("\xe2\x9c\x95"), hobby::kRed, [this] { close(); });
         lamp ((float) w - 64.0f, String::fromUTF8 ("\xe2\x80\xa6"), hobby::kOn, [this] { if (onFile) onFile(); close(); });
         lamp ((float) w - 94.0f, String::fromUTF8 ("\xe2\x86\xbb"), hobby::kOn, [this] { if (onRescan) onRescan(); close(); });
+        // ≡ = όλη η λίστα (πάτημα ξανά = μόνο τα favorites με f). Αν δεν υπάρχουν favorites, φαίνονται όλα
+        lamp ((float) w - 124.0f, String::fromUTF8 ("\xe2\x89\xa1"), showAll ? hobby::kOn : hobby::kIconGrey, [this] { showAll = ! showAll; scroll = 0; repaint(); });
 
         const int cols = w >= 640 ? 2 : 1;
         const float gapX = 20.0f, left = 26.0f, rowH = 34.0f, top = 58.0f;
@@ -135,8 +140,14 @@ public:
         const int rowsVisible = jmax (1, (int) ((float) (getHeight() - 58 - 8) / rowH));
         std::vector<int> vis;   // ευρετήριο των plugins που ταιριάζουν στην αναζήτηση
         const String q = search.getText().trim();
+        bool anyFav = false;
+        for (int i = 0; i < items.size() && ! anyFav; ++i) anyFav = i < keys.size() && favs.contains (keys[i]);
+        const bool onlyFavs = ! showAll && anyFav && q.isEmpty();   // η αναζήτηση ψάχνει πάντα σε όλα
         for (int i = 0; i < items.size(); ++i)
-            if (q.isEmpty() || items[i].containsIgnoreCase (q)) vis.push_back (i);
+        {
+            if (! q.isEmpty()) { if (items[i].containsIgnoreCase (q)) vis.push_back (i); }
+            else if (! onlyFavs || (i < keys.size() && favs.contains (keys[i]))) vis.push_back (i);
+        }
         const int total = (int) vis.size();
         const int totalRows = (total + cols - 1) / cols;
         scroll = jlimit (0, jmax (0, totalRows - rowsVisible), scroll);
@@ -151,9 +162,23 @@ public:
                 const Rectangle<float> rr (x, y, colW, rowH - 6.0f);
                 g.setColour (Colour (0xff2d2926));
                 g.fillRoundedRectangle (rr, 6.0f);
+                const bool fav = idx < keys.size() && favs.contains (keys[idx]);
+                const Rectangle<float> fr (rr.getX() + 6.0f, rr.getY() + (rr.getHeight() - 22.0f) * 0.5f, 22.0f, 22.0f);
+                if (fav) { g.setColour (hobby::kOn.withAlpha (0.22f)); g.fillEllipse (fr); }
+                g.setColour (fav ? hobby::kOn : hobby::kIconGrey.withAlpha (0.4f));
+                g.setFont (hobby::makeFont (typeface, 16.0f));
+                g.drawText ("f", fr, Justification::centred, false);
+                hot.push_back ({ fr.expanded (3.0f), [this, idx]
+                {
+                    if (idx >= keys.size()) return;
+                    const auto k = keys[idx];
+                    if (favs.contains (k)) favs.removeString (k); else favs.add (k);
+                    if (favChanged) favChanged (favs);
+                    repaint();
+                } });
                 g.setColour (hobby::kText);
                 g.setFont (hobby::makeFont (typeface, 15.0f));
-                g.drawText (items[idx], rr.withTrimmedLeft (14.0f).withTrimmedRight (60.0f), Justification::centredLeft, true);
+                g.drawText (items[idx], rr.withTrimmedLeft (38.0f).withTrimmedRight (60.0f), Justification::centredLeft, true);
                 g.setColour (hobby::kIconGrey.withAlpha (0.6f));
                 g.setFont (hobby::makeFont (typeface, 11.0f));
                 g.drawText (fmts[idx], rr.withTrimmedRight (12.0f), Justification::centredRight, false);
@@ -176,6 +201,12 @@ public:
             if (h.first.contains (e.position)) { auto fn = h.second; fn(); return; }
     }
 
+    bool anyFavForTitle() const
+    {
+        for (int i = 0; i < items.size() && i < keys.size(); ++i) if (favs.contains (keys[i])) return true;
+        return false;
+    }
+
     void mouseWheelMove (const MouseEvent&, const MouseWheelDetails& wd) override
     {
         scroll += wd.deltaY > 0 ? -1 : 1;
@@ -186,7 +217,9 @@ private:
     Typeface::Ptr typeface;
     String title, sub;
     Colour colour { Colours::white };
-    StringArray items, fmts;
+    StringArray items, fmts, keys, favs;
+    bool showAll = false;
+    std::function<void (const StringArray&)> favChanged;
     std::function<void (int)> onPick;
     std::function<void()> onRescan, onFile;
     TextEditor search;

@@ -197,6 +197,8 @@ public:
 
         engine.metroLevel = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("metroLevel", 0.8));
         engine.metroChannel = jmax (0, settings->getIntValue ("metroChannel", 2));
+        favPlugins.addLines (settings->getValue ("favPlugins"));
+        favPlugins.removeEmptyStrings();
         engine.masterPos = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("masterPos", 1.0));
         engine.limiterOn = settings->getIntValue ("limiterOn", 1) != 0 ? 1 : 0;
         engine.masterCc = settings->getIntValue ("masterCc", 0);
@@ -1417,6 +1419,8 @@ private:
         }
     }
 
+    StringArray favPlugins;   // favorites (σήμα f): κλειδιά plugins, κοινά για instruments και effects
+
     void pickPlugin (const String& title, int kind, std::function<void (const PluginDescription&)> chosen)
     {
         if (scanning)
@@ -1439,11 +1443,12 @@ private:
 
 
         // η λίστα εμφανίζεται μέσα στην οθόνη των loops (στη θέση τους): διάλεξε όνομα, ↻ νέα σάρωση, … αρχείο, ✕ κλείσιμο
-        StringArray names, formats;
+        StringArray names, formats, keys;
         for (const auto& d : list)
         {
             names.add (d.name);
             formats.add (d.pluginFormatName);
+            keys.add (d.createIdentifierString());
         }
 
         const Colour kc = kind == 0 ? hobby::kOn : kind == 1 ? hobby::kPeach : hobby::kLilac;
@@ -1464,6 +1469,13 @@ private:
                                   [safe = SafePointer<MainComponent> (this), title, chosen]
                                   {
                                       if (safe != nullptr) safe->pickPluginFile (title, chosen);
+                                  },
+                                  keys, favPlugins,
+                                  [safe = SafePointer<MainComponent> (this)] (const StringArray& f)
+                                  {
+                                      if (safe == nullptr) return;
+                                      safe->favPlugins = f;
+                                      safe->saveNow();
                                   });
     }
 
@@ -2679,6 +2691,7 @@ private:
         settings->setValue ("audioDeviceState", audioState.get());
         settings->setValue ("tapeFolder", engine.recorder.getFolder().getFullPathName());
         settings->setValue ("metroLevel", (double) engine.metroLevel.load());
+        settings->setValue ("favPlugins", favPlugins.joinIntoString ("\n"));
         settings->setValue ("masterPos", (double) engine.masterPos.load());
         settings->setValue ("limiterOn", engine.limiterOn.load());
         settings->setValue ("masterCc", engine.masterCc.load());
