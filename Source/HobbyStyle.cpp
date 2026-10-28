@@ -397,6 +397,19 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (s, 2.2f);
             break;
         }
+        case Symbol::Sliders:   // ρυθμιστικά (ρυθμίσεις)
+        {
+            juce::Path p;
+            const float ys[3] { -7.0f, 0.0f, 7.0f }, ks[3] { -3.0f, 4.0f, -1.0f };
+            for (int i = 0; i < 3; ++i)
+            {
+                p.startNewSubPath (-10.0f, ys[i]); p.lineTo (ks[i] - 3.4f, ys[i]);
+                p.startNewSubPath (ks[i] + 3.4f, ys[i]); p.lineTo (10.0f, ys[i]);
+                p.addEllipse (ks[i] - 3.0f, ys[i] - 3.0f, 6.0f, 6.0f);
+            }
+            stroke (p, 1.7f);
+            break;
+        }
         case Symbol::Speaker:   // ηχείο με κύματα
         {
             juce::Path p;

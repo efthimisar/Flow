@@ -5,6 +5,7 @@
 #include "KeyLights.h"
 #include "WebOrb.h"
 #include "QrCode.h"
+#include "AudioPanel.h"
 #include <map>
 
 namespace
@@ -36,7 +37,7 @@ public:
           stopTile (Symbol::Undo, typeface),
           tapeTile (Symbol::Tape, typeface),
           metroTile (Symbol::Tempo, typeface),
-          folderTile (Symbol::Folder, typeface)
+          folderTile (Symbol::Sliders, typeface)
     {
         PropertiesFile::Options options;
         options.applicationName     = "Flow";
@@ -60,7 +61,7 @@ public:
         vstTile.setTooltip (gr ("VST: opens / closes the instrument window (green = the block has a VST). Right-click: replace, remove"));
         mfxTile.setTooltip (gr ("MIDI FX: MIDI effect (e.g. Stepic) before the instrument. If there is no plugin, opens a file chooser. Right-click: replace, remove"));
         fxTile.setTooltip (gr ("FX: chain of audio effects after the instrument. The circles 1, 2, 3 and the + are in the panel header. Right-click: add"));
-        folderTile.setTooltip (gr ("Menu: sets, audio and MIDI settings, master volume, Rec Audio folder, Link, Panic"));
+        folderTile.setTooltip (gr ("Settings: sets, audio and MIDI, master volume, Rec Audio folder, Link, Panic"));
         recTile.setTooltip ("Rec MIDI loop: " + gr ("records the loop of the selected block (the number inside the circle). Press again = end. If the block already has a loop, it does nothing: use re-record or delete. Right-click: quantize and pedal"));
         undoTile.setTooltip (gr ("Delete loop: deletes the loop of the selected block. Pedal: presses = block number (two presses = block 2)"));
         stopTile.setTooltip ("Rec MIDI loop: " + gr ("re-record. Deletes the loop of the selected block and starts a new recording at once. Right-click: mute pedal"));
@@ -70,6 +71,10 @@ public:
         addAndMakeVisible (loopsView);
         addAndMakeVisible (keyboardView);
         addAndMakeVisible (header);
+        addChildComponent (audioPanel);
+        audioPanel.onChanged = [this] { saveNow(); };
+        audioPanel.onMessage = [this] (const String& m) { setMessage (m); };
+        audioPanel.onClose = [this] { repaint(); };
 
         blockTile.onClick = [this] { if (learnClick (flow::ctlSpecial)) return; chooseAndLoadPlugin(); };
         vstTile.onClick = [this] { onVstClick(); };
@@ -318,19 +323,12 @@ public:
 
     void mouseDown (const MouseEvent&) override { grabKeyboardFocus(); }
 
-    void mouseUp (const MouseEvent& e) override
-    {
-        // κλικ στο "π / -": μενού (ρυθμίσεις ήχου, set, panic, Link)
-        if (e.y >= pluginBezel.getY() && e.y < pluginBezel.getBottom() && std::abs (e.x - getWidth() / 2) < 40 && ! e.mouseWasDraggedSinceMouseDown())
-            showPiMenu();
-    }
-
     bool keyPressed (const KeyPress& k) override
     {
         if (k.getModifiers().isAnyModifierKeyDown()) return false;
         const auto c = k.getTextCharacter();
         if (c == 'm' || c == 'M') { toggleMetronome(); return true; }
-        if (k == KeyPress::escapeKey) { if (orbStage != 0) { closeOrb(); return true; } doPanic(); return true; }
+        if (k == KeyPress::escapeKey) { if (audioPanel.isVisible()) { audioPanel.close(); return true; } if (orbStage != 0) { closeOrb(); return true; } doPanic(); return true; }
         return false;
     }
 
@@ -575,6 +573,7 @@ private:
     {
         loopsView.setBounds (loopsBezel.reduced (5));
         keyboardView.setBounds (keysBezel.reduced (5));
+        audioPanel.setBounds (loopsBezel.reduced (5));
 
         header.setBounds (pluginBezel.getX() + 5, pluginBezel.getY(), pluginBezel.getWidth() - 10, headerH);
         hobby::kBrandY = (float) pluginBezel.getY() + (float) headerH * 0.5f - 8.0f;
@@ -2426,7 +2425,14 @@ private:
              }), true, webOrbOn);
         add (String::fromUTF8 ("\xe2\x96\xa6"), gr ("iPad orb QR code\xe2\x80\xa6"), [this] { showWebOrbQr(); }, webOrbOn);
         add (String::fromUTF8 ("\xe2\x96\xa3"), gr ("Orb images folder\xe2\x80\xa6"), act ([this] { chooseOrbFolder(); }));
-        add ("!", "Panic", act ([this] { doPanic(); }));
+        {
+            LoopsView::MenuEntry m; m.glyph = "!"; m.text = "Panic";
+            { LoopsView::MenuEntry sj; sj.text = gr ("Silence stuck notes (Esc)"); sj.fn = [this] { doPanic(); }; m.sub.push_back (std::move (sj)); }
+            { LoopsView::MenuEntry sj; sj.text = gr ("Assign pedal or key (MIDI learn)"); sj.fn = [this] { startPedalLearn (flow::ctlPanic); }; m.sub.push_back (std::move (sj)); }
+            { LoopsView::MenuEntry sj; sj.text = gr ("Remove assignment"); sj.enabled = engine.mapCode[flow::ctlPanic].load() != 0;
+              sj.fn = [this] { engine.mapCode[flow::ctlPanic] = 0; saveNow(); }; m.sub.push_back (std::move (sj)); }
+            items.push_back (std::move (m));
+        }
 
         {
             Array<File> files = setsDir().findChildFiles (File::findFiles, false, "*.flowset");
@@ -2486,80 +2492,6 @@ private:
         return r;
     }
 
-    void showPiMenu()
-    {
-        const int pcode = engine.mapCode[flow::ctlPanic].load();
-        PopupMenu menu;
-        menu.addItem (1, gr ("Audio & MIDI settings…"));
-        menu.addSeparator();
-        menu.addItem (2, gr ("Save set…"));
-        menu.addItem (3, gr ("Load set…"));
-        menu.addItem (9, gr ("Restore last session"), hasSessionBackup());
-
-        // λίστα με τα αποθηκευμένα sets (νεότερα πρώτα)
-        Array<File> setFiles = setsDir().findChildFiles (File::findFiles, false, "*.flowset");
-        struct NewestFirst { static int compareElements (const File& a, const File& b)
-        { return a.getLastModificationTime() < b.getLastModificationTime() ? 1 : (b.getLastModificationTime() < a.getLastModificationTime() ? -1 : 0); } };
-        NewestFirst sorter;
-        setFiles.sort (sorter);
-        {
-            PopupMenu setsMenu;
-            for (int i = 0; i < setFiles.size() && i < 40; ++i)
-                setsMenu.addItem (1000 + i, setFiles[i].getFileNameWithoutExtension());
-            if (setFiles.isEmpty()) setsMenu.addItem (999, gr ("(none)"), false);
-            menu.addSubMenu (gr ("My sets"), setsMenu);
-        }
-
-        // master: ένταση, limiter
-        {
-            const float pos = engine.masterPos.load();
-            const float stepsPos[4] { 1.0f, 0.85f, 0.7f, 0.5f };
-            PopupMenu mm;
-            for (int i = 0; i < 4; ++i)
-                mm.addItem (20 + i, String ((int) (stepsPos[i] * 100)) + "%", true, std::abs (pos - stepsPos[i]) < 0.05f);
-            mm.addSeparator();
-            mm.addItem (26, gr ("Safety limiter"), true, engine.limiterOn.load() != 0);
-            mm.addItem (24, gr ("Assign knob (MIDI learn)"));
-            mm.addItem (25, gr ("Remove assignment"), engine.masterCc.load() != 0);
-            if (engine.masterCc.load() != 0) mm.addItem (27, gr ("Now: ") + pedalCodeText (engine.masterCc.load()), false);
-            menu.addSubMenu (gr ("Master volume"), mm);
-        }
-        menu.addSeparator();
-        menu.addItem (4, gr ("Panic: silence stuck notes (Esc)"));
-        menu.addItem (5, gr ("Panic: assign pedal or key (MIDI learn)"));
-        menu.addItem (6, gr ("Panic: remove assignment"), pcode != 0);
-        if (pcode != 0) menu.addItem (7, gr ("Panic now: ") + pedalCodeText (pcode), false);
-        menu.addSeparator();
-        menu.addItem (8, "Ableton Link" + (LinkBridge::isAvailable() ? String() : gr (" (not included in this build)")),
-                      LinkBridge::isAvailable(), engine.isLinkEnabled());
-
-        const Rectangle<int> area (getScreenX() + getWidth() / 2 - 40, getScreenY() + 46, 80, 28);
-        menu.showMenuAsync (PopupMenu::Options().withTargetScreenArea (area),
-                            [safe = SafePointer<MainComponent> (this), setFiles] (int r)
-        {
-            if (safe == nullptr || r == 0) return;
-            if (r >= 1000 && r - 1000 < setFiles.size()) safe->loadSetFile (setFiles[r - 1000]);
-            if (r >= 20 && r <= 23) { const float v[4] { 1.0f, 0.85f, 0.7f, 0.5f }; safe->engine.masterPos = v[r - 20]; }
-            if (r == 26) safe->engine.limiterOn = safe->engine.limiterOn.load() != 0 ? 0 : 1;
-            if (r == 24) { safe->engine.cancelLearns(); safe->engine.masterLearn = 1; safe->setMessage (gr ("Move the knob for the master volume")); }
-            if (r == 25) safe->engine.masterCc = 0;
-            if (r == 1) safe->openAudioSettings();
-            if (r == 2) safe->saveSetToFile();
-            if (r == 3) safe->loadSetFromFile();
-            if (r == 9) safe->restoreLastSession();
-            if (r == 4) safe->doPanic();
-            if (r == 5) safe->startPedalLearn (flow::ctlPanic);
-            if (r == 6) safe->engine.mapCode[flow::ctlPanic] = 0;
-            if (r == 8)
-            {
-                const bool on = ! safe->engine.isLinkEnabled();
-                safe->engine.setLinkEnabled (on);
-                safe->setMessage (on ? gr ("Ableton Link: on") : gr ("Ableton Link: off"));
-            }
-            safe->saveNow();
-        });
-    }
-
     void doPanic()
     {
         engine.panic();
@@ -2573,7 +2505,7 @@ private:
         if (! engine.metroOn.load() && engine.numOutChannels.load() <= engine.metroChannel.load())
         {
             setMessage (gr ("Metronome: output ") + String (engine.metroChannel.load() + 1)
-                        + gr (" does not exist. Open π / - and enable more outputs"));
+                        + gr (" does not exist. Open the settings (sliders button) and enable more outputs"));
             return;
         }
         engine.metroOn = ! engine.metroOn.load();
@@ -2628,20 +2560,12 @@ private:
     }
 
     //==========================================================================
-    void openAudioSettings()
+    void openAudioSettings()   // οι ρυθμίσεις ήχου και MIDI ανοίγουν μέσα στην οθόνη του Flow
     {
-        auto* selector = new AudioDeviceSelectorComponent (deviceManager, 0, 0, 0, 16, true, false, false, false);
-        selector->setSize (520, 520);
-
-        DialogWindow::LaunchOptions options;
-        options.content.setOwned (selector);
-        options.dialogTitle = gr ("Audio & MIDI settings");
-        options.componentToCentreAround = this;
-        options.dialogBackgroundColour = Colours::darkgrey;
-        options.escapeKeyTriggersCloseButton = true;
-        options.useNativeTitleBar = true;
-        options.resizable = false;
-        options.launchAsync();
+        loopsView.openMenu (false);
+        audioPanel.setBounds (loopsBezel.reduced (5));
+        audioPanel.open();
+        audioPanel.grabKeyboardFocus();
     }
 
     void chooseTapeFolder()
@@ -3523,6 +3447,7 @@ private:
     KeyboardView keyboardView;
     PanelHeader header;
     OrbRecTile orbRecTile;
+    AudioMidiPanel audioPanel { deviceManager, typeface };
     ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
@@ -3533,7 +3458,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.49.2"; }
+    const String getApplicationVersion() override { return "0.50.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
