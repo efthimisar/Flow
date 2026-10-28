@@ -502,7 +502,7 @@ public:
             g.setColour (it.checked ? hobby::kOn : Colour (0xff4a423b));
             g.drawEllipse (c.reduced (0.5f), it.checked ? 1.6f : 1.0f);
             const Colour ic = it.enabled ? (it.glyph == "!" ? Colour (0xffff7a6e) : hobby::kOn) : dim;
-            if (it.symbol >= 0) hobby::drawSymbol (g, (hobby::Symbol) it.symbol, c.getCentre(), rad * 1.15f, ic);
+            if (it.symbol >= 0) drawSymbol (g, (Symbol) it.symbol, c.getCentre(), rad * 1.15f, ic);
             else
             {
                 g.setColour (ic);
@@ -522,7 +522,7 @@ public:
             const auto& it = menuItems[(size_t) menuHover];
             const auto c = circles[(size_t) menuHover];
             g.setFont (hobby::makeFont (typeface, 12.0f));
-            const float tw = (float) g.getCurrentFont().getStringWidth (it.text) + 18.0f;
+            const float tw = textWidth (g.getCurrentFont(), it.text) + 18.0f;
             const Rectangle<float> tr (c.getRight() + 10.0f, c.getCentreY() - 11.0f, tw, 22.0f);
             g.setColour (Colour (0xff2f2a27)); g.fillRoundedRectangle (tr, 7.0f);
             g.setColour (Colour (0xff4a423b)); g.drawRoundedRectangle (tr.reduced (0.5f), 7.0f, 1.0f);
