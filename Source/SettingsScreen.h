@@ -41,6 +41,7 @@ public:
         std::function<void()> ipadToggle;
         std::function<juce::String()> ipadUrl;
         std::function<int()> ipadClients;
+        std::function<juce::String()> ipadOtherIps;
         std::function<juce::String()> orbFolderText;
         std::function<void()> chooseOrbFolder;
     };
@@ -534,6 +535,13 @@ private:
                 g.drawText ("Scan with the iPad camera", x0 + side + 28, y0 + 6, 420, 22, Justification::centredLeft, false);
                 g.setColour (dim()); g.setFont (font (12.0f));
                 g.drawFittedText (url, x0 + side + 28, y0 + 34, getWidth() - (x0 + side + 28) - 40, 40, Justification::topLeft, 2);
+                const auto others = host.ipadOtherIps ? host.ipadOtherIps() : juce::String();
+                if (others.isNotEmpty())
+                {
+                    g.setColour (dim()); g.setFont (font (11.0f));
+                    g.drawFittedText ("Other addresses of this Mac: " + others, x0 + side + 28, y0 + 160, getWidth() - (x0 + side + 28) - 40, 40, Justification::topLeft, 2);
+                }
+                g.setColour (dim()); g.setFont (font (12.0f));
                 g.drawFittedText ("Same Wi-Fi as the Mac. In Safari, tap \"Tap to start\" for full screen. macOS may ask once to allow incoming connections.",
                                   x0 + side + 28, y0 + 84, getWidth() - (x0 + side + 28) - 40, 60, Justification::topLeft, 4);
             }

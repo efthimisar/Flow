@@ -5,6 +5,7 @@
 #include "KeyLights.h"
 #include "WebOrb.h"
 #include "QrCode.h"
+#include <algorithm>
 #include "AudioPanel.h"
 #include "SettingsScreen.h"
 #include <map>
@@ -1310,13 +1311,39 @@ private:
         o.launchAsync();
     }
 
+    // όλες οι διευθύνσεις IPv4 του Mac· πρώτη η πιο πιθανή του τοπικού δικτύου (192.168.x, μετά 10.x, μετά 172.16-31.x)
+    StringArray webOrbIps() const
+    {
+        auto rank = [] (const String& ip)
+        {
+            if (ip.startsWith ("192.168.64.") || ip.startsWith ("192.168.65.")) return 4;   // συνήθως εικονικά μηχανήματα
+            if (ip.startsWith ("192.168.")) return 0;
+            if (ip.startsWith ("10."))      return 1;
+            if (ip.startsWith ("172."))     { const int b = ip.fromFirstOccurrenceOf (".", false, false).getIntValue(); return (b >= 16 && b <= 31) ? 2 : 5; }
+            return 5;
+        };
+        StringArray ips;
+        for (auto& a : IPAddress::getAllAddresses (false))
+        {
+            const auto t = a.toString();
+            if (! a.isIPv6 && t != "127.0.0.1" && ! t.startsWith ("169.254")) ips.add (t);
+        }
+        std::stable_sort (ips.strings.begin(), ips.strings.end(), [&] (const String& x, const String& y) { return rank (x) < rank (y); });
+        return ips;
+    }
+
     String webOrbUrl() const
     {
-        String ip;
-        for (auto& a : IPAddress::getAllAddresses (false))
-            if (! a.isIPv6 && a.toString() != "127.0.0.1" && ! a.toString().startsWith ("169.254")) { ip = a.toString(); break; }
-        if (ip.isEmpty()) ip = "<ip>";
+        const auto ips = webOrbIps();
+        const String ip = ips.isEmpty() ? String ("<ip>") : ips[0];
         return "http://" + ip + ":" + String (webServer.port) + "/?k=" + webOrbToken;
+    }
+
+    String webOrbOtherIps() const
+    {
+        auto ips = webOrbIps();
+        ips.remove (0);
+        return ips.joinIntoString ("   ");
     }
 
     // ---- Orb: εικόνα (σώζεται με το set) ----
@@ -2654,6 +2681,7 @@ private:
         };
         h.ipadUrl = [this] { return webOrbUrl(); };
         h.ipadClients = [this] { return webServer.getNumClients(); };
+        h.ipadOtherIps = [this] { return webOrbOtherIps(); };
         h.orbFolderText = [this]
         {
             String path = orbImagesDir().getFullPathName();
@@ -3563,7 +3591,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.0"; }
+    const String getApplicationVersion() override { return "0.51.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
