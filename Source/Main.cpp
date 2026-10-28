@@ -4,6 +4,7 @@
 #include "Views.h"
 #include "KeyLights.h"
 #include "WebOrb.h"
+#include "QrCode.h"
 #include <map>
 
 namespace
@@ -1254,6 +1255,53 @@ private:
         if (js != lastWebState) { lastWebState = js; webServer.setState (js); }
     }
 
+    // Παράθυρο με QR code για το link του iPad (σκανάρεται με την κάμερα του iPad)
+    struct WebQrPanel : public Component
+    {
+        explicit WebQrPanel (const String& u) : url (u), code (qr::encode (u.toStdString())) { setSize (380, 440); }
+        void paint (Graphics& g) override
+        {
+            g.fillAll (Colours::white);
+            if (code.size > 0)
+            {
+                const int quiet = 4;
+                const int px = jmax (2, (getWidth() - 40) / (code.size + 2 * quiet));
+                const int side = px * (code.size + 2 * quiet);
+                const int x0 = (getWidth() - side) / 2, y0 = 14;
+                g.setColour (Colours::black);
+                for (int y = 0; y < code.size; ++y)
+                    for (int x = 0; x < code.size; ++x)
+                        if (code.dark (x, y)) g.fillRect (x0 + (x + quiet) * px, y0 + (y + quiet) * px, px, px);
+                g.setColour (Colour (0xff3a3430));
+                g.setFont (Font (FontOptions (15.0f, Font::bold)));
+                g.drawText (gr ("Scan with the iPad camera"), 10, y0 + side + 6, getWidth() - 20, 22, Justification::centred, false);
+                g.setFont (Font (FontOptions (12.0f)));
+                g.setColour (Colour (0xff8a8077));
+                g.drawFittedText (url, 14, y0 + side + 30, getWidth() - 28, 36, Justification::centred, 2);
+            }
+            else
+            {
+                g.setColour (Colours::black);
+                g.drawFittedText (url, 14, 14, getWidth() - 28, getHeight() - 28, Justification::centred, 6);
+            }
+        }
+        String url;
+        qr::Code code;
+    };
+
+    void showWebOrbQr()
+    {
+        if (! webOrbOn) return;
+        DialogWindow::LaunchOptions o;
+        o.content.setOwned (new WebQrPanel (webOrbUrl()));
+        o.dialogTitle = "iPad orb";
+        o.dialogBackgroundColour = Colours::white;
+        o.escapeKeyTriggersCloseButton = true;
+        o.useNativeTitleBar = true;
+        o.resizable = false;
+        o.launchAsync();
+    }
+
     String webOrbUrl() const
     {
         String ip;
@@ -2369,7 +2417,9 @@ private:
              {
                  if (webOrbOn) stopWebOrb(); else startWebOrb();
                  setMessage (webOrbOn ? gr ("iPad orb: on") : gr ("iPad orb: off"));
+                 if (webOrbOn) MessageManager::callAsync ([safe = SafePointer<MainComponent> (this)] { if (safe != nullptr) safe->showWebOrbQr(); });
              }), true, webOrbOn);
+        add (String::fromUTF8 ("\xe2\x96\xa6"), gr ("iPad orb QR code\xe2\x80\xa6"), [this] { showWebOrbQr(); }, webOrbOn);
         add (String::fromUTF8 ("\xe2\x96\xa3"), gr ("Orb images folder\xe2\x80\xa6"), act ([this] { chooseOrbFolder(); }));
         add ("!", "Panic", act ([this] { doPanic(); }));
 
@@ -3478,7 +3528,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.49.0"; }
+    const String getApplicationVersion() override { return "0.49.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
