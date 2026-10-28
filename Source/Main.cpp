@@ -198,6 +198,7 @@ public:
         loopsView.onOrbTouch = [this] (int corner, bool down) { orbTouch (corner, down); };
         loopsView.onOrbClearMotion = [this] { orbClearMotion(); };
         loopsView.onOrbImage = [this] { pickOrbImage(); };
+        loopsView.onOrbMode = [this] { repaint(); };
         loopsView.onOrbImageClear = [this] { setOrbImage ({}); };
 
         const String savedFolder = settings->getValue ("tapeFolder");
@@ -273,7 +274,7 @@ public:
     {
         hobby::drawBody (g, getLocalBounds());
         hobby::drawBrandMark (g, typeface, getWidth());
-        hobby::drawEmbossedText (g, typeface, "flow", (float) sideM + 8.0f);
+        hobby::drawEmbossedText (g, typeface, loopsView.orbMode ? "orb" : "flow", (float) sideM + 8.0f);
 
         hobby::drawBezel (g, loopsBezel.toFloat(), loopsBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
         hobby::drawBezel (g, keysBezel.toFloat(), keysBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);

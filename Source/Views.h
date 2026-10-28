@@ -399,7 +399,9 @@ public:
         orbMode = on;
         if (on) { list.close(); openMenu (false); orbDrag = -1; orbHover = -1; }
         resized(); repaint();
+        if (onOrbMode) onOrbMode();
     }
+    std::function<void()> onOrbMode;
     void setOrb (const std::array<KnobState, 16>& k, const std::array<Point<float>, 4>& pos, int learning, bool rec, bool motion)
     {
         for (int c = 0; c < 4; ++c)
