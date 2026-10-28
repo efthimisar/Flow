@@ -27,15 +27,15 @@ static inline int blockHue (int b)
 // ανοιχτό για τα λευκά πλήκτρα, πιο βαθύ για τα μαύρα
 static inline Colour blockLight (int b)
 {
-    static const Colour c[9] { Colour (0xfff5b88a), Colour (0xfff5de8a), Colour (0xff9ee6cf), Colour (0xff9fdc9c), Colour (0xff93acf2),
-                               Colour (0xffb9a0f2), Colour (0xfff5a3d0), Colour (0xff8fc8f0), Colour (0xff8fe3e0) };
+    static const Colour c[9] { Colour (0xffe8a06a), Colour (0xffe6c85f), Colour (0xff6fd3b0), Colour (0xff7cc97f), Colour (0xff6f8fe8),
+                               Colour (0xff9a7fe6), Colour (0xffe578b8), Colour (0xff66b0e6), Colour (0xff5fcfcb) };
     return c[((b % 9) + 9) % 9];
 }
 
 static inline Colour blockDeep (int b)
 {
-    static const Colour c[9] { Colour (0xffc98550), Colour (0xffc2a63f), Colour (0xff4fae8a), Colour (0xff5b9a70), Colour (0xff5877c4),
-                               Colour (0xff7a5fc4), Colour (0xffc75a99), Colour (0xff4f93c4), Colour (0xff4fb0ae) };
+    static const Colour c[9] { Colour (0xffb06a38), Colour (0xffae922e), Colour (0xff35a283), Colour (0xff48964c), Colour (0xff4561b8),
+                               Colour (0xff6a4cb8), Colour (0xffb04884), Colour (0xff3a80b4), Colour (0xff2f9d99) };
     return c[((b % 9) + 9) % 9];
 }
 
