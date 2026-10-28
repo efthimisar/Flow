@@ -901,9 +901,19 @@ private:
             if (b < 0) continue;
             if (engine.blockOff[(size_t) b].load() != 0) continue;
             buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? 3 : 1);
-            // πλήκτρα με Hold: λευκά και στο hardware, όπως στην οθόνη
-            if (((engine.latchBits[(size_t) b * 2 + (size_t) (n >> 6)].load() >> (n & 63)) & 1) != 0)
-                buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);
+        }
+
+        // ό,τι κρατιέται με Hold (και οι νότες συγχορδίας του) είναι λευκό και στο hardware, ακόμα κι αν είναι έξω από τη ζώνη
+        for (int b = 0; b < flow::numBlocks; ++b)
+        {
+            if (! isActive (b) || engine.blockOff[(size_t) b].load() != 0) continue;
+            for (int n = flow::lowestNote; n <= flow::highestNote; ++n)
+            {
+                const int idx = n - first;
+                if (idx < 0 || idx >= count || idx >= 88) continue;
+                if (((engine.latchBits[(size_t) b * 2 + (size_t) (n >> 6)].load() >> (n & 63)) & 1) != 0)
+                    buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);
+            }
         }
 
         const int sb = engine.specialBlock.load();
