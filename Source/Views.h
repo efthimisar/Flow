@@ -394,6 +394,119 @@ public:
         repaint();
     }
 
+    // μενού μέσα στην οθόνη (κουμπί φακέλου): αριστερά επιλογές, δεξιά πληροφορίες
+    struct MenuEntry { String glyph, text; bool enabled = true, checked = false; std::function<void()> fn; std::vector<MenuEntry> sub; };
+    bool menuOpen = false;
+    std::function<void()> onMenuOpen;   // το Main γεμίζει τις επιλογές και τις πληροφορίες
+    void setMenu (std::vector<MenuEntry> items) { menuItems = std::move (items); if (menuOpen) repaint(); }
+    void setMenuInfo (std::vector<std::pair<String, String>> info)
+    {
+        if (info == menuInfo) return;
+        menuInfo = std::move (info);
+        if (menuOpen) repaint();
+    }
+    void openMenu (bool on)
+    {
+        if (on == menuOpen) return;
+        menuOpen = on; menuSub = -1; menuHover = -1;
+        if (on) { list.close(); if (onMenuOpen) onMenuOpen(); }
+        repaint();
+    }
+
+    void paintOverChildren (Graphics& g) override
+    {
+        menuHot.clear(); menuPanel = {};
+        if (! menuOpen) return;
+
+        const float w = (float) getWidth();
+        const Rectangle<float> panel (14.0f, 42.0f, w - 28.0f, (float) (getHeight() - knobAreaH - 6) - 42.0f);
+        menuPanel = panel;
+        g.setColour (Colour (0xff1e1b19));
+        g.fillRoundedRectangle (panel, 10.0f);
+        g.setColour (Colour (0xff3a3430));
+        g.drawRoundedRectangle (panel.reduced (0.5f), 10.0f, 1.0f);
+
+        const float split = panel.getX() + panel.getWidth() * 0.52f;
+        g.setColour (Colour (0xff3a3430));
+        g.fillRect (split - 12.0f, panel.getY() + 12.0f, 1.0f, panel.getHeight() - 24.0f);
+
+        const Colour dim (0xff6b625a), txt (0xfff3f4f6);
+        g.setFont (hobby::makeFont (typeface, 11.0f));
+        g.setColour (dim);
+        g.drawText ("MENU", (int) panel.getX() + 18, (int) panel.getY() + 8, 120, 16, Justification::centredLeft, false);
+        g.drawText ("INFO", (int) split + 6, (int) panel.getY() + 8, 120, 16, Justification::centredLeft, false);
+
+        const int rows = jmax (1, jmax ((int) menuItems.size(), (int) menuInfo.size()));
+        const float rowH = jlimit (18.0f, 28.0f, (panel.getHeight() - 38.0f) / (float) rows);
+        const float y0 = panel.getY() + 30.0f;
+        const float colW = split - panel.getX() - 28.0f;
+
+        std::function<void()> closeFn = [this] { openMenu (false); };
+        for (int i = 0; i < (int) menuItems.size(); ++i)
+        {
+            const auto& it = menuItems[(size_t) i];
+            const Rectangle<float> r (panel.getX() + 10.0f, y0 + rowH * (float) i, colW, rowH);
+            const bool hot_ = i == menuHover || i == menuSub;
+            if (hot_ && it.enabled) { g.setColour (Colour (0xff3a332e)); g.fillRoundedRectangle (r, 6.0f); }
+            g.setFont (hobby::makeFont (typeface, jlimit (12.0f, 16.0f, rowH * 0.6f)));
+            g.setColour (it.enabled ? hobby::kOn : dim);
+            g.drawText (it.glyph, (int) r.getX(), (int) r.getY(), 28, (int) r.getHeight(), Justification::centred, false);
+            g.setColour (it.enabled ? txt : dim);
+            g.drawText (it.text + (it.sub.empty() ? String() : String::fromUTF8 ("  \xe2\x96\xb8")),
+                        (int) r.getX() + 34, (int) r.getY(), (int) r.getWidth() - 34, (int) r.getHeight(), Justification::centredLeft, true);
+            if (it.checked) { g.setColour (hobby::kOn); g.drawText (String::fromUTF8 ("\xe2\x9c\x93"), (int) r.getRight() - 24, (int) r.getY(), 20, (int) r.getHeight(), Justification::centred, false); }
+            if (it.enabled)
+            {
+                if (! it.sub.empty()) menuHot.push_back ({ r, [this, i] { menuSub = menuSub == i ? -1 : i; }, i });
+                else                  menuHot.push_back ({ r, [this, fn = it.fn, closeFn] { auto f = fn; closeFn(); if (f) f(); }, i });
+            }
+        }
+
+        // υπομενού (flyout) δίπλα στην επιλογή που το έχει
+        if (menuSub >= 0 && menuSub < (int) menuItems.size() && ! menuItems[(size_t) menuSub].sub.empty())
+        {
+            const auto& subs = menuItems[(size_t) menuSub].sub;
+            const float fw = jmin (260.0f, colW * 0.6f), fh = rowH * (float) subs.size() + 12.0f;
+            const float fx = panel.getX() + 10.0f + colW - fw - 4.0f;
+            float fy = y0 + rowH * (float) menuSub;
+            fy = jmin (fy, panel.getBottom() - fh - 6.0f);
+            const Rectangle<float> fr (fx, fy, fw, fh);
+            g.setColour (Colour (0xff2f2a27)); g.fillRoundedRectangle (fr, 8.0f);
+            g.setColour (Colour (0xff4a423b)); g.drawRoundedRectangle (fr.reduced (0.5f), 8.0f, 1.0f);
+            menuHot.push_back ({ fr, [] {}, -1 });   // κλικ μέσα στο flyout δεν το κλείνει
+            for (int j = 0; j < (int) subs.size(); ++j)
+            {
+                const auto& sj = subs[(size_t) j];
+                const Rectangle<float> rr (fr.getX() + 6.0f, fr.getY() + 6.0f + rowH * (float) j, fr.getWidth() - 12.0f, rowH);
+                g.setFont (hobby::makeFont (typeface, jlimit (11.0f, 14.0f, rowH * 0.55f)));
+                g.setColour (sj.enabled ? txt : dim);
+                g.drawText (sj.text, (int) rr.getX() + 8, (int) rr.getY(), (int) rr.getWidth() - 34, (int) rr.getHeight(), Justification::centredLeft, true);
+                if (sj.checked) { g.setColour (hobby::kOn); g.drawText (String::fromUTF8 ("\xe2\x9c\x93"), (int) rr.getRight() - 24, (int) rr.getY(), 20, (int) rr.getHeight(), Justification::centred, false); }
+                if (sj.enabled) menuHot.push_back ({ rr, [this, fn = sj.fn, closeFn] { auto f = fn; closeFn(); if (f) f(); }, -1 });
+            }
+        }
+
+        // πληροφορίες
+        for (int i = 0; i < (int) menuInfo.size(); ++i)
+        {
+            const float y = y0 + rowH * (float) i;
+            g.setFont (hobby::makeFont (typeface, 12.0f));
+            g.setColour (dim);
+            g.drawText (menuInfo[(size_t) i].first, (int) split + 6, (int) y, 100, (int) rowH, Justification::centredLeft, true);
+            g.setFont (hobby::makeFont (typeface, 13.0f));
+            g.setColour (txt);
+            g.drawText (menuInfo[(size_t) i].second, (int) split + 110, (int) y, (int) (panel.getRight() - split - 120.0f), (int) rowH, Justification::centredLeft, true);
+        }
+    }
+
+    void mouseMove (const MouseEvent& e) override
+    {
+        if (! menuOpen) return;
+        int h = -1;
+        for (auto& z : menuHot) if (z.idx >= 0 && z.r.contains (e.position)) h = z.idx;
+        if (h != menuHover) { menuHover = h; repaint (menuPanel.toNearestInt()); }
+    }
+
     // ενδείξεις κάτω (χωρίς πλαίσιο): block, συγχορδία, μήνυμα ή CPU, τελεία MIDI
     bool midiActive = false;
     String title, chordName, notice;
@@ -863,6 +976,13 @@ public:
     void mouseDown (const MouseEvent& e) override
     {
         if (e.mods.isPopupMenu()) return;
+        if (menuOpen)
+        {
+            for (auto& z : menuHot)
+                if (z.r.contains (e.position)) { auto fn = z.fn; fn(); repaint(); return; }
+            if (menuPanel.contains (e.position)) return;
+            openMenu (false);    // κλικ έξω από το πάνελ: κλείνει και συνεχίζει κανονικά
+        }
         if (metroStrip && ! metroSliderRect.isEmpty() && metroSliderRect.expanded (8.0f, 10.0f).contains (e.position))
         {
             draggingMetro = true;
@@ -931,6 +1051,13 @@ private:
     int stepOut = 0, topOut = 48;
     std::vector<std::pair<Rectangle<float>, std::function<void()>>> hot;   // κλικ-ζώνες φωτακιών στη λωρίδα μετρονόμου
     std::vector<ToolLamp> tools;
+
+    struct MenuZone { Rectangle<float> r; std::function<void()> fn; int idx; };
+    std::vector<MenuZone> menuHot;
+    std::vector<MenuEntry> menuItems;
+    std::vector<std::pair<String, String>> menuInfo;
+    Rectangle<float> menuPanel;
+    int menuSub = -1, menuHover = -1;
 };
 
 //==============================================================================

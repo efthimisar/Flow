@@ -58,7 +58,7 @@ public:
         vstTile.setTooltip (gr ("VST: opens / closes the instrument window (green = the block has a VST). Right-click: replace, remove"));
         mfxTile.setTooltip (gr ("MIDI FX: MIDI effect (e.g. Stepic) before the instrument. If there is no plugin, opens a file chooser. Right-click: replace, remove"));
         fxTile.setTooltip (gr ("FX: chain of audio effects after the instrument. The circles 1, 2, 3 and the + are in the panel header. Right-click: add"));
-        folderTile.setTooltip (gr ("Folder where Rec Audio files are saved (zip with master and stems)"));
+        folderTile.setTooltip (gr ("Menu: sets, audio and MIDI settings, master volume, Rec Audio folder, Link, Panic"));
         recTile.setTooltip ("Rec MIDI loop: " + gr ("records the loop of the selected block (the number inside the circle). Press again = end. If the block already has a loop, it does nothing: use re-record or delete. Right-click: quantize and pedal"));
         undoTile.setTooltip (gr ("Delete loop: deletes the loop of the selected block. Pedal: presses = block number (two presses = block 2)"));
         stopTile.setTooltip ("Rec MIDI loop: " + gr ("re-record. Deletes the loop of the selected block and starts a new recording at once. Right-click: mute pedal"));
@@ -113,7 +113,8 @@ public:
             if (what == 1) chooseMetroSample();
             else { metroSamplePath = {}; engine.setMetroSample (AudioBuffer<float>()); saveNow(); }
         };
-        folderTile.onClick = [this] { chooseTapeFolder(); };
+        folderTile.onClick = [this] { loopsView.openMenu (! loopsView.menuOpen); };
+        loopsView.onMenuOpen = [this] { buildScreenMenu(); loopsView.setMenuInfo (menuInfoRows()); };
 
         loopsView.onSelect = [this] (int b) { selectBlock (b); };
         loopsView.getTempoBox().onChange = [this] { dirty = true; };
@@ -1145,6 +1146,7 @@ private:
     void knobTick()
     {
         syncKnobView();
+        if (loopsView.menuOpen) loopsView.setMenuInfo (menuInfoRows());
         if (engine.masterLearned.exchange (0) > 0)
         {
             setMessage (gr ("Master volume ") + String::fromUTF8 ("\xe2\x86\x90") + " " + pedalCodeText (engine.masterCc.load()));
@@ -1969,6 +1971,107 @@ private:
         });
     }
 
+    // μενού μέσα στην οθόνη (κουμπί φακέλου)
+    String currentSetName;
+
+    void buildScreenMenu()
+    {
+        auto act = [this] (std::function<void()> f) { return std::function<void()> ([this, f] { f(); saveNow(); }); };
+        std::vector<LoopsView::MenuEntry> items;
+        auto add = [&items] (const String& glyph, const String& text, std::function<void()> fn, bool enabled = true, bool checked = false)
+        {
+            LoopsView::MenuEntry m; m.glyph = glyph; m.text = text; m.fn = std::move (fn); m.enabled = enabled; m.checked = checked;
+            items.push_back (std::move (m));
+        };
+
+        add (String::fromUTF8 ("\xe2\x99\xaa"), gr ("Audio & MIDI settings\xe2\x80\xa6"), act ([this] { openAudioSettings(); }));
+        add (String::fromUTF8 ("\xe2\x86\x93"), gr ("Save set\xe2\x80\xa6"), act ([this] { saveSetToFile(); }));
+        add (String::fromUTF8 ("\xe2\x86\x91"), gr ("Load set\xe2\x80\xa6"), act ([this] { loadSetFromFile(); }));
+
+        {
+            Array<File> files = setsDir().findChildFiles (File::findFiles, false, "*.flowset");
+            struct Newest { static int compareElements (const File& a, const File& b)
+            { return a.getLastModificationTime() < b.getLastModificationTime() ? 1 : (b.getLastModificationTime() < a.getLastModificationTime() ? -1 : 0); } };
+            Newest sorter;
+            files.sort (sorter);
+            LoopsView::MenuEntry m; m.glyph = String::fromUTF8 ("\xe2\x96\xa4"); m.text = gr ("My sets");
+            for (int i = 0; i < files.size() && i < 12; ++i)
+            {
+                LoopsView::MenuEntry sj; sj.text = files[i].getFileNameWithoutExtension();
+                const File f = files[i];
+                sj.fn = [this, f] { loadSetFile (f); saveNow(); };
+                m.sub.push_back (std::move (sj));
+            }
+            if (m.sub.empty()) { LoopsView::MenuEntry sj; sj.text = gr ("(none)"); sj.enabled = false; m.sub.push_back (sj); }
+            items.push_back (std::move (m));
+        }
+
+        add (String::fromUTF8 ("\xe2\x9f\xb2"), gr ("Restore last session"), act ([this] { restoreLastSession(); }), hasSessionBackup());
+        add (String::fromUTF8 ("\xe2\x96\xad"), gr ("Rec Audio folder\xe2\x80\xa6"), act ([this] { chooseTapeFolder(); }));
+
+        {
+            LoopsView::MenuEntry m; m.glyph = String::fromUTF8 ("\xe2\x96\x82\xe2\x96\x84\xe2\x96\x86"); m.text = gr ("Master volume");
+            const float pos = engine.masterPos.load();
+            const float steps[4] { 1.0f, 0.85f, 0.7f, 0.5f };
+            for (int i = 0; i < 4; ++i)
+            {
+                LoopsView::MenuEntry sj; sj.text = String ((int) (steps[i] * 100)) + "%"; sj.checked = std::abs (pos - steps[i]) < 0.05f;
+                const float v = steps[i];
+                sj.fn = [this, v] { engine.masterPos = v; saveNow(); };
+                m.sub.push_back (std::move (sj));
+            }
+            { LoopsView::MenuEntry sj; sj.text = gr ("Safety limiter"); sj.checked = engine.limiterOn.load() != 0;
+              sj.fn = [this] { engine.limiterOn = engine.limiterOn.load() != 0 ? 0 : 1; saveNow(); }; m.sub.push_back (std::move (sj)); }
+            { LoopsView::MenuEntry sj; sj.text = gr ("Assign knob (MIDI learn)");
+              sj.fn = [this] { engine.cancelLearns(); engine.masterLearn = 1; setMessage (gr ("Move the knob for the master volume")); }; m.sub.push_back (std::move (sj)); }
+            { LoopsView::MenuEntry sj; sj.text = gr ("Remove assignment"); sj.enabled = engine.masterCc.load() != 0;
+              sj.fn = [this] { engine.masterCc = 0; saveNow(); }; m.sub.push_back (std::move (sj)); }
+            items.push_back (std::move (m));
+        }
+
+        add (String::fromUTF8 ("\xe2\x88\x9e"), "Ableton Link" + (LinkBridge::isAvailable() ? String() : gr (" (not included in this build)")),
+             act ([this]
+             {
+                 const bool on = ! engine.isLinkEnabled();
+                 engine.setLinkEnabled (on);
+                 setMessage (on ? gr ("Ableton Link: on") : gr ("Ableton Link: off"));
+             }), LinkBridge::isAvailable(), engine.isLinkEnabled());
+        add ("!", "Panic", act ([this] { doPanic(); }));
+
+        loopsView.setMenu (std::move (items));
+    }
+
+    std::vector<std::pair<String, String>> menuInfoRows()
+    {
+        std::vector<std::pair<String, String>> r;
+        r.push_back ({ "Set", currentSetName.isNotEmpty() ? currentSetName : String::fromUTF8 ("\xe2\x80\x93") });
+        r.push_back ({ "Tempo", String ((int) std::lround (engine.tempo.load())) + " BPM" });
+        if (auto* dev = deviceManager.getCurrentAudioDevice())
+        {
+            const double rate = dev->getCurrentSampleRate();
+            r.push_back ({ "Audio", dev->getName() });
+            r.push_back ({ {}, String (rate / 1000.0, 1) + " kHz  \xc2\xb7  " + String (dev->getCurrentBufferSizeSamples()) + " samples  \xc2\xb7  "
+                                 + String (1000.0 * (double) dev->getOutputLatencyInSamples() / jmax (1.0, rate), 1) + " ms" });
+        }
+        else r.push_back ({ "Audio", gr ("none") });
+        {
+            StringArray names;
+            for (auto& d : MidiInput::getAvailableDevices())
+                if (deviceManager.isMidiInputDeviceEnabled (d.identifier)) names.add (d.name);
+            r.push_back ({ "MIDI", names.isEmpty() ? gr ("none") : names.joinIntoString (", ") });
+        }
+        r.push_back ({ "Master", String ((int) std::lround (engine.masterPos.load() * 100.0f)) + "%  \xc2\xb7  limiter " + (engine.limiterOn.load() != 0 ? "on" : "off") });
+        r.push_back ({ "Link", engine.isLinkEnabled() ? "on" : "off" });
+        {
+            auto folder = engine.recorder.getFolder().getFullPathName();
+            const auto home = File::getSpecialLocation (File::userHomeDirectory).getFullPathName();
+            if (home.isNotEmpty() && folder.startsWith (home)) folder = "~" + folder.substring (home.length());
+            r.push_back ({ "Rec Audio", folder });
+        }
+        r.push_back ({ "Key lights", keyLights.isOn() ? "on" : "off" });
+        return r;
+    }
+
     void showPiMenu()
     {
         const int pcode = engine.mapCode[flow::ctlPanic].load();
@@ -2526,7 +2629,7 @@ private:
             if (f == File()) return;
             f = f.withFileExtension ("flowset");
             auto xml = createSetXml (true, true);
-            if (xml->writeTo (f)) setMessage (gr ("Saved: ") + f.getFileName());
+            if (xml->writeTo (f)) { currentSetName = f.getFileNameWithoutExtension(); setMessage (gr ("Saved: ") + f.getFileName()); }
             else                  setMessage (gr ("Could not write the file"));
         });
     }
@@ -2545,6 +2648,7 @@ private:
             return;
         }
         applySet (*xml, {});
+        currentSetName = f.getFileNameWithoutExtension();
         if (setNewer != 0)         setMessage (gr ("This set is from a newer Flow, some things may be missing"));
         else if (setDropped > 0)   setMessage (gr ("Loaded, but ") + String (setDropped) + gr (" blocks did not fit (maximum 9)"));
         else if (setMoved > 0)     setMessage (gr ("Loaded: ") + String (setMoved) + gr (" blocks were moved to free slots"));
