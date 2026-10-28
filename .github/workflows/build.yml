@@ -38,11 +38,11 @@ jobs:
           security import signing/flow-signing.p12 -P flow -A -t cert -f pkcs12 -k "$KC"
           security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC" >/dev/null
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
-          HASH=41F591A7A700DB032A3CD9711F1EDE0070DAA24AAE
-          if codesign --force --deep --keychain "$KC" --sign "$HASH" "$APP"; then
+          HASH=4191F5A700DB032A3CD9711F1EDE0070DAA24AAE
+          if codesign --force --deep --keychain "$KC" --sign "$HASH" "$APP" 2> sign.err; then
             echo "Signed with Flow Self-Signed"
           else
-            echo "::warning::Self-signed failed, using ad-hoc"
+            echo "::warning::Self-signed failed: $(tr '\n' ' ' < sign.err | cut -c1-300) / $(security find-identity "$KC" | tr '\n' ' ' | cut -c1-200)"
             codesign --force --deep --sign - "$APP"
           fi
           codesign -dr - "$APP" || true
