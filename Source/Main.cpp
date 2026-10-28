@@ -1462,7 +1462,12 @@ private:
         const float len = p.getDistanceFromOrigin();
         return len > 1.0f ? Point<float> (p.x / len, p.y / len) : p;
     }
-    static Point<float> orbDefault (int corner) { return orbClamp (corner, { ((corner == 1 || corner == 2) ? 1.0f : -1.0f) * 0.3536f, (corner >= 2 ? 1.0f : -1.0f) * 0.3536f }); }
+    // αρχική θέση: ρόμβος (πάνω, δεξιά, κάτω, αριστερά), στην ίδια απόσταση από το κέντρο όπως πριν (0.5)
+    static Point<float> orbDefault (int corner)
+    {
+        static const Point<float> d[4] { { 0.0f, -0.5f }, { 0.5f, 0.0f }, { 0.0f, 0.5f }, { -0.5f, 0.0f } };
+        return d[jlimit (0, 3, corner)];
+    }
     static float orbValue (Point<float> p) { return jlimit (0.0f, 1.0f, p.getDistanceFromOrigin()); }
 
     double orbPhase() const   // 0..1 μέσα στα 16 μέτρα
@@ -3585,7 +3590,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.5"; }
+    const String getApplicationVersion() override { return "0.51.6"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
