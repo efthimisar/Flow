@@ -629,20 +629,6 @@ public:
                 };
                 // τρία κουμπιά δίπλα στο tap: ένταση (κάθε πάτημα αλλάζει επίπεδο), ήχος (δικός σου ⇄ αρχικός). Η έξοδος του μετρονόμου (ακουστικά) μένει σταθερή, δεν έχει κουμπί
                 float x = (float) tapDot.getRight() + 26.0f;
-                // ένταση: μπάρα από 0 έως 100%, σέρνεται
-                {
-                    const float bw = 96.0f, bh = 6.0f;
-                    metroSliderRect = { x, ly - bh * 0.5f, bw, bh };
-                    const float lv = jlimit (0.0f, 1.0f, engine.metroLevel.load());
-                    g.setColour (Colour (0xff3a3430));
-                    g.fillRoundedRectangle (metroSliderRect, 3.0f);
-                    g.setColour (hobby::kOn);
-                    g.fillRoundedRectangle (metroSliderRect.withWidth (jmax (3.0f, bw * lv)), 3.0f);
-                    g.setColour (Colour (0xfff3f4f6));
-                    g.fillEllipse (metroSliderRect.getX() + bw * lv - 6.0f, ly - 6.0f, 12.0f, 12.0f);
-                    tipZones.push_back ({ metroSliderRect.expanded (8.0f, 10.0f), String::fromUTF8 ("Ένταση μετρονόμου (0–100%)") });
-                    x += bw + 22.0f;
-                }
                 const bool custom = metroIsCustom && metroIsCustom();
                 tipZones.push_back ({ Rectangle<float> (x - 12.0f, ly - 12.0f, 24.0f, 24.0f), custom ? String::fromUTF8 ("Επαναφορά στον αρχικό ήχο μετρονόμου") : String::fromUTF8 ("Διάλεξε δικό σου ήχο για το μετρονόμο") });
                 lampAt (x, custom, custom ? String::fromUTF8 ("\xe2\x86\xba") : String::fromUTF8 ("\xe2\x99\xaa"),

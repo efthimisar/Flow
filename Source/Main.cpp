@@ -1818,21 +1818,16 @@ private:
     void showMetroMenu()
     {
         const int code = engine.mapCode[flow::ctlMetro].load();
-        const float level = engine.metroLevel.load();
         const int outs = engine.numOutChannels.load();
         const int cur = engine.metroChannel.load();
 
-        PopupMenu levelMenu, outMenu;
-        const float levels[4] { 0.25f, 0.5f, 0.75f, 1.0f };
-        for (int i = 0; i < 4; ++i)
-            levelMenu.addItem (10 + i, String ((int) (levels[i] * 100)) + "%", true, std::abs (level - levels[i]) < 0.13f && (i == 3 || std::abs (level - levels[i]) <= std::abs (level - levels[i + 1])));
+        PopupMenu outMenu;
         for (int c = 0; c < outs; ++c)
             outMenu.addItem (100 + c, gr ("Έξοδος ") + String (c + 1), true, c == cur);
 
         PopupMenu menu;
         menu.addItem (1, gr ("\xe2\x99\xaa"));
         menu.addItem (2, gr ("\xe2\x86\xba"), metroSamplePath.isNotEmpty());
-        menu.addSubMenu (gr ("\xe2\x96\x82\xe2\x96\x84\xe2\x96\x86"), levelMenu);
         menu.addSubMenu (gr ("\xe2\x87\xa8"), outMenu);
         menu.addSeparator();
         menu.addItem (40, gr ("\xe2\x97\x8e"));
@@ -1840,7 +1835,7 @@ private:
         if (code != 0) menu.addItem (42, gr ("Τώρα: ") + pedalCodeText (code), false);
 
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&metroTile),
-                            [safe = SafePointer<MainComponent> (this), levels] (int r)
+                            [safe = SafePointer<MainComponent> (this)] (int r)
         {
             if (safe == nullptr || r == 0) return;
             auto& e = safe->engine;
@@ -1850,7 +1845,6 @@ private:
                 safe->metroSamplePath = {};
                 e.setMetroSample (AudioBuffer<float>());
             }
-            if (r >= 10 && r <= 13) e.metroLevel = levels[r - 10];
             if (r >= 100) e.metroChannel = r - 100;
             if (r == 40) safe->startPedalLearn (flow::ctlMetro);
             if (r == 41) e.mapCode[flow::ctlMetro] = 0;
@@ -2251,13 +2245,13 @@ private:
                 { knobBlock[(size_t) k] = kb; knobParamIdx[(size_t) k] = bp[1].getIntValue(); }
             }
         }
-        engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 98.0));
+        engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 110.0));
         engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 1));
         engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 2));
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 2));
         engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 500));
         engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 0));
-        engine.tempoUserSet = root.getIntAttribute ("tempoManual", engine.tempo.load() != 120.0 ? 1 : 0) != 0;
+        engine.tempoUserSet = root.getIntAttribute ("tempoManual", engine.tempo.load() != 110.0 ? 1 : 0) != 0;
         pendingSelect = jmax (0, mapSlot (root.getIntAttribute ("selected", 0)));
 
         for (auto& sc : scenes) sc = Scene();
@@ -2522,7 +2516,7 @@ private:
         std::unique_ptr<XmlElement> xml (properties.getUserSettings()->getXmlValue ("sessionBackup"));
         if (xml == nullptr || ! xml->hasTagName ("FlowSet")) return;
         applySet (*xml, startupCrashed);
-        engine.tempo = jlimit (40.0, 240.0, xml->getDoubleAttribute ("tempo", 98.0));
+        engine.tempo = jlimit (40.0, 240.0, xml->getDoubleAttribute ("tempo", 110.0));
         saveNow();
     }
 

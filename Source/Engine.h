@@ -146,7 +146,7 @@ namespace flow
         std::atomic<int> axisBarsOut { 4 };
 
         // tempo και quantize (global)
-        std::atomic<double> tempo { 98.0 };
+        std::atomic<double> tempo { 110.0 };
         std::atomic<int> startQ { 1 }, lengthQ { 2 }, snapQ { 2 };   // startQ/lengthQ: 0 Off, 1 Beat, 2 Bar. snapQ: 0 Off, 1 = 1/8, 2 = 1/16
         std::atomic<int> tapRequest { 0 };
         std::atomic<int> afterFirst { 0 };      // μετά το πρώτο loop: 0 = Play, 1 = Overdub
@@ -679,6 +679,7 @@ namespace flow
                 const float g0 = masterGainPrev;
                 masterGainPrev = g1;
                 const bool lim = limiterOn.load() != 0;
+                float outPk = 0.0f;
                 const float ceilV = 0.97f;
                 const float rel = 1.0f - std::exp (-1.0f / (0.12f * (float) juce::jmax (8000.0, sr)));
                 for (int i = 0; i < numSamples; ++i)
@@ -693,7 +694,11 @@ namespace flow
                         l *= limEnv; r *= limEnv;
                     }
                     mL[i] = l; mR[i] = r;
+                    outPk = std::max (outPk, std::max (std::abs (l), std::abs (r)));
                 }
+                // ένταση μετρονόμου: 50% της έντασης που ακούγεται (γρήγορη άνοδος, αργή πτώση ~8 s, με ελάχιστο ώστε να ακούγεται και στις σιωπές)
+                musicEnv = std::max (outPk, musicEnv * std::exp (-(float) numSamples / (8.0f * (float) juce::jmax (8000.0, sr))));
+                metroAutoLevel = 0.5f * std::max (musicEnv, 0.1f);
             }
 
             // ---- έξοδος
@@ -851,7 +856,7 @@ namespace flow
         juce::CriticalSection lock;
         std::array<Block, numBlocks> blocks;
         std::vector<PluginPtr> masterFx;
-        float masterGainPrev = 1.0f, limEnv = 1.0f;
+        float masterGainPrev = 1.0f, limEnv = 1.0f, musicEnv = 0.0f, metroAutoLevel = 0.25f;
         juce::MidiBuffer chordTmp;
         Head head;
         std::array<int, 128> owner;
@@ -1006,7 +1011,7 @@ namespace flow
             }
 
             const double sr = sampleRate.load();
-            const float level = metroLevel.load();
+            const float level = metroAutoLevel;   // 50% της έντασης των ήχων, χωρίς χειροκίνητο volume
             const bool useSample = metroSample.getNumSamples() > 0;
             int next = 0;
 
