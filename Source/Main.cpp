@@ -177,7 +177,7 @@ public:
         for (int i = 0; i < flow::numControls; ++i)
             engine.mapCode[(size_t) i] = settings->getIntValue ("ctl" + String (i), 0);
 
-        for (auto& row : knobParam) row.fill (-1);
+        knobBlock.fill (-1); knobParamIdx.fill (-1);
         for (int k = 0; k < 8; ++k)
         {
             engine.knobCc[(size_t) k] = settings->getIntValue ("knobcc" + String (k), 0);
@@ -943,20 +943,22 @@ private:
     bool lightsTried = false;
     int learnMode = 0;
 
-    // ποτενσιόμετρα: knobParam[block][θέση] = δείκτης παραμέτρου του plugin (-1 = καμία)
-    std::array<std::array<int, 8>, flow::numBlocks> knobParam;
-    int knobStage = 0, knobSlot = -1;   // 1 = περιμένει να κουνηθεί παράμετρος στο plugin, 2 = περιμένει φυσικό κουμπί
+    // 8 ποτενσιόμετρα γενικά (όχι ανά block): η κάθε θέση δείχνει σε μία παράμετρο ενός plugin οποιουδήποτε block
+    std::array<int, 8> knobBlock, knobParamIdx;     // block και δείκτης παραμέτρου (-1 = ελεύθερο)
+    int knobStage = 0, knobSlot = -1;   // 1 = περιμένει να κουνηθεί παράμετρος σε plugin, 2 = περιμένει φυσικό κουμπί
     uint32 knobStageStart = 0;
+    std::atomic<int> knobTouched { -1 };   // (block << 20) | δείκτης
 
     struct ParamWatch : AudioProcessorParameter::Listener
     {
         AudioPluginInstance* plugin = nullptr;
-        std::atomic<int> touched { -1 };
+        std::atomic<int>* sink = nullptr;
+        int block = 0;
         uint32 ignoreUntil = 0;
-        void attach (AudioPluginInstance* p)
+        void attach (AudioPluginInstance* p, int b, std::atomic<int>* s)
         {
             detach();
-            plugin = p; touched = -1; ignoreUntil = Time::getMillisecondCounter() + 400;
+            plugin = p; block = b; sink = s; ignoreUntil = Time::getMillisecondCounter() + 400;
             for (auto* prm : p->getParameters()) prm->addListener (this);
         }
         void detach()
@@ -966,13 +968,33 @@ private:
         }
         void parameterValueChanged (int i, float) override { hit (i); }
         void parameterGestureChanged (int i, bool starting) override { if (starting) hit (i); }
-        void hit (int i) { if (Time::getMillisecondCounter() >= ignoreUntil && touched.load() < 0) touched = i; }
+        void hit (int i)
+        {
+            if (sink != nullptr && Time::getMillisecondCounter() >= ignoreUntil && sink->load() < 0)
+                *sink = (block << 20) | (i & 0xfffff);
+        }
         ~ParamWatch() override { detach(); }
-    } paramWatch;
+    };
+    std::array<ParamWatch, flow::numBlocks> watches;
+
+    void clearKnobsOf (int block)
+    {
+        for (int k = 0; k < 8; ++k)
+            if (knobBlock[(size_t) k] == block) { knobBlock[(size_t) k] = -1; knobParamIdx[(size_t) k] = -1; }
+    }
+
+    AudioProcessorParameter* knobTarget (int k)
+    {
+        const int b = knobBlock[(size_t) k], idx = knobParamIdx[(size_t) k];
+        if (b < 0 || idx < 0 || ! isActive (b)) return nullptr;
+        auto* p = engine.getPlugin (b);
+        if (p == nullptr || idx >= p->getParameters().size()) return nullptr;
+        return p->getParameters()[idx];
+    }
 
     void stopKnobLearn()
     {
-        paramWatch.detach();
+        for (auto& w : watches) w.detach();
         if (knobStage != 0) engine.knobLearnSlot = -1;
         knobStage = 0; knobSlot = -1;
     }
@@ -981,66 +1003,64 @@ private:
     {
         if (learnMode == 0)
         {
-            if (isActive (selected) && knobParam[(size_t) selected][(size_t) k] < 0)
+            if (knobTarget (k) == nullptr)
                 setMessage (gr ("Ανάθεση: πάτα το ◎ (πράσινο), μετά το ποτενσιόμετρο"));
             return false;
         }
-        if (! isActive (selected)) { setMessage (gr ("Διάλεξε πρώτα block με plugin")); return true; }
         if (learnMode == 2)
         {
-            knobParam[(size_t) selected][(size_t) k] = -1;
+            knobBlock[(size_t) k] = -1; knobParamIdx[(size_t) k] = -1;
             engine.knobCc[(size_t) k] = 0;
             learnMode = 0; stopKnobLearn();
-            setMessage (gr ("Ποτενσιόμετρο ") + String (k + 1) + " " + String::fromUTF8 ("â"));
+            setMessage (gr ("Ποτενσιόμετρο ") + String (k + 1) + " " + String::fromUTF8 ("\xe2\x9c\x95"));
             saveNow(); updateToolLamps();
             return true;
         }
-        auto* p = engine.getPlugin (selected);
-        if (p == nullptr || p->getParameters().isEmpty()) { setMessage (gr ("Αυτό το plugin δεν δείχνει παραμέτρους")); return true; }
         stopKnobLearn();
         engine.cancelLearns();
+        knobTouched = -1;
+        int n = 0;
+        for (int b = 0; b < flow::numBlocks; ++b)
+            if (isActive (b))
+                if (auto* p = engine.getPlugin (b))
+                    if (! p->getParameters().isEmpty()) { watches[(size_t) b].attach (p, b, &knobTouched); ++n; }
+        if (n == 0) { setMessage (gr ("Δεν υπάρχει plugin με παραμέτρους")); return true; }
         knobStage = 1; knobSlot = k; knobStageStart = Time::getMillisecondCounter();
-        paramWatch.attach (p);
-        setMessage (gr ("Κούνησε μια παράμετρο στο παράθυρο του plugin"));
+        setMessage (gr ("Κούνησε μια παράμετρο στο παράθυρο ενός plugin"));
         return true;
     }
 
     void knobDragged (int k, float v)
     {
-        auto* p = engine.getPlugin (selected);
-        const int idx = knobParam[(size_t) selected][(size_t) k];
-        if (p == nullptr || idx < 0 || idx >= p->getParameters().size()) return;
-        p->getParameters()[idx]->setValueNotifyingHost (v);
+        if (auto* prm = knobTarget (k)) prm->setValueNotifyingHost (v);
     }
 
     String knobTipText (int k)
     {
-        auto* p = engine.getPlugin (selected);
-        const int idx = knobParam[(size_t) jlimit (0, flow::numBlocks - 1, selected)][(size_t) k];
-        const int cc = engine.knobCc[(size_t) k].load();
         String s = gr ("Ποτενσιόμετρο ") + String (k + 1);
-        if (p != nullptr && idx >= 0 && idx < p->getParameters().size())
-            s << ": " << p->getParameters()[idx]->getName (40);
+        if (auto* prm = knobTarget (k))
+            s << ": Block " << (knobBlock[(size_t) k] + 1) << " \xc2\xb7 " << prm->getName (40);
         else
             s << gr (": ελεύθερο (◎ και πάτημα εδώ για ανάθεση)");
-        if (cc != 0) s << "  Â·  " << pedalCodeText (cc);
+        const int cc = engine.knobCc[(size_t) k].load();
+        if (cc != 0) s << "  \xc2\xb7  " << pedalCodeText (cc);
         return s;
     }
 
     void knobTick()
     {
-        auto* p = isActive (selected) ? engine.getPlugin (selected) : nullptr;
-
         if (knobStage != 0)
         {
-            if (p == nullptr || (knobStage == 1 && paramWatch.plugin != p) || Time::getMillisecondCounter() - knobStageStart > 30000)
+            if (Time::getMillisecondCounter() - knobStageStart > 30000)
             {
                 stopKnobLearn(); learnMode = 0; setMessage (gr ("Η ανάθεση ποτενσιομέτρου ακυρώθηκε")); updateToolLamps();
             }
-            else if (knobStage == 1 && paramWatch.touched.load() >= 0)
+            else if (knobStage == 1 && knobTouched.load() >= 0)
             {
-                knobParam[(size_t) selected][(size_t) knobSlot] = paramWatch.touched.load();
-                paramWatch.detach();
+                const int t = knobTouched.load();
+                for (auto& w : watches) w.detach();
+                knobBlock[(size_t) knobSlot] = t >> 20;
+                knobParamIdx[(size_t) knobSlot] = t & 0xfffff;
                 knobStage = 2; knobStageStart = Time::getMillisecondCounter();
                 engine.knobLearnedSlot = -1;
                 engine.knobLearnSlot = knobSlot;
@@ -1049,7 +1069,7 @@ private:
             else if (knobStage == 2 && engine.knobLearnedSlot.load() >= 0)
             {
                 const int ks = engine.knobLearnedSlot.exchange (-1);
-                setMessage (gr ("Ποτενσιόμετρο ") + String (ks + 1) + " " + String::fromUTF8 ("â") + " " + pedalCodeText (engine.knobCc[(size_t) ks].load()));
+                setMessage (gr ("Ποτενσιόμετρο ") + String (ks + 1) + " " + String::fromUTF8 ("\xe2\x86\x90") + " " + pedalCodeText (engine.knobCc[(size_t) ks].load()));
                 knobStage = 0; knobSlot = -1; learnMode = 0;
                 saveNow(); updateToolLamps();
             }
@@ -1059,12 +1079,12 @@ private:
         for (int k = 0; k < 8; ++k)
         {
             const float in = engine.knobIn[(size_t) k].exchange (-1.0f);
-            const int idx = p != nullptr ? knobParam[(size_t) selected][(size_t) k] : -1;
-            if (p != nullptr && idx >= 0 && idx < p->getParameters().size())
+            if (auto* prm = knobTarget (k))
             {
-                auto* prm = p->getParameters()[idx];
                 if (in >= 0.0f) prm->setValueNotifyingHost (in);
-                st[(size_t) k] = { true, prm->getValue() };
+                st[(size_t) k].bound = true;
+                st[(size_t) k].value = prm->getValue();
+                st[(size_t) k].colour = blockLight (knobBlock[(size_t) k]);
             }
         }
         loopsView.setKnobs (st, knobStage != 0 ? knobSlot : -1, learnMode);
@@ -1420,7 +1440,7 @@ private:
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
             engine.transpose[(size_t) block] = 0;
-            knobParam[(size_t) block].fill (-1);
+            clearKnobsOf (block);
         }
 
         stopKnobLearn();
@@ -1595,7 +1615,7 @@ private:
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
         engine.transpose[(size_t) block] = 0;
-        knobParam[(size_t) block].fill (-1);
+        clearKnobsOf (block);
 
         if (selected == block)
         {
@@ -2015,6 +2035,11 @@ private:
         root->setAttribute ("autoLoop", engine.autoLoop.load());
         root->setAttribute ("tempoManual", engine.tempoUserSet.load() ? 1 : 0);
         root->setAttribute ("selected", selected);
+        {
+            StringArray kp;
+            for (int k = 0; k < 8; ++k) kp.add (String (knobBlock[(size_t) k]) + ":" + String (knobParamIdx[(size_t) k]));
+            root->setAttribute ("knobmap", kp.joinIntoString (","));
+        }
 
         for (int b = 0; b < flow::numBlocks; ++b)
         {
@@ -2038,11 +2063,6 @@ private:
             e->setAttribute ("vol", (double) engine.volPos[(size_t) b].load());
             e->setAttribute ("vmap", engine.volMap[(size_t) b].load());
             e->setAttribute ("tr", engine.transpose[(size_t) b].load());
-            {
-                StringArray kp;
-                for (int k = 0; k < 8; ++k) kp.add (String (knobParam[(size_t) b][(size_t) k]));
-                e->setAttribute ("knobs", kp.joinIntoString (","));
-            }
 
             pluginElement (*e, "Instrument", engine.getPlugin (b), fresh);
             if (auto* m = engine.getMidiFx (b)) pluginElement (*e, "MidiFx", m, fresh);
@@ -2126,6 +2146,18 @@ private:
     {
         clearEverything();
 
+        {
+            StringArray kp;
+            kp.addTokens (root.getStringAttribute ("knobmap"), ",", "");
+            knobBlock.fill (-1); knobParamIdx.fill (-1);
+            for (int k = 0; k < 8 && k < kp.size(); ++k)
+            {
+                StringArray bp;
+                bp.addTokens (kp[k], ":", "");
+                if (bp.size() == 2 && bp[0].getIntValue() >= 0 && bp[0].getIntValue() < flow::numBlocks && bp[1].getIntValue() >= 0)
+                { knobBlock[(size_t) k] = bp[0].getIntValue(); knobParamIdx[(size_t) k] = bp[1].getIntValue(); }
+            }
+        }
         engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 98.0));
         engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 1));
         engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 2));
@@ -2191,12 +2223,6 @@ private:
             engine.chordTonic[(size_t) slot] = jlimit (-1, 11, e->getIntAttribute ("ctonic", -1));
             engine.volPos[(size_t) slot]    = (float) jlimit (0.0, 1.0, e->getDoubleAttribute ("vol", 1.0));
             engine.volMap[(size_t) slot]    = e->getIntAttribute ("vmap", 0);
-            {
-                StringArray kp;
-                kp.addTokens (e->getStringAttribute ("knobs"), ",", "");
-                for (int k = 0; k < 8; ++k)
-                    knobParam[(size_t) slot][(size_t) k] = kp.size() == 8 ? jmax (-1, kp[k].getIntValue()) : -1;
-            }
             {
                 const int trLoaded = jlimit (-48, 48, e->getIntAttribute ("tr", 0));
                 engine.transpose[(size_t) slot] = ((trLoaded + (trLoaded >= 0 ? 6 : -6)) / 12) * 12;   // παλιά sets: στρογγυλοποίηση στην πλησιέστερη οκτάβα

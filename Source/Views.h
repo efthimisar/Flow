@@ -341,7 +341,7 @@ public:
     std::function<void()> onMetroChange;
 
     // 8 ποτενσιόμετρα κάτω στην οθόνη (ανάθεση σε παραμέτρους του επιλεγμένου block)
-    struct KnobState { bool bound = false; float value = 0.0f; };
+    struct KnobState { bool bound = false; float value = 0.0f; Colour colour { Colours::white }; };
     std::array<KnobState, 8> knobs;
     int knobLearning = -1;      // θέση που περιμένει learn (αναβοσβήνει)
     int learnVisual = 0;        // 0 κανονικά, 1 πράσινο (ανάθεση), 2 κόκκινο (σβήσιμο)
@@ -354,7 +354,7 @@ public:
     {
         bool same = learning == knobLearning && visual == learnVisual;
         for (size_t i = 0; same && i < 8; ++i)
-            same = k[i].bound == knobs[i].bound && std::abs (k[i].value - knobs[i].value) < 0.004f;
+            same = k[i].bound == knobs[i].bound && k[i].colour == knobs[i].colour && std::abs (k[i].value - knobs[i].value) < 0.004f;
         if (same) return;
         knobs = k; knobLearning = learning; learnVisual = visual;
         repaint (0, getHeight() - knobAreaH, getWidth(), knobAreaH);
@@ -772,15 +772,12 @@ public:
         g.setColour (Colour (0xff3a3430));
         g.fillRect (14.0f, sepY, (float) (w - 28), 1.0f);
 
-        // τίτλος block και συγχορδία πάνω από τα ποτενσιόμετρα
-        g.setFont (hobby::makeFont (typeface, 16.0f));
-        g.setColour (hobby::kText);
-        const float titleW = std::ceil (textWidth (g.getCurrentFont(), title));
-        g.drawText (title, 14, (int) sepY + 6, (int) titleW + 4, 22, Justification::centredLeft, false);
+        // τα ποτενσιόμετρα είναι γενικά (όχι ανά block): πάνω τους μένει μόνο η συγχορδία
         if (chordName.isNotEmpty())
         {
+            g.setFont (hobby::makeFont (typeface, 16.0f));
             g.setColour (hobby::kLilac);
-            g.drawText (chordName, 14 + (int) titleW + 18, (int) sepY + 6, 160, 22, Justification::centredLeft, false);
+            g.drawText (chordName, 14, (int) sepY + 6, 200, 22, Justification::centredLeft, false);
         }
 
         const Colour dash = blockLight (jlimit (0, flow::numBlocks - 1, selected));
@@ -823,7 +820,7 @@ public:
                 const float ang = MathConstants<float>::pi * (-0.75f + 1.5f * v) - MathConstants<float>::halfPi;
                 const Point<float> p0 (c.x + R * 0.55f * std::cos (ang), c.y + R * 0.55f * std::sin (ang));
                 const Point<float> p1 (c.x + (R - 1.0f) * std::cos (ang), c.y + (R - 1.0f) * std::sin (ang));
-                g.setColour (dash);
+                g.setColour (ks.colour);
                 g.drawLine (Line<float> (p0, p1), 3.0f);
             }
 
