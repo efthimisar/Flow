@@ -198,6 +198,7 @@ public:
         loopsView.onOrbTouch = [this] (int corner, bool down) { orbTouch (corner, down); };
         loopsView.onOrbClearMotion = [this] { orbClearMotion(); };
         loopsView.onOrbImage = [this] { pickOrbImage(); };
+        autoOrbImage();   // νέο (άδειο) set: τυχαία εικόνα από το φάκελο Music/Flow/Orb, αν υπάρχει
         loopsView.onOrbMode = [this] { repaint(); };
         loopsView.onOrbImageClear = [this] { setOrbImage ({}); };
 
@@ -1169,6 +1170,62 @@ private:
         loopsView.orbImage = img;
         loopsView.repaint();
         if (save) saveNow();
+    }
+
+    // ---- Orb: αυτόματη εικόνα από τον φάκελο Music/Flow/Orb, με τυχαία παραλλαγή ----
+    static File orbImagesDir() { return File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Orb"); }
+
+    static Image orbVariation (const Image& src, Random& rnd)
+    {
+        constexpr int N = 512;
+        const int s0 = jmin (src.getWidth(), src.getHeight());
+        const int s = jmax (16, (int) ((float) s0 / (1.0f + rnd.nextFloat() * 0.8f)));      // ζουμ 1x έως 1.8x
+        const Image crop = src.getClippedImage ({ rnd.nextInt (jmax (1, src.getWidth() - s + 1)), rnd.nextInt (jmax (1, src.getHeight() - s + 1)), s, s });
+
+        Image out (Image::ARGB, N, N, true);
+        {
+            Graphics g (out);
+            g.setImageResamplingQuality (Graphics::highResamplingQuality);
+            const float angle = (float) rnd.nextInt (4) * MathConstants<float>::halfPi + (rnd.nextFloat() - 0.5f) * 0.5f;
+            const float flip = rnd.nextBool() ? -1.0f : 1.0f;
+            const float big = 1.5f * (float) N;   // μεγαλύτερο, ώστε η περιστροφή να μην αφήνει κενά στις γωνίες
+            g.addTransform (AffineTransform::scale (flip, 1.0f).rotated (angle).translated ((float) N * 0.5f, (float) N * 0.5f));
+            g.drawImage (crop, Rectangle<float> (-big * 0.5f, -big * 0.5f, big, big));
+        }
+
+        // χρώμα: μετατόπιση απόχρωσης, κορεσμός, φωτεινότητα
+        const float hueShift = rnd.nextFloat(), satMul = 0.7f + rnd.nextFloat() * 0.6f, briMul = 0.8f + rnd.nextFloat() * 0.35f;
+        {
+            Image::BitmapData bd (out, Image::BitmapData::readWrite);
+            for (int y = 0; y < N; ++y)
+                for (int x = 0; x < N; ++x)
+                {
+                    const auto c = bd.getPixelColour (x, y);
+                    float h = 0, sa = 0, v = 0;
+                    c.getHSB (h, sa, v);
+                    bd.setPixelColour (x, y, Colour::fromHSV (std::fmod (h + hueShift, 1.0f), jlimit (0.0f, 1.0f, sa * satMul), jlimit (0.0f, 1.0f, v * briMul), c.getFloatAlpha()));
+                }
+        }
+
+        if (rnd.nextInt (3) == 0)   // μία στις τρεις: ελαφρύ θόλωμα
+        {
+            ImageConvolutionKernel k (9);
+            k.createGaussianBlur (1.0f + rnd.nextFloat() * 3.0f);
+            Image tmp = out.createCopy();
+            k.applyToImage (out, tmp, out.getBounds());
+        }
+        return out;
+    }
+
+    void autoOrbImage()
+    {
+        auto dir = orbImagesDir();
+        dir.createDirectory();
+        const auto files = dir.findChildFiles (File::findFiles, false, "*.jpg;*.jpeg;*.png");
+        if (files.isEmpty()) return;
+        Random rnd;
+        const auto src = ImageFileFormat::loadFrom (files[rnd.nextInt (files.size())]);
+        if (src.isValid()) setOrbImage (orbVariation (src, rnd), false);
     }
 
     void pickOrbImage()
@@ -2620,7 +2677,7 @@ private:
                 if (Base64::convertFromBase64 (mo, oe->getAllSubText().trim()))
                     img = ImageFileFormat::loadFrom (mo.getData(), mo.getDataSize());
             }
-            setOrbImage (img, false);
+            if (img.isValid()) setOrbImage (img, false); else { setOrbImage ({}, false); autoOrbImage(); }
         }
 
         // Έκδοση αρχείου: τα παλιά sets (16 blocks) μετατρέπονται, όσα blocks είναι σε θέσεις πάνω από το 9 πάνε στις ελεύθερες θέσεις
@@ -3286,7 +3343,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.45.0"; }
+    const String getApplicationVersion() override { return "0.46.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
