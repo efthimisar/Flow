@@ -67,7 +67,7 @@ public:
 
     void open()
     {
-        page = Home; loadScroll = 0;
+        page = Home; loadScroll = 0; saved = false; waitMaster = false; waitPanic = false;
         nameEditor.setVisible (false);
         setVisible (true); toFront (false);
         startTimerHz (4);
@@ -80,6 +80,7 @@ public:
         setVisible (false);
         if (onClose) onClose();
     }
+    void hideForPanel() { stopTimer(); nameEditor.setVisible (false); setVisible (false); }   // χωρίς onClose: επιστρέφει με open()
     // Esc: πίσω στο πλέγμα, και από το πλέγμα κλείνει
     bool goBack() { if (page == Home) { close(); return true; } showPage (Home); return true; }
 
@@ -158,7 +159,7 @@ private:
 
     void showPage (Page p)
     {
-        page = p; loadScroll = 0;
+        page = p; loadScroll = 0; saved = false; waitMaster = false; waitPanic = false;
         nameEditor.setVisible (p == Save);
         if (p == Save)
         {
@@ -283,7 +284,8 @@ private:
         const auto name = nameEditor.getText().trim();
         if (name.isEmpty()) return;
         if (host.saveSetNamed) host.saveSetNamed (name);
-        close();
+        saved = true;
+        repaint();
     }
     void paintSave (juce::Graphics& g)
     {
@@ -308,6 +310,11 @@ private:
             x += 158; (void) r;
         }
         const int by = juce::jmax (y + 70, 300);
+        if (saved)
+        {
+            g.setColour (hobby::kOn); g.setFont (font (14.0f, true));
+            g.drawText (juce::String::fromUTF8 ("Saved \xe2\x9c\x93"), 580, by, 140, 46, Justification::centredLeft, false);
+        }
         pill (g, { 40, by, 170, 46 }, "Save", true, nameEditor.getText().trim().isNotEmpty(), [this] { doSave(); });
         pill (g, { 226, by, 130, 46 }, "Cancel", false, true, [this] { showPage (Home); });
         pill (g, { 372, by, 190, 46 }, "Save elsewhere...", false, true, [this] { if (host.saveElsewhere) host.saveElsewhere(); close(); });
@@ -478,8 +485,9 @@ private:
             g.setColour (card()); g.fillRoundedRectangle (r.toFloat(), 14.0f);
             g.setColour (lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 14.0f, 1.0f);
             g.setColour (txt()); g.setFont (font (15.0f, true)); g.drawText ("Knob", r.getX() + 22, r.getY() + 12, 120, 20, Justification::centredLeft, false);
-            g.setColour (dim()); g.setFont (font (11.0f)); g.drawText (cc.isEmpty() ? String ("MIDI learn: move a knob") : "Now: " + cc, r.getX() + 22, r.getY() + 34, 200, 16, Justification::centredLeft, true);
-            pill (g, { r.getRight() - 214, r.getY() + 14, 100, 36 }, "Assign", false, true, [this] { if (host.masterAssign) host.masterAssign(); close(); });
+            g.setColour (dim()); g.setFont (font (11.0f)); if (waitMaster && cc != ccAtAssign) waitMaster = false;
+            g.drawText (waitMaster ? String ("Move the knob now...") : cc.isEmpty() ? String ("MIDI learn: move a knob") : "Now: " + cc, r.getX() + 22, r.getY() + 34, 200, 16, Justification::centredLeft, true);
+            pill (g, { r.getRight() - 214, r.getY() + 14, 100, 36 }, "Assign", false, true, [this, cc] { if (host.masterAssign) host.masterAssign(); ccAtAssign = cc; waitMaster = true; repaint(); });
             pill (g, { r.getRight() - 106, r.getY() + 14, 92, 36 }, "Remove", false, cc.isNotEmpty(), [this] { if (host.masterRemove) host.masterRemove(); if (onChanged) onChanged(); repaint(); });
         }
         note (g, "Drag the slider or press 100 / 85 / 70 / 50.", getHeight() - 28);
@@ -494,8 +502,9 @@ private:
         g.setColour (dim()); g.setFont (font (12.0f, true));
         g.drawText ("Assigned pedal or key", 40, 172, 300, 16, Justification::centredLeft, false);
         g.setColour (txt()); g.setFont (font (16.0f, true));
-        g.drawText (cc.isEmpty() ? String ("none") : cc, 40, 192, 400, 26, Justification::centredLeft, false);
-        pill (g, { 40, 234, 300, 46 }, "Assign (MIDI learn)", false, true, [this] { if (host.panicAssign) host.panicAssign(); close(); });
+        if (waitPanic && cc != ccAtAssign) waitPanic = false;
+        g.drawText (waitPanic ? String ("Press the pedal or key now...") : cc.isEmpty() ? String ("none") : cc, 40, 192, 400, 26, Justification::centredLeft, false);
+        pill (g, { 40, 234, 300, 46 }, "Assign (MIDI learn)", false, true, [this, cc] { if (host.panicAssign) host.panicAssign(); ccAtAssign = cc; waitPanic = true; repaint(); });
         pill (g, { 356, 234, 200, 46 }, "Remove assignment", false, cc.isNotEmpty(), [this] { if (host.panicRemove) host.panicRemove(); if (onChanged) onChanged(); repaint(); });
         note (g, "After Assign, press the pedal or key you want to use for Panic.", getHeight() - 28);
     }
@@ -574,4 +583,6 @@ private:
     bool draggingSlider = false;
     Page page = Home;
     int loadScroll = 0, loadMaxScroll = 0;
+    bool saved = false, waitMaster = false, waitPanic = false;
+    juce::String ccAtAssign;
 };

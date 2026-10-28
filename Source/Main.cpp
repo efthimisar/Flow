@@ -76,7 +76,11 @@ public:
         addChildComponent (audioPanel);
         audioPanel.onChanged = [this] { saveNow(); };
         audioPanel.onMessage = [this] (const String& m) { setMessage (m); };
-        audioPanel.onClose = [this] { repaint(); };
+        audioPanel.onClose = [this]
+        {
+            if (audioFromSettings) { audioFromSettings = false; settingsScreen.setBounds (loopsBezel.reduced (5)); settingsScreen.open(); settingsScreen.grabKeyboardFocus(); }
+            repaint();
+        };
         addChildComponent (settingsScreen);
         setupSettingsScreen();
 
@@ -2606,7 +2610,7 @@ private:
         settingsScreen.setWantsKeyboardFocus (true);
         settingsScreen.onChanged = [this] { saveNow(); };
         settingsScreen.onClose = [this] { grabKeyboardFocus(); repaint(); };
-        h.openAudio = [this] { settingsScreen.close(); openAudioSettings(); };
+        h.openAudio = [this] { settingsScreen.hideForPanel(); audioFromSettings = true; openAudioSettings(); };
         h.audioSummary = [this] { auto* d = deviceManager.getCurrentAudioDevice(); return d != nullptr ? d->getName() : String(); };
         h.currentSetName = [this] { return currentSetName; };
         h.listSets = [this]
@@ -3580,6 +3584,7 @@ private:
     OrbRecTile orbRecTile;
     AudioMidiPanel audioPanel { deviceManager, typeface };
     SettingsScreen settingsScreen { typeface };
+    bool audioFromSettings = false;
     ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
@@ -3590,7 +3595,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.8"; }
+    const String getApplicationVersion() override { return "0.51.9"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
