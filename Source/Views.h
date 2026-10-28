@@ -551,7 +551,8 @@ public:
             const float titleW = 0.0f;   // ο τίτλος του block είναι πια πάνω από τα ποτενσιόμετρα
             float chordX = 14.0f;
             // διάταξη: τα σύμβολα σπρώχνουν το ένα το άλλο. Αν δεν χωράνε όλα, πρώτα φεύγουν οι τιμές δεξιά, μετά το CPU.
-            const float chordW = 0.0f;   // η συγχορδία γράφεται δίπλα στον τίτλο του block
+            if (chordName.isNotEmpty()) lastChord = chordName;   // η συγχορδία μένει μέχρι να αλλάξει
+            const float chordW = lastChord.isNotEmpty() ? std::ceil (textWidth (hobby::makeFont (typeface, 16.0f), lastChord)) + 14.0f : 0.0f;
             const float toolsW = (float) tools.size() * 26.0f;
             auto needed = [&] (bool cpuOn, bool valsOn)
             {
@@ -579,6 +580,13 @@ public:
                 g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (c0 + 100.0f, sy, 40.0f, sh), Justification::centredLeft, false);
                 tipZones.push_back ({ Rectangle<float> (c0, sy, 140.0f, sh), String::fromUTF8 ("Φόρτος επεξεργαστή (CPU)") });
                 chordX = c0 + 150.0f;
+            }
+            if (lastChord.isNotEmpty())
+            {
+                g.setFont (hobby::makeFont (typeface, 16.0f));
+                g.setColour (hobby::kLilac);
+                g.drawText (lastChord, (int) chordX, (int) sy, (int) chordW + 4, (int) sh, Justification::centredLeft, false);
+                chordX += chordW;
             }
             if (metroStrip)
             {
@@ -772,14 +780,6 @@ public:
         g.setColour (Colour (0xff3a3430));
         g.fillRect (14.0f, sepY, (float) (w - 28), 1.0f);
 
-        // τα ποτενσιόμετρα είναι γενικά (όχι ανά block): πάνω τους μένει μόνο η συγχορδία
-        if (chordName.isNotEmpty())
-        {
-            g.setFont (hobby::makeFont (typeface, 16.0f));
-            g.setColour (hobby::kLilac);
-            g.drawText (chordName, 14, (int) sepY + 6, 200, 22, Justification::centredLeft, false);
-        }
-
         const Colour dash = blockLight (jlimit (0, flow::numBlocks - 1, selected));
         const double nowMs = Time::getMillisecondCounterHiRes();
         for (int k = 0; k < 8; ++k)
@@ -897,6 +897,7 @@ private:
 
     Rectangle<float> metroSliderRect;
     bool draggingMetro = false;
+    String lastChord;
     int dragKnob = -1;
     float dragStartY = 0.0f, dragStartVal = 0.0f;
     static constexpr float knobR = 24.0f;

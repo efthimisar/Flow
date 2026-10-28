@@ -111,15 +111,6 @@ namespace hobby
                 ig.setGradientFill (back);
                 ig.fillAll();
             }
-            // πλέγμα pixel LCD: πολύ λεπτές γραμμές κάθε 3 pixel
-            {
-                juce::Image grid (juce::Image::ARGB, 3, 3, true);
-                for (int y = 0; y < 3; ++y)
-                    for (int x = 0; x < 3; ++x)
-                        if (x == 0 || y == 0) grid.setPixelAt (x, y, juce::Colours::black.withAlpha (x == 0 && y == 0 ? 0.12f : 0.07f));
-                ig.setTiledImageFill (grid, 0, 0, 1.0f);
-                ig.fillAll();
-            }
             // διαγώνια ανταύγεια πάνω-αριστερά
             ig.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.11f), 0.0f, 0.0f,
                                                       juce::Colours::transparentWhite, (float) w * 0.55f, (float) h * 0.95f, false));
