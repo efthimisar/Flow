@@ -6,6 +6,7 @@
 #include "WebOrb.h"
 #include "QrCode.h"
 #include "AudioPanel.h"
+#include "SettingsScreen.h"
 #include <map>
 
 namespace
@@ -75,6 +76,8 @@ public:
         audioPanel.onChanged = [this] { saveNow(); };
         audioPanel.onMessage = [this] (const String& m) { setMessage (m); };
         audioPanel.onClose = [this] { repaint(); };
+        addChildComponent (settingsScreen);
+        setupSettingsScreen();
 
         blockTile.onClick = [this] { if (learnClick (flow::ctlSpecial)) return; chooseAndLoadPlugin(); };
         vstTile.onClick = [this] { onVstClick(); };
@@ -125,7 +128,7 @@ public:
             if (what == 1) chooseMetroSample();
             else { metroSamplePath = {}; engine.setMetroSample (AudioBuffer<float>()); saveNow(); }
         };
-        folderTile.onClick = [this] { loopsView.openMenu (! loopsView.menuOpen); };
+        folderTile.onClick = [this] { if (settingsScreen.isVisible()) settingsScreen.close(); else openSettingsScreen(); };
         loopsView.onMenuOpen = [this] { buildScreenMenu(); loopsView.setMenuInfo (menuInfoRows()); };
 
         loopsView.onSelect = [this] (int b) { selectBlock (b); };
@@ -328,7 +331,7 @@ public:
         if (k.getModifiers().isAnyModifierKeyDown()) return false;
         const auto c = k.getTextCharacter();
         if (c == 'm' || c == 'M') { toggleMetronome(); return true; }
-        if (k == KeyPress::escapeKey) { if (audioPanel.isVisible()) { audioPanel.close(); return true; } if (orbStage != 0) { closeOrb(); return true; } doPanic(); return true; }
+        if (k == KeyPress::escapeKey) { if (settingsScreen.isVisible()) { settingsScreen.goBack(); return true; } if (audioPanel.isVisible()) { audioPanel.close(); return true; } if (orbStage != 0) { closeOrb(); return true; } doPanic(); return true; }
         return false;
     }
 
@@ -574,6 +577,7 @@ private:
         loopsView.setBounds (loopsBezel.reduced (5));
         keyboardView.setBounds (keysBezel.reduced (5));
         audioPanel.setBounds (loopsBezel.reduced (5));
+        settingsScreen.setBounds (loopsBezel.reduced (5));
 
         header.setBounds (pluginBezel.getX() + 5, pluginBezel.getY(), pluginBezel.getWidth() - 10, headerH);
         hobby::kBrandY = (float) pluginBezel.getY() + (float) headerH * 0.5f - 8.0f;
@@ -2561,6 +2565,105 @@ private:
     }
 
     //==========================================================================
+    void openSettingsScreen()
+    {
+        loopsView.openMenu (false);
+        if (audioPanel.isVisible()) audioPanel.close();
+        settingsScreen.setBounds (loopsBezel.reduced (5));
+        settingsScreen.open();
+        settingsScreen.grabKeyboardFocus();
+    }
+
+    void setupSettingsScreen()
+    {
+        auto& h = settingsScreen.host;
+        settingsScreen.setWantsKeyboardFocus (true);
+        settingsScreen.onChanged = [this] { saveNow(); };
+        settingsScreen.onClose = [this] { grabKeyboardFocus(); repaint(); };
+        h.openAudio = [this] { settingsScreen.close(); openAudioSettings(); };
+        h.audioSummary = [this] { auto* d = deviceManager.getCurrentAudioDevice(); return d != nullptr ? d->getName() : String(); };
+        h.currentSetName = [this] { return currentSetName; };
+        h.listSets = [this]
+        {
+            std::vector<SettingsScreen::SetInfo> out;
+            Array<File> files = setsDir().findChildFiles (File::findFiles, false, "*.flowset");
+            struct Newest { static int compareElements (const File& a, const File& b)
+            { return a.getLastModificationTime() < b.getLastModificationTime() ? 1 : (b.getLastModificationTime() < a.getLastModificationTime() ? -1 : 0); } };
+            Newest sorter; files.sort (sorter);
+            for (auto& f : files)
+            {
+                SettingsScreen::SetInfo si;
+                si.name = f.getFileNameWithoutExtension();
+                si.date = f.getLastModificationTime().formatted ("%d %b %Y");
+                si.current = si.name == currentSetName;
+                si.thumb = setThumbnail (f);
+                si.file = f;
+                out.push_back (std::move (si));
+            }
+            return out;
+        };
+        h.saveSetNamed = [this] (const String& name)
+        {
+            auto dir = setsDir();
+            dir.createDirectory();
+            auto f = dir.getChildFile (File::createLegalFileName (name)).withFileExtension ("flowset");
+            auto xml = createSetXml (true, true);
+            if (xml->writeTo (f)) { currentSetName = f.getFileNameWithoutExtension(); setMessage (gr ("Saved: ") + f.getFileName()); }
+            else                  setMessage (gr ("Could not write the file"));
+        };
+        h.saveElsewhere = [this] { saveSetToFile(); };
+        h.loadElsewhere = [this] { loadSetFromFile(); };
+        h.loadSet = [this] (const File& f) { loadSetFile (f); saveNow(); };
+        h.orbImage = [this] { return orbImage; };
+        h.sessionInfo = [this]() -> String
+        {
+            std::unique_ptr<XmlElement> xml (properties.getUserSettings()->getXmlValue ("sessionBackup"));
+            if (xml == nullptr || ! xml->hasTagName ("FlowSet") || xml->getChildByName ("Block") == nullptr) return {};
+            int n = 0;
+            for (auto* b : xml->getChildWithTagNameIterator ("Block")) { (void) b; ++n; }
+            return String (n) + (n == 1 ? " block" : " blocks") + "  " + String ((int) std::lround (xml->getDoubleAttribute ("tempo", 110.0))) + " BPM";
+        };
+        h.restoreSession = [this] { restoreLastSession(); };
+        h.recFolder = [this] { return engine.recorder.getFolder(); };
+        h.setRecFolder = [this] (const File& f) { f.createDirectory(); engine.recorder.setFolder (f); saveNow(); };
+        h.chooseRecFolder = [this] { chooseTapeFolder(); };
+        h.masterGet = [this] { return engine.masterPos.load(); };
+        h.masterSet = [this] (float v) { engine.masterPos = v; };
+        h.limiterGet = [this] { return engine.limiterOn.load() != 0; };
+        h.limiterSet = [this] (bool on) { engine.limiterOn = on ? 1 : 0; };
+        h.masterCcText = [this]() -> String { const int c = engine.masterCc.load(); return c != 0 ? pedalCodeText (c) : String(); };
+        h.masterAssign = [this] { engine.cancelLearns(); engine.masterLearn = 1; setMessage (gr ("Move the knob for the master volume")); };
+        h.masterRemove = [this] { engine.masterCc = 0; saveNow(); };
+        h.linkAvailable = [] { return LinkBridge::isAvailable(); };
+        h.linkGet = [this] { return engine.isLinkEnabled(); };
+        h.linkToggle = [this]
+        {
+            const bool on = ! engine.isLinkEnabled();
+            engine.setLinkEnabled (on);
+            setMessage (on ? gr ("Ableton Link: on") : gr ("Ableton Link: off"));
+        };
+        h.panicNow = [this] { doPanic(); };
+        h.panicAssign = [this] { startPedalLearn (flow::ctlPanic); };
+        h.panicRemove = [this] { engine.mapCode[flow::ctlPanic] = 0; saveNow(); };
+        h.panicCodeText = [this]() -> String { const int c = engine.mapCode[flow::ctlPanic].load(); return c != 0 ? pedalCodeText (c) : String(); };
+        h.ipadGet = [this] { return webOrbOn; };
+        h.ipadToggle = [this]
+        {
+            if (webOrbOn) stopWebOrb(); else startWebOrb();
+            setMessage (webOrbOn ? gr ("iPad orb: on") : gr ("iPad orb: off"));
+        };
+        h.ipadUrl = [this] { return webOrbUrl(); };
+        h.ipadClients = [this] { return webServer.getNumClients(); };
+        h.orbFolderText = [this]
+        {
+            String path = orbImagesDir().getFullPathName();
+            const auto home = File::getSpecialLocation (File::userHomeDirectory).getFullPathName();
+            if (home.isNotEmpty() && path.startsWith (home)) path = "~" + path.substring (home.length());
+            return path;
+        };
+        h.chooseOrbFolder = [this] { chooseOrbFolder(); };
+    }
+
     void openAudioSettings()   // οι ρυθμίσεις ήχου και MIDI ανοίγουν μέσα στην οθόνη του Flow
     {
         loopsView.openMenu (false);
@@ -3449,6 +3552,7 @@ private:
     PanelHeader header;
     OrbRecTile orbRecTile;
     AudioMidiPanel audioPanel { deviceManager, typeface };
+    SettingsScreen settingsScreen { typeface };
     ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
@@ -3459,7 +3563,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.50.1"; }
+    const String getApplicationVersion() override { return "0.51.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
