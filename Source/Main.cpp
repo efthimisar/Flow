@@ -2463,6 +2463,7 @@ private:
     std::vector<std::pair<String, String>> menuInfoRows()
     {
         std::vector<std::pair<String, String>> r;
+        r.push_back ({ "Flow", JUCEApplication::getInstance() != nullptr ? JUCEApplication::getInstance()->getApplicationVersion() : String() });
         r.push_back ({ "Set", currentSetName.isNotEmpty() ? currentSetName : String::fromUTF8 ("\xe2\x80\x93") });
         r.push_back ({ "Tempo", String ((int) std::lround (engine.tempo.load())) + " BPM" });
         if (auto* dev = deviceManager.getCurrentAudioDevice())
@@ -3458,13 +3459,13 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.50.0"; }
+    const String getApplicationVersion() override { return "0.50.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
     {
         flow::flowLog ("Flow " + getApplicationVersion() + " started");
-        mainWindow = std::make_unique<MainWindow> (getApplicationName());
+        mainWindow = std::make_unique<MainWindow> (getApplicationName() + " " + getApplicationVersion());
     }
 
     void shutdown() override { mainWindow.reset(); }
