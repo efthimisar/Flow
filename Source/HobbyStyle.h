@@ -67,6 +67,35 @@ public:
 
 // Τετράγωνο κουμπί 52x52 χωρίς μενού: κάθε πάτημα → επόμενη τιμή, μετά την τελευταία ξανά η πρώτη.
 // Αν isOnOff: το σύμβολο είναι πράσινο στο index 1 (On) και κόκκινο στο index 0 (Off).
+// Ένα ορθογώνιο κουμπί με στρογγυλεμένες άκρες και δύο μισά: αριστερά ORB (σφαίρα → παράθυρο), δεξιά REC motion (τελεία).
+// Όλα άσπρα όταν είναι σβηστά, πράσινα όταν είναι ενεργά.
+class OrbRecTile : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    OrbRecTile() { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    void setState (int orbStage, bool recOn) { if (orbStage != stage || recOn != rec) { stage = orbStage; rec = recOn; repaint(); } }
+    void setTips (const juce::String& orbTip, const juce::String& recTip) { tipOrb = orbTip; tipRec = recTip; }
+    juce::String getTooltip() override { return hoverRight ? tipRec : tipOrb; }
+    std::function<void()> onOrb, onRec;
+
+    void mouseMove (const juce::MouseEvent& e) override { const bool r = e.x >= getWidth() / 2; if (r != hoverRight || ! hover) { hoverRight = r; hover = true; repaint(); } }
+    void mouseExit (const juce::MouseEvent&) override { hover = false; down = 0; repaint(); }
+    void mouseDown (const juce::MouseEvent& e) override { down = e.x >= getWidth() / 2 ? 2 : 1; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const int d = down; down = 0; repaint();
+        if (! getLocalBounds().contains (e.getPosition())) return;
+        if (d == 1 && onOrb) onOrb();
+        else if (d == 2 && onRec) onRec();
+    }
+    void paint (juce::Graphics& g) override;
+
+private:
+    int stage = 0, down = 0;
+    bool rec = false, hover = false, hoverRight = false;
+    juce::String tipOrb, tipRec;
+};
+
 class ValueTile : public juce::Button
 {
 public:

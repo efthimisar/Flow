@@ -30,7 +30,6 @@ public:
           fxTile (Symbol::Fx, typeface),
           holdTile (Symbol::Hold, typeface),
           chordTile (Symbol::Chord, typeface),
-          motionTile (Symbol::Orb, typeface),
           recTile (Symbol::PadRecord, typeface),
           undoTile (Symbol::Cancel, typeface),
           stopTile (Symbol::Undo, typeface),
@@ -78,8 +77,11 @@ public:
 
         holdTile.onClick = [this] { cycleHold (selected); };
         chordTile.onClick = [this] { if (learnClick (flow::ctlHold)) return; cycleAl (selected); };
-        motionTile.onClick = [this] { toggleOrbRec(); };
-        motionTile.setTooltip (gr ("Rec motion: press, then drag a circle in the orb (click flow, top left). The movement is recorded over 16 bars and loops; you can record over it again."));
+        addAndMakeVisible (orbRecTile);
+        orbRecTile.onOrb = [this] { cycleOrb(); };
+        orbRecTile.onRec = [this] { toggleOrbRec(); };
+        orbRecTile.setTips (gr ("ORB: 1st press = the orb on the Flow screen, 2nd = the orb in its own window (second screen / iPad), 3rd = closes"),
+                            gr ("Rec motion: press, then drag a circle in the orb. The movement is recorded over 16 bars and loops; you can record over it again."));
         recTile.onClick  = [this]
         {
             if (learnClick (flow::ctlRec)) return;
@@ -284,7 +286,7 @@ public:
     {
         hobby::drawBody (g, getLocalBounds());
         hobby::drawBrandMark (g, typeface, getWidth());
-        hobby::drawEmbossedText (g, typeface, orbStage != 0 ? "orb" : "flow", (float) sideM + 8.0f);
+        hobby::drawEmbossedText (g, typeface, "flow", (float) sideM + 8.0f);
 
         hobby::drawBezel (g, loopsBezel.toFloat(), loopsBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
         hobby::drawBezel (g, keysBezel.toFloat(), keysBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
@@ -303,6 +305,7 @@ public:
                 hobby::drawTileShadow (g, r);
             }
         }
+        hobby::drawTileShadow (g, orbRecTile.getBounds().toFloat());
     }
 
     void resized() override
@@ -319,9 +322,6 @@ public:
         // κλικ στο "π / -": μενού (ρυθμίσεις ήχου, set, panic, Link)
         if (e.y >= pluginBezel.getY() && e.y < pluginBezel.getBottom() && std::abs (e.x - getWidth() / 2) < 40 && ! e.mouseWasDraggedSinceMouseDown())
             showPiMenu();
-        // κλικ στη λέξη "flow" (πάνω αριστερά): οθόνη orb
-        else if (e.x >= sideM && e.x < sideM + 70 && e.y >= (int) hobby::kBrandY - 6 && e.y < (int) hobby::kBrandY + 24 && ! e.mouseWasDraggedSinceMouseDown())
-            cycleOrb();
     }
 
     bool keyPressed (const KeyPress& k) override
@@ -335,9 +335,9 @@ public:
 
 private:
     //==========================================================================
-    std::array<ValueTile*, 12> tiles()
+    std::array<ValueTile*, 11> tiles()
     {
-        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &motionTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
+        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
     }
 
     bool isActive (int b) const { return b >= 0 && b < flow::numBlocks && engine.active[(size_t) b].load() != 0; }
@@ -551,7 +551,7 @@ private:
     //==========================================================================
     // γεωμετρία παραθύρου: μία στήλη (κεφαλίδα, οθόνη loops, κουμπιά, πλήκτρα). Τα plugin ανοίγουν σε δικά τους παράθυρα.
     static constexpr int topH = 14, botH = 14, gapPx = 8, sideM = 11, headerBarH = 34;
-    static constexpr int minLoopsH = 230, stripH = 72, keysH = 120, minContentW = 760, defaultLoopsH = 340;
+    static constexpr int minLoopsH = 230, stripH = 72, keysH = 120, minContentW = 800, defaultLoopsH = 340;
     static constexpr int minContentH() { return minLoopsH + gapPx + stripH + gapPx + keysH; }
     static constexpr int chromeH() { return topH + headerBarH + gapPx + botH; }
     static constexpr int minWinW() { return minContentW + 2 * sideM; }
@@ -584,15 +584,16 @@ private:
         const int leftX = strip.getX() + 14;
         const int midW = 4 * 52 + 3 * 8;
         const int rightX = strip.getRight() - 14 - 52;
-        const int leftEnd = leftX + 6 * 60 - 8, rightStart = rightX - 60;
+        const int leftEnd = leftX + 5 * 60 + 112, rightStart = rightX - 60;
         const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);
 
         int x = leftX;
-        for (auto* t : { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &motionTile })
+        for (auto* t : { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile })
         {
             t->setBounds (x, ty, 52, 52);
             x += 60;
         }
+        orbRecTile.setBounds (x, ty, 112, 52);
         x = midX;
         for (auto* t : { &recTile, &stopTile, &undoTile, &tapeTile })
         {
@@ -1147,7 +1148,7 @@ private:
         saveNow();
     }
 
-    // ---- Orb: οθόνη (πάτημα στη λέξη flow): 1ο πάτημα = στην οθόνη του Flow, 2ο = σε δικό του παράθυρο (π.χ. iPad), 3ο = κλείνει ----
+    // ---- Orb: οθόνη (κουμπί ORB): 1ο πάτημα = στην οθόνη του Flow, 2ο = σε δικό του παράθυρο (π.χ. iPad), 3ο = κλείνει ----
     int orbStage = 0;   // 0 κλειστός, 1 στην οθόνη του Flow, 2 σε ξεχωριστό παράθυρο
     std::unique_ptr<OrbWindow> orbWindow;
 
@@ -1161,6 +1162,7 @@ private:
             orbWindow = std::make_unique<OrbWindow> (loopsView, [this] { MessageManager::callAsync ([safe = SafePointer<MainComponent> (this)] { if (safe != nullptr) safe->closeOrb(); }); });
         }
         else closeOrb();
+        orbRecTile.setState (orbStage, orbRecArmed);
         repaint();
     }
 
@@ -1169,6 +1171,7 @@ private:
         orbStage = 0;
         loopsView.setOrbMode (false);
         orbWindow.reset();
+        orbRecTile.setState (orbStage, orbRecArmed);
         repaint();
     }
 
@@ -1451,7 +1454,7 @@ private:
         if (! orbRecArmed)
             for (auto& bl : orbLane) for (auto& l : bl) if (l.recording) orbFinishLane (l);
         setMessage (orbRecArmed ? gr ("Rec motion (16 bars): drag a circle in the orb") : gr ("Rec motion off"));
-        motionTile.setIconColour (orbRecArmed ? hobby::kRed : hobby::kIconGrey);
+        orbRecTile.setState (orbStage, orbRecArmed);
     }
 
     void orbTick()   // εγγραφή και αναπαραγωγή κίνησης (30 φορές το δευτερόλεπτο)
@@ -3464,7 +3467,8 @@ private:
     LoopsView loopsView;
     KeyboardView keyboardView;
     PanelHeader header;
-    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, motionTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
+    OrbRecTile orbRecTile;
+    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
@@ -3474,7 +3478,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.48.6"; }
+    const String getApplicationVersion() override { return "0.49.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

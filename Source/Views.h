@@ -382,7 +382,7 @@ public:
 
     std::function<void()> onMetroChange;
 
-    // Orb: 16 αναθέσεις (4 γωνίες × 4 γραμμές). Η οθόνη ανοίγει πατώντας τη λέξη "flow".
+    // Orb: 16 αναθέσεις (4 γωνίες × 4 γραμμές). Η οθόνη ανοίγει με το κουμπί ORB.
     struct KnobState { bool bound = false; float value = 0.0f; String name; };
     std::array<KnobState, 16> knobs;
     static constexpr int knobAreaH = 0;
@@ -1513,7 +1513,8 @@ public:
 
             const float width = s.r - s.l;
             const bool isSpecial = b == engine.specialBlock.load();
-            const Colour col = isSpecial ? Colours::white.withMultipliedAlpha (engine.blockOff[(size_t) b].load() != 0 ? 0.4f : 1.0f) : keyLight (b);
+            const Colour col = isSpecial ? Colours::white.withMultipliedAlpha (engine.blockOff[(size_t) b].load() != 0 ? 0.4f : 1.0f)
+                                         : (b == sel ? Colour (0xfffaf8f4) : keyLight (b));   // το επιλεγμένο block (και όταν επιλέγεται αυτόματα από το παίξιμο) είναι λευκό
             const float alpha = b == sel ? 1.0f : 0.7f;
             const int hold = engine.holdMode[(size_t) b].load();
             const int tr = engine.transpose[(size_t) b].load();
