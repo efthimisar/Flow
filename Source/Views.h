@@ -557,29 +557,40 @@ public:
             auto needed = [&] (bool cpuOn, bool valsOn)
             {
                 const float right = 3.0f * 18.0f + 28.0f + (valsOn ? 60.0f : 0.0f) + 44.0f;
-                return 14.0f + titleW + chordW + (cpuOn ? 150.0f : 0.0f) + 16.0f + toolsW + 16.0f + right;
+                return 14.0f + titleW + chordW + (cpuOn ? 76.0f : 0.0f) + 16.0f + toolsW + 16.0f + right;
             };
             const bool cpuAllowed = ! metroStrip && notice.isEmpty() && ! showRec;
             bool layoutCpu = true, layoutVals = true;
             if (needed (true, true) > (float) w) layoutVals = false;
             if (needed (true, false) > (float) w) layoutCpu = false;
             const bool showCpu = cpuAllowed && layoutCpu;
-            if (showCpu)   // CPU δίπλα από το όνομα του block
+            if (showCpu)   // CPU: μικρός κουκκιδωτός δίσκος που γεμίζει (σαν τα ποτενσιόμετρα) και το % δίπλα
             {
-                const bool hotCpu = cpu >= 0.85f;
-                const float c0 = chordX;
-                g.setFont (hobby::makeFont (typeface, 13.0f));
-                g.setColour (hobby::kIconGrey);
-                g.drawText ("CPU", Rectangle<float> (c0, sy, 30.0f, sh), Justification::centredLeft, false);
-                const Rectangle<float> bar (c0 + 34.0f, sy + sh * 0.5f - 2.0f, 60.0f, 4.0f);
+                const float load = jlimit (0.0f, 1.0f, cpu);
+                const Colour cc = load < 0.6f ? hobby::kOn : load < 0.85f ? Colour (0xfff5de8a) : hobby::kRed;
+                const float R = 10.0f, c0 = chordX;
+                const Rectangle<float> disc (c0, sy + sh * 0.5f - R, 2.0f * R, 2.0f * R);
+                Path circle; circle.addEllipse (disc);
                 g.setColour (Colour (0xff3a3430));
-                g.fillRoundedRectangle (bar, 2.0f);
-                g.setColour (hotCpu ? hobby::kRed : hobby::kOn);
-                g.fillRoundedRectangle (bar.withWidth (jmax (2.0f, bar.getWidth() * jlimit (0.0f, 1.0f, cpu))), 2.0f);
-                g.setColour (hotCpu ? hobby::kRed : hobby::kIconGrey);
-                g.drawText (String ((int) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f)) + "%", Rectangle<float> (c0 + 100.0f, sy, 40.0f, sh), Justification::centredLeft, false);
-                tipZones.push_back ({ Rectangle<float> (c0, sy, 140.0f, sh), String::fromUTF8 ("Φόρτος επεξεργαστή (CPU)") });
-                chordX = c0 + 150.0f;
+                g.fillPath (circle);
+                if (load > 0.005f)
+                {
+                    Path pie;
+                    const float a0 = MathConstants<float>::pi * -0.75f;
+                    pie.addPieSegment (disc, a0, a0 + MathConstants<float>::pi * 1.5f * load, 0.0f);
+                    g.setColour (cc);
+                    g.fillPath (pie);
+                }
+                g.saveState();
+                g.reduceClipRegion (circle);
+                g.setTiledImageFill (dotGaps(), 0, 0, 1.0f);
+                g.fillRect (disc);
+                g.restoreState();
+                g.setFont (hobby::makeFont (typeface, 13.0f));
+                g.setColour (load >= 0.85f ? hobby::kRed : hobby::kIconGrey);
+                g.drawText (String ((int) std::lround (load * 100.0f)) + "%", Rectangle<float> (c0 + 2.0f * R + 6.0f, sy, 40.0f, sh), Justification::centredLeft, false);
+                tipZones.push_back ({ Rectangle<float> (c0, sy, 2.0f * R + 46.0f, sh), String::fromUTF8 ("Φόρτος επεξεργαστή (CPU)") });
+                chordX = c0 + 2.0f * R + 56.0f;
             }
             if (lastChord.isNotEmpty())
             {
@@ -651,7 +662,7 @@ public:
             else
             {
                 // λάμπες εργαλείων στη μέση: σκέτα σύμβολα, φωτίζουν ή σβήνουν. Το μπαλούν λέει τι κάνει η καθεμία.
-                const float leftEnd = 14.0f + titleW + chordW + (showCpu ? 150.0f : 0.0f);
+                const float leftEnd = 14.0f + titleW + chordW + (showCpu ? 76.0f : 0.0f);
                 const float rightStart = (float) w - 44.0f - (3.0f * 18.0f + 28.0f + (layoutVals ? 60.0f : 0.0f));
                 float tx = jmin (jmax (cx - toolsW * 0.5f, leftEnd + 16.0f), rightStart - 16.0f - toolsW) + 13.0f;
                 for (auto& tl : tools)
