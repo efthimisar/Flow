@@ -964,6 +964,11 @@ private:
                 if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);   // άσπρο
             }
 
+        {   // tap tempo (το τελευταίο πλήκτρο δεξιά): κόκκινο και στο hardware
+            const int idx = flow::highestNote - first;
+            if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = lightByte (0, 3);
+        }
+
         if (force || buf != lastLights || ++lightsTick >= 4)
         {
             lightsTick = 0;
@@ -3528,7 +3533,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.49.1"; }
+    const String getApplicationVersion() override { return "0.49.2"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

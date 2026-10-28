@@ -1431,9 +1431,10 @@ public:
             else
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                Colour c = litKey ? Colours::white : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
+                const bool tapKey = n == flow::highestNote;   // το τελευταίο πλήκτρο δεξιά είναι το tap tempo: κόκκινο
+                Colour c = litKey ? Colours::white : tapKey ? hobby::kRed : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
                 const Colour cc = c.withMultipliedAlpha (alpha);
-                if (b >= 0 && ! litKey && ! switchKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
+                if (b >= 0 && ! litKey && ! switchKey && ! tapKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
                     g.setGradientFill (ColourGradient (cc, 0.0f, kr.getY(), cc.interpolatedWith (hobby::kScreen, 0.3f), 0.0f, kr.getBottom(), false));
                 else
                     g.setColour (cc);
