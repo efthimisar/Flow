@@ -900,10 +900,10 @@ private:
             const int b = engine.blockForNote (n);
             if (b < 0) continue;
             if (engine.blockOff[(size_t) b].load() != 0) continue;
-            buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? 2 : 1);
+            buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? 3 : 1);
         }
 
-        // το 3 (πιο φωτεινό) μένει για το λευκό. Ό,τι κρατιέται με Hold (και οι νότες συγχορδίας του) είναι λευκό και στο hardware, ακόμα κι αν είναι έξω από τη ζώνη
+        // ό,τι κρατιέται με Hold (και οι νότες συγχορδίας του) είναι λευκό και στο hardware, ακόμα κι αν είναι έξω από τη ζώνη
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             if (! isActive (b) || engine.blockOff[(size_t) b].load() != 0) continue;
