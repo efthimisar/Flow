@@ -178,6 +178,9 @@ public:
             engine.mapCode[(size_t) i] = settings->getIntValue ("ctl" + String (i), 0);
 
         knobBlock.fill (-1); knobParamIdx.fill (-1);
+        if (std::unique_ptr<XmlElement> lib { settings->getXmlValue ("knobLibrary") })
+            for (auto* pe : lib->getChildWithTagNameIterator ("Plugin"))
+                readKnobs (*pe, knobLibrary[pe->getStringAttribute ("key")]);
         for (int k = 0; k < 8; ++k)
         {
             engine.knobCc[(size_t) k] = settings->getIntValue ("knobcc" + String (k), 0);
@@ -986,10 +989,89 @@ private:
     };
     std::array<ParamWatch, flow::numBlocks> watches;
 
+    // Οι αναθέσεις ανήκουν στο plugin κάθε block (σώζονται μέσα στο set) και θυμούνται και σε μια βιβλιοθήκη ανά plugin για νέα blocks.
+    // Τα CC του hardware (knobCc) είναι ξεχωριστά και μένουν πάντα. Τα knobBlock/knobParamIdx είναι η τρέχουσα όψη για το επιλεγμένο block.
+    struct KnobAssign { int idx = -1; String name; };
+    std::array<std::array<KnobAssign, 8>, (size_t) flow::numBlocks> blockKnobs;
+    std::map<String, std::array<KnobAssign, 8>> knobLibrary;
+
+    String knobKey (int block)
+    {
+        if (auto* p = engine.getPlugin (block)) return p->getPluginDescription().createIdentifierString();
+        return {};
+    }
+
+    void syncKnobView()
+    {
+        const int sel = isActive (selected) ? selected : -1;
+        for (int k = 0; k < 8; ++k)
+        {
+            const int idx = sel >= 0 ? blockKnobs[(size_t) sel][(size_t) k].idx : -1;
+            knobBlock[(size_t) k] = idx >= 0 ? sel : -1;
+            knobParamIdx[(size_t) k] = idx;
+        }
+    }
+
+    void validateKnobs (int block)   // μετά από αλλαγή έκδοσης plugin ο δείκτης μπορεί να άλλαξε: ψάχνει την παράμετρο με το ίδιο όνομα
+    {
+        auto* p = engine.getPlugin (block);
+        for (auto& a : blockKnobs[(size_t) block])
+        {
+            if (a.idx < 0) continue;
+            if (p == nullptr) { a.idx = -1; continue; }
+            auto& params = p->getParameters();
+            if (a.name.isEmpty()) { if (a.idx >= params.size()) a.idx = -1; continue; }
+            if (a.idx < params.size() && params[a.idx]->getName (64) == a.name) continue;
+            int found = -1;
+            for (int i = 0; i < params.size(); ++i)
+                if (params[i]->getName (64) == a.name) { found = i; break; }
+            a.idx = found;
+        }
+    }
+
+    void rememberKnobs (int block)
+    {
+        const auto key = knobKey (block);
+        if (key.isNotEmpty()) knobLibrary[key] = blockKnobs[(size_t) block];
+    }
+
+    void ensureKnobs (int block)   // νέο block ή set χωρίς αναθέσεις: παίρνει όσα θυμάται το Flow για αυτό το plugin
+    {
+        bool any = false;
+        for (auto& a : blockKnobs[(size_t) block]) if (a.idx >= 0) any = true;
+        if (! any)
+        {
+            auto it = knobLibrary.find (knobKey (block));
+            if (it != knobLibrary.end()) blockKnobs[(size_t) block] = it->second;
+        }
+        validateKnobs (block);
+    }
+
     void clearKnobsOf (int block)
     {
+        for (auto& a : blockKnobs[(size_t) block]) a = KnobAssign();
+    }
+
+    static void writeKnobs (XmlElement& parent, const std::array<KnobAssign, 8>& arr)
+    {
         for (int k = 0; k < 8; ++k)
-            if (knobBlock[(size_t) k] == block) { knobBlock[(size_t) k] = -1; knobParamIdx[(size_t) k] = -1; }
+            if (arr[(size_t) k].idx >= 0)
+            {
+                auto* ki = parent.createNewChildElement ("K");
+                ki->setAttribute ("i", k);
+                ki->setAttribute ("p", arr[(size_t) k].idx);
+                ki->setAttribute ("n", arr[(size_t) k].name);
+            }
+    }
+
+    static void readKnobs (const XmlElement& parent, std::array<KnobAssign, 8>& arr)
+    {
+        for (auto& a : arr) a = KnobAssign();
+        for (auto* ki : parent.getChildWithTagNameIterator ("K"))
+        {
+            const int k = ki->getIntAttribute ("i", -1), idx = ki->getIntAttribute ("p", -1);
+            if (k >= 0 && k < 8 && idx >= 0) arr[(size_t) k] = { idx, ki->getStringAttribute ("n") };
+        }
     }
 
     AudioProcessorParameter* knobTarget (int k)
@@ -1018,8 +1100,12 @@ private:
         }
         if (learnMode == 2)
         {
-            knobBlock[(size_t) k] = -1; knobParamIdx[(size_t) k] = -1;
-            engine.knobCc[(size_t) k] = 0;
+            if (knobBlock[(size_t) k] >= 0)      // πρώτο πάτημα: σβήνει την παράμετρο του plugin, δεύτερο: ξεχνά το φυσικό κουμπί
+            {
+                blockKnobs[(size_t) selected][(size_t) k] = KnobAssign();
+                rememberKnobs (selected);
+            }
+            else engine.knobCc[(size_t) k] = 0;
             learnMode = 0; stopKnobLearn();
             setMessage (gr ("Ποτενσιόμετρο ") + String (k + 1) + " " + String::fromUTF8 ("\xe2\x9c\x95"));
             saveNow(); updateToolLamps();
@@ -1028,12 +1114,12 @@ private:
         stopKnobLearn();
         engine.cancelLearns();
         knobTouched = -1;
-        int n = 0;
-        for (int b = 0; b < flow::numBlocks; ++b)
-            if (isActive (b))
-                if (auto* p = engine.getPlugin (b))
-                    if (! p->getParameters().isEmpty()) { watches[(size_t) b].attach (p, b, &knobTouched); ++n; }
-        if (n == 0) { setMessage (gr ("Δεν υπάρχει plugin με παραμέτρους")); return true; }
+        {
+            // η ανάθεση γίνεται για το plugin του επιλεγμένου block
+            auto* p = isActive (selected) ? engine.getPlugin (selected) : nullptr;
+            if (p == nullptr || p->getParameters().isEmpty()) { setMessage (gr ("Το επιλεγμένο block δεν έχει παραμέτρους")); return true; }
+            watches[(size_t) selected].attach (p, selected, &knobTouched);
+        }
         knobStage = 1; knobSlot = k; knobStageStart = Time::getMillisecondCounter();
         setMessage (gr ("Κούνησε μια παράμετρο στο παράθυρο ενός plugin"));
         return true;
@@ -1058,6 +1144,7 @@ private:
 
     void knobTick()
     {
+        syncKnobView();
         if (engine.masterLearned.exchange (0) > 0)
         {
             setMessage (gr ("Master ένταση ") + String::fromUTF8 ("\xe2\x86\x90") + " " + pedalCodeText (engine.masterCc.load()));
@@ -1073,12 +1160,27 @@ private:
             {
                 const int t = knobTouched.load();
                 for (auto& w : watches) w.detach();
-                knobBlock[(size_t) knobSlot] = t >> 20;
-                knobParamIdx[(size_t) knobSlot] = t & 0xfffff;
-                knobStage = 2; knobStageStart = Time::getMillisecondCounter();
-                engine.knobLearnedSlot = -1;
-                engine.knobLearnSlot = knobSlot;
-                setMessage (gr ("Κούνησε τώρα το φυσικό ποτενσιόμετρο"));
+                const int tb = t >> 20, ti = t & 0xfffff;
+                if (tb >= 0 && tb < flow::numBlocks)
+                    if (auto* tp = engine.getPlugin (tb))
+                        if (ti < tp->getParameters().size())
+                        {
+                            blockKnobs[(size_t) tb][(size_t) knobSlot] = { ti, tp->getParameters()[ti]->getName (64) };
+                            rememberKnobs (tb);
+                        }
+                if (engine.knobCc[(size_t) knobSlot].load() != 0)   // το hardware το θυμάται ήδη: τέλος
+                {
+                    setMessage (gr ("Ποτενσιόμετρο ") + String (knobSlot + 1) + " " + String::fromUTF8 ("\xe2\x86\x90") + " " + pedalCodeText (engine.knobCc[(size_t) knobSlot].load()));
+                    knobStage = 0; knobSlot = -1; learnMode = 0;
+                    saveNow(); updateToolLamps();
+                }
+                else
+                {
+                    knobStage = 2; knobStageStart = Time::getMillisecondCounter();
+                    engine.knobLearnedSlot = -1;
+                    engine.knobLearnSlot = knobSlot;
+                    setMessage (gr ("Κούνησε τώρα το φυσικό ποτενσιόμετρο"));
+                }
             }
             else if (knobStage == 2 && engine.knobLearnedSlot.load() >= 0)
             {
@@ -1489,6 +1591,8 @@ private:
         if (state.getSize() > 0)
             if (auto* p = engine.getPlugin (block))
                 p->setStateInformation (state.getData(), (int) state.getSize());
+
+        ensureKnobs (block);
 
         if (userLoad || ! isActive (selected) || block == pendingSelect)
         {
@@ -2101,16 +2205,11 @@ private:
         root->setAttribute ("autoLoop", engine.autoLoop.load());
         root->setAttribute ("tempoManual", engine.tempoUserSet.load() ? 1 : 0);
         root->setAttribute ("selected", selected);
-        {
-            StringArray kp;
-            for (int k = 0; k < 8; ++k) kp.add (String (knobBlock[(size_t) k]) + ":" + String (knobParamIdx[(size_t) k]));
-            root->setAttribute ("knobmap", kp.joinIntoString (","));
-        }
-
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             if (! isActive (b)) continue;
             auto* e = root->createNewChildElement ("Block");
+            writeKnobs (*e->createNewChildElement ("Knobs"), blockKnobs[(size_t) b]);
             e->setAttribute ("slot", b);
             e->setAttribute ("lo", engine.lo[(size_t) b].load());
             e->setAttribute ("hi", engine.hi[(size_t) b].load());
@@ -2248,14 +2347,14 @@ private:
         {
             StringArray kp;
             kp.addTokens (root.getStringAttribute ("knobmap"), ",", "");
-            knobBlock.fill (-1); knobParamIdx.fill (-1);
+            // sets 0.37 (καθολικά ποτενσιόμετρα): η ανάθεση περνά στο plugin του block
             for (int k = 0; k < 8 && k < kp.size(); ++k)
             {
                 StringArray bp;
                 bp.addTokens (kp[k], ":", "");
                 const int kb = bp.size() == 2 ? mapSlot (bp[0].getIntValue()) : -1;
                 if (kb >= 0 && bp[1].getIntValue() >= 0)
-                { knobBlock[(size_t) k] = kb; knobParamIdx[(size_t) k] = bp[1].getIntValue(); }
+                    blockKnobs[(size_t) kb][(size_t) k] = { bp[1].getIntValue(), String() };
             }
         }
         engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 110.0));
@@ -2311,6 +2410,8 @@ private:
                 setMessage (gr ("Ένα plugin δεν φορτώθηκε σωστά την τελευταία φορά και παραλείφθηκε."));
                 continue;
             }
+
+            if (auto* ke = e->getChildByName ("Knobs")) readKnobs (*ke, blockKnobs[(size_t) slot]);
 
             engine.holdMode[(size_t) slot]  = jlimit (0, 4, e->getIntAttribute ("hold", 0));
             engine.setAlText (slot, e->getStringAttribute ("al"));
@@ -2486,6 +2587,16 @@ private:
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
         for (int k = 0; k < 8; ++k)
             settings->setValue ("knobcc" + String (k), engine.knobCc[(size_t) k].load());
+        {
+            XmlElement lib ("KnobLib");
+            for (auto& kv : knobLibrary)
+            {
+                auto* pe = lib.createNewChildElement ("Plugin");
+                pe->setAttribute ("key", kv.first);
+                writeKnobs (*pe, kv.second);
+            }
+            settings->setValue ("knobLibrary", &lib);
+        }
 
         if (pendingLoads == 0)    // όσο φορτώνονται plugins δεν αντικαθιστούμε το session (θα χανόταν ό,τι δεν έχει φορτώσει ακόμη)
         {
