@@ -128,6 +128,9 @@ namespace flow
         std::array<std::atomic<int>, 8> knobCc {};
         std::array<std::atomic<float>, 8> knobIn {};
         std::atomic<int> knobLearnSlot { -1 }, knobLearnedSlot { -1 };
+        // master: ένταση (θέση 0..1, κέρδος = θέση²), ασφαλιστικός limiter, CC για ένταση
+        std::atomic<float> masterPos { 1.0f };
+        std::atomic<int> limiterOn { 1 }, masterCc { 0 }, masterLearn { 0 }, masterLearned { 0 };
         std::atomic<int> sceneRequest { -1 };   // από πετάλι: -2 = προηγούμενη, -3 = επόμενη (το διαβάζει το UI)
         std::atomic<int> selectedBlock { 0 };   // το block στο οποίο δρουν Hold και looper
         std::atomic<int> lastPlayed { -1 };     // το block που έπαιξες τελευταίο: εκεί γράφει το Rec MIDI loop από πετάλι
@@ -282,7 +285,7 @@ namespace flow
         }
 
         void startVolumeLearn (int b) { mapLearnTarget = -1; volLearn = b; }
-        void cancelLearns()           { mapLearnTarget = -1; volLearn = -1; knobLearnSlot = -1; }
+        void cancelLearns()           { mapLearnTarget = -1; volLearn = -1; knobLearnSlot = -1; masterLearn = 0; }
 
         double getSampleRate() const { return sampleRate.load(); }
 
@@ -666,6 +669,32 @@ namespace flow
             for (auto& fx : masterFx)
                 processFx (*fx, masterBuf.getWritePointer (0), masterBuf.getWritePointer (1), numSamples);
 
+            // ---- master ένταση και ασφαλιστικός limiter (ό,τι ακούγεται είναι και ό,τι ηχογραφείται)
+            {
+                float* mL = masterBuf.getWritePointer (0);
+                float* mR = masterBuf.getWritePointer (1);
+                const float pos = masterPos.load();
+                const float g1 = pos * pos;
+                const float g0 = masterGainPrev;
+                masterGainPrev = g1;
+                const bool lim = limiterOn.load() != 0;
+                const float ceilV = 0.97f;
+                const float rel = 1.0f - std::exp (-1.0f / (0.12f * (float) juce::jmax (8000.0, sr)));
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float g = g0 + (g1 - g0) * (float) (i + 1) / (float) numSamples;
+                    float l = mL[i] * g, r = mR[i] * g;
+                    if (lim)
+                    {
+                        const float pk = std::max (std::abs (l), std::abs (r));
+                        const float need = pk > ceilV ? ceilV / pk : 1.0f;
+                        limEnv = need < limEnv ? need : std::min (need, limEnv + (1.0f - limEnv) * rel);
+                        l *= limEnv; r *= limEnv;
+                    }
+                    mL[i] = l; mR[i] = r;
+                }
+            }
+
             // ---- έξοδος
             if (numOutputChannels == 1)
             {
@@ -820,6 +849,7 @@ namespace flow
         juce::CriticalSection lock;
         std::array<Block, numBlocks> blocks;
         std::vector<PluginPtr> masterFx;
+        float masterGainPrev = 1.0f, limEnv = 1.0f;
         juce::MidiBuffer chordTmp;
         Head head;
         std::array<int, 128> owner;
@@ -1163,6 +1193,18 @@ namespace flow
             if (kind == 2)
             {
                 const float kv = (float) msg.getControllerValue() / 127.0f;
+                if (masterLearn.load() != 0)
+                {
+                    for (int k = 0; k < 8; ++k)
+                        if (knobCc[(size_t) k].load() == code) knobCc[(size_t) k] = 0;
+                    masterCc = code;
+                    masterPos = kv;
+                    masterLearn = 0;
+                    ++masterLearned;
+                    ++changeCount;
+                    return true;
+                }
+                if (masterCc.load() == code) { masterPos = kv; return true; }
                 const int ks = knobLearnSlot.load();
                 if (ks >= 0 && ks < 8)
                 {

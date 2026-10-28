@@ -193,6 +193,9 @@ public:
 
         engine.metroLevel = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("metroLevel", 0.8));
         engine.metroChannel = jmax (0, settings->getIntValue ("metroChannel", 2));
+        engine.masterPos = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("masterPos", 1.0));
+        engine.limiterOn = settings->getIntValue ("limiterOn", 1) != 0 ? 1 : 0;
+        engine.masterCc = settings->getIntValue ("masterCc", 0);
         metroSamplePath = settings->getValue ("metroSample");
 
         std::unique_ptr<XmlElement> savedAudio (settings->getXmlValue ("audioDeviceState"));
@@ -937,6 +940,9 @@ private:
     std::array<int, 8> knobBlock, knobParamIdx;     // block και δείκτης παραμέτρου (-1 = ελεύθερο)
     int knobStage = 0, knobSlot = -1;   // 1 = περιμένει να κουνηθεί παράμετρος σε plugin, 2 = περιμένει φυσικό κουμπί
     uint32 knobStageStart = 0;
+    std::array<int, 8> knobSig { { -2, -2, -2, -2, -2, -2, -2, -2 } };
+    std::array<bool, 8> knobPicked {};
+    std::array<float, 8> knobLastIn { { -1, -1, -1, -1, -1, -1, -1, -1 } }, knobSet {}, knobHw { { -1, -1, -1, -1, -1, -1, -1, -1 } };
     std::atomic<int> knobTouched { -1 };   // (block << 20) | δείκτης
 
     struct ParamWatch : AudioProcessorParameter::Listener
@@ -1039,6 +1045,11 @@ private:
 
     void knobTick()
     {
+        if (engine.masterLearned.exchange (0) > 0)
+        {
+            setMessage (gr ("Master ένταση ") + String::fromUTF8 ("\xe2\x86\x90") + " " + pedalCodeText (engine.masterCc.load()));
+            saveNow();
+        }
         if (knobStage != 0)
         {
             if (Time::getMillisecondCounter() - knobStageStart > 30000)
@@ -1069,9 +1080,33 @@ private:
         for (int k = 0; k < 8; ++k)
         {
             const float in = engine.knobIn[(size_t) k].exchange (-1.0f);
+            const int sig = knobBlock[(size_t) k] * 100000 + knobParamIdx[(size_t) k];
+            if (sig != knobSig[(size_t) k]) { knobSig[(size_t) k] = sig; knobPicked[(size_t) k] = false; knobLastIn[(size_t) k] = -1.0f; knobHw[(size_t) k] = -1.0f; }
             if (auto* prm = knobTarget (k))
             {
-                if (in >= 0.0f) prm->setValueNotifyingHost (in);
+                if (in >= 0.0f)
+                {
+                    // soft takeover: το φυσικό κουμπί αρχίζει να αλλάζει την παράμετρο μόνο όταν περάσει από την τρέχουσα τιμή της
+                    const float cur = prm->getValue();
+                    if (knobPicked[(size_t) k] && std::abs (cur - knobSet[(size_t) k]) > 0.05f) knobPicked[(size_t) k] = false;   // άλλαξε αλλού
+                    if (! knobPicked[(size_t) k])
+                    {
+                        const float last = knobLastIn[(size_t) k];
+                        if (std::abs (in - cur) < 0.03f || (last >= 0.0f && (last - cur) * (in - cur) <= 0.0f))
+                            knobPicked[(size_t) k] = true;
+                    }
+                    knobLastIn[(size_t) k] = in;
+                    if (knobPicked[(size_t) k])
+                    {
+                        prm->setValueNotifyingHost (in);
+                        knobSet[(size_t) k] = prm->getValue();
+                        knobHw[(size_t) k] = -1.0f;
+                    }
+                    else knobHw[(size_t) k] = in;
+                }
+                else if (knobHw[(size_t) k] >= 0.0f && std::abs (prm->getValue() - knobHw[(size_t) k]) < 0.03f)
+                    knobHw[(size_t) k] = -1.0f;
+                st[(size_t) k].hw = knobHw[(size_t) k];
                 st[(size_t) k].bound = true;
                 st[(size_t) k].value = prm->getValue();
                 st[(size_t) k].colour = blockLight (knobBlock[(size_t) k]);
@@ -1832,6 +1867,35 @@ private:
         menu.addItem (2, gr ("Αποθήκευση set…"));
         menu.addItem (3, gr ("Φόρτωση set…"));
         menu.addItem (9, gr ("Επαναφορά τελευταίας συνεδρίας"), hasSessionBackup());
+
+        // λίστα με τα αποθηκευμένα sets (νεότερα πρώτα)
+        Array<File> setFiles = setsDir().findChildFiles (File::findFiles, false, "*.flowset");
+        struct NewestFirst { static int compareElements (const File& a, const File& b)
+        { return a.getLastModificationTime() < b.getLastModificationTime() ? 1 : (b.getLastModificationTime() < a.getLastModificationTime() ? -1 : 0); } };
+        NewestFirst sorter;
+        setFiles.sort (sorter);
+        {
+            PopupMenu setsMenu;
+            for (int i = 0; i < setFiles.size() && i < 40; ++i)
+                setsMenu.addItem (1000 + i, setFiles[i].getFileNameWithoutExtension());
+            if (setFiles.isEmpty()) setsMenu.addItem (999, gr ("(κανένα)"), false);
+            menu.addSubMenu (gr ("Τα sets μου"), setsMenu);
+        }
+
+        // master: ένταση, limiter
+        {
+            const float pos = engine.masterPos.load();
+            const float stepsPos[4] { 1.0f, 0.85f, 0.7f, 0.5f };
+            PopupMenu mm;
+            for (int i = 0; i < 4; ++i)
+                mm.addItem (20 + i, String ((int) (stepsPos[i] * 100)) + "%", true, std::abs (pos - stepsPos[i]) < 0.05f);
+            mm.addSeparator();
+            mm.addItem (26, gr ("Limiter ασφαλείας"), true, engine.limiterOn.load() != 0);
+            mm.addItem (24, gr ("Ανάθεση ποτενσιομέτρου (MIDI learn)"));
+            mm.addItem (25, gr ("Αφαίρεση ανάθεσης"), engine.masterCc.load() != 0);
+            if (engine.masterCc.load() != 0) mm.addItem (27, gr ("Τώρα: ") + pedalCodeText (engine.masterCc.load()), false);
+            menu.addSubMenu (gr ("Master ένταση"), mm);
+        }
         menu.addSeparator();
         menu.addItem (4, gr ("Panic: σίγαση κολλημένων νοτών (Esc)"));
         menu.addItem (5, gr ("Panic: ανάθεση πεταλιού ή πλήκτρου (MIDI learn)"));
@@ -1843,9 +1907,14 @@ private:
 
         const Rectangle<int> area (getScreenX() + getWidth() / 2 - 40, getScreenY() + 46, 80, 28);
         menu.showMenuAsync (PopupMenu::Options().withTargetScreenArea (area),
-                            [safe = SafePointer<MainComponent> (this)] (int r)
+                            [safe = SafePointer<MainComponent> (this), setFiles] (int r)
         {
             if (safe == nullptr || r == 0) return;
+            if (r >= 1000 && r - 1000 < setFiles.size()) safe->loadSetFile (setFiles[r - 1000]);
+            if (r >= 20 && r <= 23) { const float v[4] { 1.0f, 0.85f, 0.7f, 0.5f }; safe->engine.masterPos = v[r - 20]; }
+            if (r == 26) safe->engine.limiterOn = safe->engine.limiterOn.load() != 0 ? 0 : 1;
+            if (r == 24) { safe->engine.cancelLearns(); safe->engine.masterLearn = 1; safe->setMessage (gr ("Κούνησε το ποτενσιόμετρο για τη master ένταση")); }
+            if (r == 25) safe->engine.masterCc = 0;
             if (r == 1) safe->openAudioSettings();
             if (r == 2) safe->saveSetToFile();
             if (r == 3) safe->loadSetFromFile();
@@ -2016,7 +2085,7 @@ private:
     std::unique_ptr<XmlElement> createSetXml (bool fresh, bool withLoops)
     {
         auto root = std::make_unique<XmlElement> ("FlowSet");
-        root->setAttribute ("version", 1);
+        root->setAttribute ("version", 2);   // 1: 16 blocks (έως 0.36), 2: 9 blocks
         root->setAttribute ("tempo", engine.tempo.load());
         root->setAttribute ("startQ", engine.startQ.load());
         root->setAttribute ("lengthQ", engine.lengthQ.load());
@@ -2132,9 +2201,42 @@ private:
         panelIndex = 0;
     }
 
+    int setMoved = 0, setDropped = 0, setNewer = 0;   // αποτέλεσμα του τελευταίου applySet
+
     void applySet (const XmlElement& root, const StringArray& crashed)
     {
         clearEverything();
+
+        // Έκδοση αρχείου: τα παλιά sets (16 blocks) μετατρέπονται, όσα blocks είναι σε θέσεις πάνω από το 9 πάνε στις ελεύθερες θέσεις
+        setNewer = root.getIntAttribute ("version", 1) > 2 ? 1 : 0;
+        setMoved = setDropped = 0;
+        std::map<int, int> slotMap;
+        {
+            std::array<bool, (size_t) flow::numBlocks> used {};
+            for (auto* e : root.getChildWithTagNameIterator ("Block"))
+            {
+                const int sl = e->getIntAttribute ("slot", -1);
+                if (sl >= 0 && sl < flow::numBlocks) used[(size_t) sl] = true;
+            }
+            for (auto* e : root.getChildWithTagNameIterator ("Block"))
+            {
+                const int sl = e->getIntAttribute ("slot", -1);
+                if (sl < flow::numBlocks) continue;
+                int freeSlot = -1;
+                for (int i = 0; i < flow::numBlocks; ++i)
+                    if (! used[(size_t) i]) { freeSlot = i; break; }
+                if (freeSlot < 0) { ++setDropped; continue; }
+                used[(size_t) freeSlot] = true;
+                slotMap[sl] = freeSlot;
+                ++setMoved;
+            }
+        }
+        auto mapSlot = [&slotMap] (int sl)
+        {
+            if (sl >= 0 && sl < flow::numBlocks) return sl;
+            auto it = slotMap.find (sl);
+            return it != slotMap.end() ? it->second : -1;
+        };
 
         {
             StringArray kp;
@@ -2144,8 +2246,9 @@ private:
             {
                 StringArray bp;
                 bp.addTokens (kp[k], ":", "");
-                if (bp.size() == 2 && bp[0].getIntValue() >= 0 && bp[0].getIntValue() < flow::numBlocks && bp[1].getIntValue() >= 0)
-                { knobBlock[(size_t) k] = bp[0].getIntValue(); knobParamIdx[(size_t) k] = bp[1].getIntValue(); }
+                const int kb = bp.size() == 2 ? mapSlot (bp[0].getIntValue()) : -1;
+                if (kb >= 0 && bp[1].getIntValue() >= 0)
+                { knobBlock[(size_t) k] = kb; knobParamIdx[(size_t) k] = bp[1].getIntValue(); }
             }
         }
         engine.tempo = jlimit (40.0, 240.0, root.getDoubleAttribute ("tempo", 98.0));
@@ -2155,7 +2258,7 @@ private:
         engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 500));
         engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 0));
         engine.tempoUserSet = root.getIntAttribute ("tempoManual", engine.tempo.load() != 120.0 ? 1 : 0) != 0;
-        pendingSelect = root.getIntAttribute ("selected", 0);
+        pendingSelect = jmax (0, mapSlot (root.getIntAttribute ("selected", 0)));
 
         for (auto& sc : scenes) sc = Scene();
         currentScene = 0;
@@ -2170,8 +2273,8 @@ private:
                 sc.saved = true;
                 for (auto* be : si->getChildWithTagNameIterator ("B"))
                 {
-                    const int bs = be->getIntAttribute ("s", -1);
-                    if (bs < 0 || bs >= flow::numBlocks) continue;
+                    const int bs = mapSlot (be->getIntAttribute ("s", -1));
+                    if (bs < 0) continue;
                     auto& x = sc.b[(size_t) bs];
                     x.off = jlimit (0, 1, be->getIntAttribute ("off", 0));
                     x.hold = jlimit (0, 4, be->getIntAttribute ("hold", 0));
@@ -2189,13 +2292,14 @@ private:
         engine.specialBlock = -1;
         for (auto* e : root.getChildWithTagNameIterator ("Block"))
         {
-            const int slot = e->getIntAttribute ("slot", -1);
-            if (slot < 0 || slot >= flow::numBlocks) continue;
+            const int origSlot = e->getIntAttribute ("slot", -1);
+            const int slot = mapSlot (origSlot);
+            if (slot < 0) continue;
 
             auto inst = readPluginEntry (e->getChildByName ("Instrument"));
             if (! inst.ok) continue;
 
-            if (crashed.contains ("b" + String (slot)))
+            if (crashed.contains ("b" + String (origSlot)))
             {
                 setMessage (gr ("Ένα plugin δεν φορτώθηκε σωστά την τελευταία φορά και παραλείφθηκε."));
                 continue;
@@ -2319,22 +2423,35 @@ private:
         });
     }
 
+    File setsDir() const
+    {
+        return File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Sets");
+    }
+
+    void loadSetFile (const File& f)
+    {
+        std::unique_ptr<XmlElement> xml (XmlDocument::parse (f));
+        if (xml == nullptr || ! xml->hasTagName ("FlowSet"))
+        {
+            setMessage (gr ("Αυτό δεν είναι set του Flow"));
+            return;
+        }
+        applySet (*xml, {});
+        if (setNewer != 0)         setMessage (gr ("Το set είναι από νεότερο Flow, ίσως λείπουν πράγματα"));
+        else if (setDropped > 0)   setMessage (gr ("Φορτώθηκε, αλλά ") + String (setDropped) + gr (" blocks δεν χωρούσαν (μέγιστο 9)"));
+        else if (setMoved > 0)     setMessage (gr ("Φορτώθηκε: ") + String (setMoved) + gr (" blocks μεταφέρθηκαν στις ελεύθερες θέσεις"));
+        else                       setMessage (gr ("Φορτώθηκε: ") + f.getFileName());
+    }
+
     void loadSetFromFile()
     {
-        auto dir = File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Sets");
+        auto dir = setsDir();
         chooser = std::make_unique<FileChooser> (gr ("Φόρτωση set"), dir, "*.flowset");
         chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles, [this] (const FileChooser& fc)
         {
             auto f = fc.getResult();
             if (f == File()) return;
-            std::unique_ptr<XmlElement> xml (XmlDocument::parse (f));
-            if (xml == nullptr || ! xml->hasTagName ("FlowSet"))
-            {
-                setMessage (gr ("Αυτό δεν είναι set του Flow"));
-                return;
-            }
-            applySet (*xml, {});
-            setMessage (gr ("Φορτώθηκε: ") + f.getFileName());
+            loadSetFile (f);
         });
     }
 
@@ -2350,6 +2467,9 @@ private:
         settings->setValue ("audioDeviceState", audioState.get());
         settings->setValue ("tapeFolder", engine.recorder.getFolder().getFullPathName());
         settings->setValue ("metroLevel", (double) engine.metroLevel.load());
+        settings->setValue ("masterPos", (double) engine.masterPos.load());
+        settings->setValue ("limiterOn", engine.limiterOn.load());
+        settings->setValue ("masterCc", engine.masterCc.load());
         settings->setValue ("metroChannel", engine.metroChannel.load());
         settings->setValue ("metroSample", metroSamplePath);
         settings->setValue ("link", engine.isLinkEnabled());
@@ -2733,7 +2853,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.37.0"; }
+    const String getApplicationVersion() override { return "0.38.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

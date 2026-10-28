@@ -350,7 +350,7 @@ public:
     std::function<void()> onMetroChange;
 
     // 8 ποτενσιόμετρα κάτω στην οθόνη (ανάθεση σε παραμέτρους του επιλεγμένου block)
-    struct KnobState { bool bound = false; float value = 0.0f; Colour colour { Colours::white }; };
+    struct KnobState { bool bound = false; float value = 0.0f; Colour colour { Colours::white }; float hw = -1.0f; };   // hw ≥ 0: το φυσικό κουμπί δεν έχει φτάσει ακόμη την τιμή
     std::array<KnobState, 8> knobs;
     int knobLearning = -1;      // θέση που περιμένει learn (αναβοσβήνει)
     int learnVisual = 0;        // 0 κανονικά, 1 πράσινο (ανάθεση), 2 κόκκινο (σβήσιμο)
@@ -843,6 +843,13 @@ public:
                 const Point<float> p1 (c.x + (R - 1.0f) * std::cos (ang), c.y + (R - 1.0f) * std::sin (ang));
                 g.setColour (ks.colour);
                 g.drawLine (Line<float> (p0, p1), 3.0f);
+            }
+
+            if (ks.bound && ks.hw >= 0.0f)   // soft takeover: τελεία εκεί που είναι το φυσικό κουμπί
+            {
+                const float ang = MathConstants<float>::pi * (-0.75f + 1.5f * jlimit (0.0f, 1.0f, ks.hw)) - MathConstants<float>::halfPi;
+                g.setColour (Colours::white.withAlpha (0.9f));
+                g.fillEllipse (c.x + (R + 5.0f) * std::cos (ang) - 2.0f, c.y + (R + 5.0f) * std::sin (ang) - 2.0f, 4.0f, 4.0f);
             }
 
             // learn: δαχτυλίδι γύρω από κάθε ποτενσιόμετρο (πράσινο ανάθεση, κόκκινο σβήσιμο), αναβοσβήνει εκείνο που περιμένει
