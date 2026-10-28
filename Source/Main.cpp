@@ -1422,7 +1422,7 @@ private:
 
     void orbMoved (int corner, Point<float> p)
     {
-        if (! isActive (selected)) return;
+        if (selected < 0 || selected >= flow::numBlocks) return;   // οι κύκλοι κινούνται και σε κουμπί χωρίς όργανο
         p = orbClamp (corner, p);
         orbPos[(size_t) selected][(size_t) corner] = p;
         orbApply (selected, corner, p);
@@ -1522,7 +1522,7 @@ private:
                 st[(size_t) k].name = prm->getName (24);
             }
         std::array<Point<float>, 4> pos;
-        for (int c = 0; c < 4; ++c) pos[(size_t) c] = isActive (selected) ? orbPos[(size_t) jlimit (0, flow::numBlocks - 1, selected)][(size_t) c] : orbDefault (c);
+        for (int c = 0; c < 4; ++c) pos[(size_t) c] = (selected >= 0 && selected < flow::numBlocks) ? orbPos[(size_t) selected][(size_t) c] : orbDefault (c);
         loopsView.setOrb (st, pos, knobStage != 0 ? knobSlot : -1, orbRecArmed, anyOrbMotion());
         pushWebState (st, pos);
     }
@@ -3464,7 +3464,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.48.2"; }
+    const String getApplicationVersion() override { return "0.48.3"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
