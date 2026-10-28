@@ -203,8 +203,6 @@ public:
         loopsView.onOrbImageClear = [this] { setOrbImage ({}); };
 
         orbFolderPath = settings->getValue ("orbFolder");
-        orbDriveLink = settings->getValue ("orbDriveLink");
-        orbDriveKey = settings->getValue ("orbDriveKey");
         autoOrbImage();   // νέο (άδειο) set: τυχαία εικόνα από το φάκελο Music/Flow/Orb, αν υπάρχει
         webOrbToken = settings->getValue ("webOrbToken");
         if (webOrbToken.isEmpty()) webOrbToken = String::toHexString (Random::getSystemRandom().nextInt64()).paddedLeft ('0', 8).substring (0, 8);
@@ -1272,9 +1270,7 @@ private:
 
     // ---- Orb: αυτόματη εικόνα από τον φάκελο Music/Flow/Orb, με τυχαία παραλλαγή ----
     String orbFolderPath;       // ρύθμιση χρήστη· κενό = Music/Flow/Orb
-    String orbDriveLink, orbDriveKey;
     std::unique_ptr<FileChooser> orbFolderChooser;
-    std::atomic<bool> orbSyncing { false };
 
     File orbImagesDir() const
     {
@@ -1293,115 +1289,6 @@ private:
             saveNow();
             setMessage (gr ("Orb images folder: ") + f.getFileName());
         });
-    }
-
-    // Συγχρονισμός εικόνων από φάκελο Google Drive (κοινόχρηστος με link) στον τοπικό φάκελο.
-    // Με API key: επίσημο Drive API. Χωρίς key: διαβάζει τη σελίδα του φακέλου (εύθραυστο).
-    static String driveFolderId (const String& link)
-    {
-        String id = link.fromFirstOccurrenceOf ("/folders/", false, false);
-        if (id.isEmpty()) id = link.fromFirstOccurrenceOf ("id=", false, false);
-        if (id.isEmpty() && ! link.contains ("/") && ! link.contains (".")) id = link;
-        return id.upToFirstOccurrenceOf ("?", false, false).upToFirstOccurrenceOf ("/", false, false).upToFirstOccurrenceOf ("&", false, false).trim();
-    }
-
-    static bool httpGet (const String& url, MemoryBlock& out)
-    {
-        auto in = URL (url).createInputStream (URL::InputStreamOptions (URL::ParameterHandling::inAddress).withConnectionTimeoutMs (15000).withNumRedirectsToFollow (5));
-        if (in == nullptr) return false;
-        out.reset();
-        in->readIntoMemoryBlock (out);
-        return out.getSize() > 0;
-    }
-
-    void syncOrbFromDrive()
-    {
-        const String folder = driveFolderId (orbDriveLink);
-        if (folder.isEmpty()) { setMessage (gr ("Drive link missing")); return; }
-        if (orbSyncing.exchange (true)) return;
-        const File dir = orbImagesDir();
-        const String key = orbDriveKey.trim();
-        setMessage (gr ("Downloading orb images\xe2\x80\xa6"));
-        Thread::launch ([safe = SafePointer<MainComponent> (this), dir, key, folder]
-        {
-            int got = 0, total = 0;
-            String err;
-            dir.createDirectory();
-            StringArray ids;
-            MemoryBlock mb;
-            if (key.isNotEmpty())
-            {
-                String tok;
-                do
-                {
-                    const String u = "https://www.googleapis.com/drive/v3/files?q=" + URL::addEscapeChars ("'" + folder + "' in parents and trashed=false", true)
-                                   + "&fields=" + URL::addEscapeChars ("nextPageToken,files(id,mimeType)", true) + "&pageSize=200&key=" + key
-                                   + (tok.isNotEmpty() ? "&pageToken=" + tok : String());
-                    if (! httpGet (u, mb)) { err = "list"; break; }
-                    const var v = JSON::parse (mb.toString());
-                    if (auto* arr = v["files"].getArray())
-                        for (auto& f : *arr)
-                            if (f["mimeType"].toString().startsWith ("image/")) ids.add (f["id"].toString());
-                    tok = v["nextPageToken"].toString();
-                } while (tok.isNotEmpty());
-            }
-            else
-            {
-                if (! httpGet ("https://drive.google.com/drive/folders/" + folder, mb)) err = "list";
-                else
-                {
-                    const String html = mb.toString();
-                    int pos = 0;
-                    for (;;)
-                    {
-                        pos = html.indexOf (pos, "data-id=\"");
-                        if (pos < 0) break;
-                        pos += 9;
-                        const String id = html.substring (pos, html.indexOfChar (pos, '"'));
-                        if (id.length() >= 20 && id != folder) ids.addIfNotAlreadyThere (id);
-                    }
-                }
-            }
-            total = ids.size();
-            if (err.isEmpty() && total == 0) err = "none";
-            for (auto& id : ids)
-            {
-                if (dir.getChildFile (id + ".jpg").existsAsFile() || dir.getChildFile (id + ".png").existsAsFile()) continue;
-                const String u = key.isNotEmpty() ? "https://www.googleapis.com/drive/v3/files/" + id + "?alt=media&key=" + key
-                                                  : "https://drive.google.com/uc?export=download&id=" + id;
-                if (! httpGet (u, mb)) continue;
-                const auto* d = static_cast<const uint8*> (mb.getData());
-                const bool png = mb.getSize() > 8 && d[0] == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G';
-                const bool jpg = mb.getSize() > 3 && d[0] == 0xFF && d[1] == 0xD8;
-                if (! png && ! jpg) continue;   // όχι εικόνα (π.χ. σελίδα σφάλματος)
-                if (dir.getChildFile (id + (png ? ".png" : ".jpg")).replaceWithData (mb.getData(), mb.getSize())) ++got;
-            }
-            MessageManager::callAsync ([safe, got, total, err]
-            {
-                if (safe == nullptr) return;
-                safe->orbSyncing = false;
-                if (err == "list") safe->setMessage (gr ("Drive: could not read the folder"));
-                else if (err == "none") safe->setMessage (gr ("Drive: no images found"));
-                else safe->setMessage (gr ("Drive: ") + String (got) + " " + gr ("new,") + " " + String (total) + " " + gr ("total"));
-            });
-        });
-    }
-
-    void askDriveLink()
-    {
-        auto* aw = new AlertWindow (gr ("Orb images from Google Drive"), gr ("Shared folder link (anyone with the link). API key is optional but more reliable."), MessageBoxIconType::NoIcon);
-        aw->addTextEditor ("link", orbDriveLink, gr ("Folder link"));
-        aw->addTextEditor ("key", orbDriveKey, gr ("API key (optional)"));
-        aw->addButton (gr ("Sync"), 1, KeyPress (KeyPress::returnKey));
-        aw->addButton (gr ("Cancel"), 0, KeyPress (KeyPress::escapeKey));
-        aw->enterModalState (true, ModalCallbackFunction::create ([safe = SafePointer<MainComponent> (this), aw] (int r)
-        {
-            if (safe == nullptr || r != 1) return;
-            safe->orbDriveLink = aw->getTextEditorContents ("link").trim();
-            safe->orbDriveKey = aw->getTextEditorContents ("key").trim();
-            safe->saveNow();
-            safe->syncOrbFromDrive();
-        }), true);
     }
 
     static Image orbVariation (const Image& src, Random& rnd)
@@ -2471,7 +2358,6 @@ private:
                  setMessage (webOrbOn ? gr ("iPad orb: on") : gr ("iPad orb: off"));
              }), true, webOrbOn);
         add (String::fromUTF8 ("\xe2\x96\xa3"), gr ("Orb images folder\xe2\x80\xa6"), act ([this] { chooseOrbFolder(); }));
-        add (String::fromUTF8 ("\xe2\x9f\xb3"), gr ("Orb images from Drive\xe2\x80\xa6"), act ([this] { askDriveLink(); }));
         add ("!", "Panic", act ([this] { doPanic(); }));
 
         {
@@ -3187,8 +3073,6 @@ private:
         settings->setValue ("link", engine.isLinkEnabled());
         settings->setValue ("keyLights", lightsWanted);
         settings->setValue ("orbFolder", orbFolderPath);
-        settings->setValue ("orbDriveLink", orbDriveLink);
-        settings->setValue ("orbDriveKey", orbDriveKey);
         settings->setValue ("webOrbOn", webOrbOn);
         settings->setValue ("webOrbToken", webOrbToken);
 
@@ -3580,7 +3464,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.48.1"; }
+    const String getApplicationVersion() override { return "0.48.2"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
