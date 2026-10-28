@@ -455,17 +455,23 @@ public:
 
         const int gridBottom = top + jmax (1, count) * step + 4;
 
-        // κόκκινη μπάρα 2 μέτρων: προχωρά συνεχόμενα και ξαναρχίζει. Μόνο ένδειξη για να παίζεις μέσα στο μέτρο, δεν καθορίζει το μήκος της λούπας
+        // μπάρα tempo: δουλεύει μόνο όταν ο μετρονόμος είναι ανοιχτός. Αναβοσβήνει σε κάθε beat (έντονα στην αρχή του κύκλου, μέτρια στο τελευταίο beat, αχνά στα υπόλοιπα)
         {
-            const double cycle = 2.0 * flow::beatsPerBar;
-            const float p = (float) (std::fmod (jmax (0.0, now), cycle) / cycle);
             const float by = 6.0f, bh = 5.0f;
             g.setColour (Colour (0xff3a3430));
             g.fillRoundedRectangle (laneX, by, laneW, bh, bh * 0.5f);
-            g.setColour (Colour (0xffc9c3ba));   // φωτεινό γκρι (όχι κόκκινο)
-            g.fillRoundedRectangle (laneX, by, jmax (bh, laneW * p), bh, bh * 0.5f);
-            g.setColour (Colour (0xff6b625a));
-            g.fillRect (laneX + laneW * 0.5f - 0.5f, by - 1.0f, 1.0f, bh + 2.0f);
+            if (engine.metroOn.load())
+            {
+                const double cyc = jmax (1.0, engine.metroCycleOut.load());
+                const double bt = std::floor (jmax (0.0, now) + 1.0e-9);
+                const double frac = jmax (0.0, now - bt);
+                const double pc = std::fmod (bt, cyc);
+                const float level = (pc < 1.0e-6) ? 1.0f : (std::abs (pc - (cyc - 1.0)) < 1.0e-6 ? 0.65f : 0.35f);
+                const float decay = jlimit (0.0f, 1.0f, 1.0f - (float) frac * 2.8f);
+                const float a = level * decay * decay;
+                g.setColour (Colour (0xff3a3430).interpolatedWith (Colour (0xfff0ebe2), a));
+                g.fillRoundedRectangle (laneX, by, laneW, bh, bh * 0.5f);
+            }
         }
         for (int i = 0; i <= axisBars; ++i)
         {

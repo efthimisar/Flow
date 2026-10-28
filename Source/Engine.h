@@ -157,6 +157,7 @@ namespace flow
 
         // metronome
         std::atomic<bool> metroOn { false };
+        std::atomic<double> metroCycleOut { 4.0 };   // κύκλος σε beats: ο μεγαλύτερος κύκλος λούπας ή ένα μέτρο (για το κλικ και την μπάρα)
         std::array<std::atomic<int>, numBlocks> liveSilent;   // 1 = όσο παίζει η λούπα του block, το live του block μένει σιωπηλό (default). 0 = ακούγεται και το live.
         std::atomic<int> specialBlock { -1 };   // ειδικό block: πάνω από τα άλλα, χωρίς λούπα, παίζει πάντα ζωντανά (-1 = κανένα)
         std::atomic<float> metroLevel { 0.8f };
@@ -735,6 +736,7 @@ namespace flow
                 if (B.loopState == loopPlay || B.loopState == loopOver) longest = std::max (longest, B.loopBeats);
                 if (B.loopState == loopRec) longest = std::max (longest, beat1 - B.recStart);
             }
+            metroCycleOut = playCycle();
             const double bars = longest / beatsPerBar;
             axisBarsOut = bars <= 4.0 + 1e-6 ? 4 : bars <= 8.0 + 1e-6 ? 8 : 16;
 
@@ -971,18 +973,35 @@ namespace flow
         }
 
         //==================== metronome ====================
+        // κύκλος σε beats: ο μεγαλύτερος κύκλος λούπας που παίζει, αλλιώς ένα μέτρο
+        double playCycle() const
+        {
+            double c = 0.0;
+            for (const auto& B : blocks)
+                if (B.plugin != nullptr && (B.loopState == loopPlay || B.loopState == loopOver))
+                    c = std::max (c, B.loopBeats);
+            return c >= beatsPerBar - 1.0e-6 ? c : (double) beatsPerBar;
+        }
+
         void renderMetronome (int n, double beat0, double beat1)
         {
             float* out = metroBuf.getWritePointer (0);
             juce::FloatVectorOperations::clear (out, n);
 
+            // κλικ μόνο στην αρχή του κύκλου (έντονο) και στο τελευταίο beat του (πιο χαμηλά): σκαλοπάτι που δείχνει πότε τελειώνει/αρχίζει
+            const double cyc = playCycle();
             std::array<int, 8> startPos {};
             std::array<bool, 8> startAccent {};
             int starts = 0;
             for (double k = std::ceil (beat0 - 1.0e-9); k < beat1 - 1.0e-9 && starts < 8; k += 1.0)
             {
+                if (k < 0.0) continue;
+                const double pc = std::fmod (k, cyc);
+                const bool strong = pc < 1.0e-6 || pc > cyc - 1.0e-6;
+                const bool weak = ! strong && std::abs (pc - (cyc - 1.0)) < 1.0e-6;
+                if (! strong && ! weak) continue;
                 startPos[(size_t) starts] = juce::jlimit (0, n - 1, (int) ((k - beat0) / blkBps));
-                startAccent[(size_t) starts] = std::fmod (k, beatsPerBar) < 1.0e-6;
+                startAccent[(size_t) starts] = strong;
                 ++starts;
             }
 
@@ -1013,7 +1032,7 @@ namespace flow
                     if (t > 0.06) { metroPos = -1; continue; }
                     v = (float) (std::sin (juce::MathConstants<double>::twoPi * (metroAccent ? 1500.0 : 1000.0) * t) * std::exp (-t * 70.0));
                 }
-                out[i] = v * level * (metroAccent ? 1.0f : 0.7f);
+                out[i] = v * level * (metroAccent ? 1.0f : 0.5f);
                 ++metroPos;
             }
         }
