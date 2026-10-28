@@ -519,7 +519,7 @@ private:
     //==========================================================================
     // γεωμετρία παραθύρου: μία στήλη (κεφαλίδα, οθόνη loops, κουμπιά, πλήκτρα). Τα plugin ανοίγουν σε δικά τους παράθυρα.
     static constexpr int topH = 14, botH = 14, gapPx = 8, sideM = 11, headerBarH = 34;
-    static constexpr int minLoopsH = 270, stripH = 72, keysH = 120, minContentW = 724, defaultLoopsH = 390;
+    static constexpr int minLoopsH = 230, stripH = 72, keysH = 120, minContentW = 724, defaultLoopsH = 340;
     static constexpr int minContentH() { return minLoopsH + gapPx + stripH + gapPx + keysH; }
     static constexpr int chromeH() { return topH + headerBarH + gapPx + botH; }
     static constexpr int minWinW() { return minContentW + 2 * sideM; }

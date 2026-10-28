@@ -357,7 +357,7 @@ public:
     std::function<bool (int)> onKnobClick;            // true = το κλικ το πήρε το learn
     std::function<void (int, float)> onKnobDrag;      // νέα τιμή 0..1 από το ποντίκι
     std::function<String (int)> knobTip;
-    static constexpr int knobAreaH = 104;
+    static constexpr int knobAreaH = 66;
     static constexpr int stripY = 16;                 // λωρίδα λαμπακιών κάτω από την progress bar
     void setKnobs (const std::array<KnobState, 8>& k, int learning, int visual)
     {
@@ -773,7 +773,7 @@ public:
     Point<float> knobCentre (int k) const
     {
         const float cw = (float) (getWidth() - 28) / 8.0f;
-        return { 14.0f + cw * ((float) k + 0.5f), (float) getHeight() - 14.0f - knobR };
+        return { 14.0f + cw * ((float) k + 0.5f), (float) getHeight() - 10.0f - knobR };
     }
 
     int knobAt (Point<float> p) const
