@@ -2112,6 +2112,34 @@ private:
     // μενού μέσα στην οθόνη (κουμπί φακέλου)
     String currentSetName;
 
+    // μικρογραφία set: η εικόνα του orb μέσα στο αρχείο, με cache ανά αρχείο και ώρα τροποποίησης
+    std::map<String, Image> setThumbCache;
+    Image setThumbnail (const File& f)
+    {
+        const String key = f.getFullPathName() + "|" + String (f.getLastModificationTime().toMilliseconds());
+        auto it = setThumbCache.find (key);
+        if (it != setThumbCache.end()) return it->second;
+        Image img;
+        if (std::unique_ptr<XmlElement> xml { XmlDocument::parse (f) })
+            if (auto* oe = xml->getChildByName ("OrbImage"))
+            {
+                MemoryOutputStream mo;
+                if (Base64::convertFromBase64 (mo, oe->getAllSubText().trim()))
+                {
+                    auto full = ImageFileFormat::loadFrom (mo.getData(), mo.getDataSize());
+                    if (full.isValid())
+                    {
+                        const int s = jmin (full.getWidth(), full.getHeight());
+                        img = full.getClippedImage ({ (full.getWidth() - s) / 2, (full.getHeight() - s) / 2, s, s })
+                                  .rescaled (96, 96, Graphics::highResamplingQuality);
+                    }
+                }
+            }
+        if (setThumbCache.size() > 200) setThumbCache.clear();
+        setThumbCache[key] = img;
+        return img;
+    }
+
     void buildScreenMenu()
     {
         auto act = [this] (std::function<void()> f) { return std::function<void()> ([this, f] { f(); saveNow(); }); };
@@ -2125,24 +2153,6 @@ private:
         add (String::fromUTF8 ("\xe2\x99\xaa"), gr ("Audio & MIDI settings\xe2\x80\xa6"), act ([this] { openAudioSettings(); }));
         add (String::fromUTF8 ("\xe2\x86\x93"), gr ("Save set\xe2\x80\xa6"), act ([this] { saveSetToFile(); }));
         add (String::fromUTF8 ("\xe2\x86\x91"), gr ("Load set\xe2\x80\xa6"), act ([this] { loadSetFromFile(); }));
-
-        {
-            Array<File> files = setsDir().findChildFiles (File::findFiles, false, "*.flowset");
-            struct Newest { static int compareElements (const File& a, const File& b)
-            { return a.getLastModificationTime() < b.getLastModificationTime() ? 1 : (b.getLastModificationTime() < a.getLastModificationTime() ? -1 : 0); } };
-            Newest sorter;
-            files.sort (sorter);
-            LoopsView::MenuEntry m; m.glyph = String::fromUTF8 ("\xe2\x96\xa4"); m.text = gr ("My sets");
-            for (int i = 0; i < files.size() && i < 12; ++i)
-            {
-                LoopsView::MenuEntry sj; sj.text = files[i].getFileNameWithoutExtension();
-                const File f = files[i];
-                sj.fn = [this, f] { loadSetFile (f); saveNow(); };
-                m.sub.push_back (std::move (sj));
-            }
-            if (m.sub.empty()) { LoopsView::MenuEntry sj; sj.text = gr ("(none)"); sj.enabled = false; m.sub.push_back (sj); }
-            items.push_back (std::move (m));
-        }
 
         add (String::fromUTF8 ("\xe2\x9f\xb2"), gr ("Restore last session"), act ([this] { restoreLastSession(); }), hasSessionBackup());
         add (String::fromUTF8 ("\xe2\x96\xad"), gr ("Rec Audio folder\xe2\x80\xa6"), act ([this] { chooseTapeFolder(); }));
@@ -2175,6 +2185,29 @@ private:
                  setMessage (on ? gr ("Ableton Link: on") : gr ("Ableton Link: off"));
              }), LinkBridge::isAvailable(), engine.isLinkEnabled());
         add ("!", "Panic", act ([this] { doPanic(); }));
+
+        {
+            Array<File> files = setsDir().findChildFiles (File::findFiles, false, "*.flowset");
+            struct Newest { static int compareElements (const File& a, const File& b)
+            { return a.getLastModificationTime() < b.getLastModificationTime() ? 1 : (b.getLastModificationTime() < a.getLastModificationTime() ? -1 : 0); } };
+            Newest sorter;
+            files.sort (sorter);
+            LoopsView::MenuEntry m; m.glyph = String::fromUTF8 ("\xe2\x96\xa4"); m.text = gr ("My sets"); m.isSets = true;
+            items.insert (items.begin(), std::move (m));
+
+            std::vector<LoopsView::SetItem> setItems;
+            for (auto& f : files)
+            {
+                LoopsView::SetItem si;
+                si.name = f.getFileNameWithoutExtension();
+                si.date = f.getLastModificationTime().formatted ("%d %b %Y");
+                si.current = si.name == currentSetName;
+                si.thumb = setThumbnail (f);
+                si.fn = [this, f] { loadSetFile (f); saveNow(); };
+                setItems.push_back (std::move (si));
+            }
+            loopsView.setSetItems (std::move (setItems));
+        }
 
         loopsView.setMenu (std::move (items));
     }
@@ -3218,7 +3251,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.43.0"; }
+    const String getApplicationVersion() override { return "0.44.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

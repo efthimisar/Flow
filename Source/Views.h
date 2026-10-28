@@ -442,8 +442,16 @@ public:
     }
 
     // μενού μέσα στην οθόνη (κουμπί φακέλου): αριστερά επιλογές, δεξιά πληροφορίες
-    struct MenuEntry { String glyph, text; bool enabled = true, checked = false; int symbol = -1; std::function<void()> fn; std::vector<MenuEntry> sub; };
+    struct MenuEntry { String glyph, text; bool enabled = true, checked = false, isSets = false; int symbol = -1; std::function<void()> fn; std::vector<MenuEntry> sub; };
     bool menuOpen = false;
+    struct SetItem { String name, date; Image thumb; bool current = false; std::function<void()> fn; };
+    void setSetItems (std::vector<SetItem> s) { setItems = std::move (s); if (menuOpen) repaint(); }
+    void mouseWheelMove (const MouseEvent&, const MouseWheelDetails& wd) override
+    {
+        if (! menuOpen || ! setsOpen) return;
+        setsScroll = jmax (0, setsScroll + (wd.deltaY > 0 ? -1 : 1));
+        repaint();
+    }
     std::function<void()> onMenuOpen;   // το Main γεμίζει τις επιλογές και τις πληροφορίες
     void setMenu (std::vector<MenuEntry> items) { menuItems = std::move (items); if (menuOpen) repaint(); }
     void setMenuInfo (std::vector<std::pair<String, String>> info)
@@ -455,7 +463,7 @@ public:
     void openMenu (bool on)
     {
         if (on == menuOpen) return;
-        menuOpen = on; menuSub = -1; menuHover = -1;
+        menuOpen = on; menuSub = -1; menuHover = -1; setsOpen = false; setsScroll = 0;
         if (on) { list.close(); if (onMenuOpen) onMenuOpen(); }
         repaint();
     }
@@ -480,7 +488,7 @@ public:
         const Colour dim (0xff6b625a), txt (0xfff3f4f6);
         g.setFont (hobby::makeFont (typeface, 11.0f));
         g.setColour (dim);
-        g.drawText ("INFO", (int) split + 14, (int) panel.getY() + 8, 120, 16, Justification::centredLeft, false);
+        if (! setsOpen) g.drawText ("INFO", (int) split + 14, (int) panel.getY() + 8, 120, 16, Justification::centredLeft, false);
 
         // αριστερή στήλη: μικροί κύκλοι με σύμβολο, το όνομα φαίνεται στο hover
         const int n = jmax (1, (int) menuItems.size());
@@ -496,10 +504,10 @@ public:
             const Rectangle<float> c (cx - rad, cy - rad, 2.0f * rad, 2.0f * rad);
             circles.push_back (c);
             const Rectangle<float> r = c.expanded (4.0f, jmax (0.0f, (step - 2.0f * rad) * 0.5f));
-            const bool hot_ = i == menuHover || i == menuSub;
+            const bool hot_ = i == menuHover || i == menuSub || (it.isSets && setsOpen);
             g.setColour (hot_ && it.enabled ? Colour (0xff54493f) : Colour (0xff3a332e));
             g.fillEllipse (c);
-            g.setColour (it.checked ? hobby::kOn : Colour (0xff4a423b));
+            g.setColour (it.checked || (it.isSets && setsOpen) ? hobby::kOn : Colour (0xff4a423b));
             g.drawEllipse (c.reduced (0.5f), it.checked ? 1.6f : 1.0f);
             const Colour ic = it.enabled ? (it.glyph == "!" ? Colour (0xffff7a6e) : hobby::kOn) : dim;
             if (it.symbol >= 0) drawSymbol (g, (Symbol) it.symbol, c.getCentre(), rad * 1.15f, ic);
@@ -511,7 +519,8 @@ public:
             }
             if (it.enabled)
             {
-                if (! it.sub.empty()) menuHot.push_back ({ r, [this, i] { menuSub = menuSub == i ? -1 : i; }, i });
+                if (it.isSets)        menuHot.push_back ({ r, [this] { setsOpen = ! setsOpen; setsScroll = 0; menuSub = -1; }, i });
+                else if (! it.sub.empty()) menuHot.push_back ({ r, [this, i] { setsOpen = false; menuSub = menuSub == i ? -1 : i; }, i });
                 else                  menuHot.push_back ({ r, [this, fn = it.fn, closeFn] { auto f = fn; closeFn(); if (f) f(); }, i });
             }
         }
@@ -554,6 +563,59 @@ public:
                 if (sj.checked) { g.setColour (hobby::kOn); g.drawText (String::fromUTF8 ("\xe2\x9c\x93"), (int) rr.getRight() - 24, (int) rr.getY(), 20, (int) rr.getHeight(), Justification::centred, false); }
                 if (sj.enabled) menuHot.push_back ({ rr, [this, fn = sj.fn, closeFn] { auto f = fn; closeFn(); if (f) f(); }, -1 });
             }
+        }
+
+        // sets με μικρογραφία
+        if (setsOpen)
+        {
+            g.setColour (dim); g.setFont (hobby::makeFont (typeface, 11.0f));
+            g.drawText ("MY SETS", (int) split + 14, (int) panel.getY() + 8, 120, 16, Justification::centredLeft, false);
+            const float areaX = split + 14.0f, areaY = panel.getY() + 30.0f, areaW = panel.getRight() - areaX - 14.0f, areaH = panel.getBottom() - areaY - 8.0f;
+            const int cols = areaW > 520.0f ? 2 : 1;
+            const float cw = areaW / (float) cols, sz = 32.0f, rowStep = 42.0f;
+            const int visRows = jmax (1, (int) (areaH / rowStep));
+            const int totalRows = ((int) setItems.size() + cols - 1) / cols;
+            setsScroll = jlimit (0, jmax (0, totalRows - visRows), setsScroll);
+            if (setItems.empty())
+            {
+                g.setColour (dim); g.setFont (hobby::makeFont (typeface, 13.0f));
+                g.drawText (String::fromUTF8 ("\xe2\x80\x93"), (int) areaX, (int) areaY, 200, 24, Justification::centredLeft, false);
+            }
+            for (int k = 0; k < (int) setItems.size(); ++k)
+            {
+                const int row = k / cols - setsScroll, col = k % cols;
+                if (row < 0 || row >= visRows) continue;
+                const auto& si = setItems[(size_t) k];
+                const Rectangle<float> rr (areaX + cw * (float) col, areaY + rowStep * (float) row, cw - 12.0f, sz + 6.0f);
+                if (menuHover == 1000 + k) { g.setColour (Colour (0xff3a332e)); g.fillRoundedRectangle (rr, 8.0f); }
+                const Rectangle<float> tc (rr.getX() + 4.0f, rr.getY() + 3.0f, sz, sz);
+                g.setColour (Colour (0xff2e2a27)); g.fillEllipse (tc);
+                if (si.thumb.isValid())
+                {
+                    Graphics::ScopedSaveState ss (g);
+                    Path clip; clip.addEllipse (tc);
+                    g.reduceClipRegion (clip);
+                    g.drawImage (si.thumb, tc, RectanglePlacement::stretchToFit);
+                }
+                else
+                {
+                    g.setColour (Colour (0xff6e645c));
+                    for (int a = 0; a < 12; ++a)
+                    {
+                        const float ang = MathConstants<float>::twoPi * (float) a / 12.0f;
+                        g.fillEllipse (tc.getCentreX() + (sz * 0.5f - 4.0f) * std::cos (ang) - 0.9f, tc.getCentreY() + (sz * 0.5f - 4.0f) * std::sin (ang) - 0.9f, 1.8f, 1.8f);
+                    }
+                    g.fillEllipse (tc.getCentreX() - 2.0f, tc.getCentreY() - 2.0f, 4.0f, 4.0f);
+                }
+                g.setColour (si.current ? hobby::kOn : Colour (0xff4a423b));
+                g.drawEllipse (tc.reduced (0.5f), si.current ? 1.6f : 1.0f);
+                g.setColour (txt); g.setFont (hobby::makeFont (typeface, 14.0f));
+                g.drawText (si.name, (int) (tc.getRight() + 10.0f), (int) rr.getY() + 2, (int) (rr.getRight() - tc.getRight() - 14.0f), 18, Justification::centredLeft, true);
+                g.setColour (dim); g.setFont (hobby::makeFont (typeface, 10.5f));
+                g.drawText (si.date, (int) (tc.getRight() + 10.0f), (int) rr.getY() + 20, 160, 14, Justification::centredLeft, false);
+                menuHot.push_back ({ rr, [this, fn = si.fn, closeFn] { auto f = fn; closeFn(); if (f) f(); }, 1000 + k });
+            }
+            return;
         }
 
         // πληροφορίες
@@ -1295,6 +1357,9 @@ private:
     std::vector<std::pair<String, String>> menuInfo;
     Rectangle<float> menuPanel;
     int menuSub = -1, menuHover = -1;
+    bool setsOpen = false;
+    int setsScroll = 0;
+    std::vector<SetItem> setItems;
 };
 
 //==============================================================================
