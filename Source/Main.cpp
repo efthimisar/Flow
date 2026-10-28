@@ -1188,11 +1188,14 @@ private:
         return p->getParameters()[idx];
     }
 
-    void orbApply (int block, int corner, float v)
+    // Οι 4 γραμμές της λίστας είναι οι 4 κατευθύνσεις: πάνω, δεξιά, κάτω, αριστερά.
+    // Κάθε παράμετρος παίρνει 0% στο κέντρο και 100% όταν ο κύκλος φτάσει στην άκρη προς τη δική της κατεύθυνση (οι διαγώνιες κινούν δύο).
+    void orbApply (int block, int corner, Point<float> p)
     {
+        const float v[4] { jlimit (0.0f, 1.0f, -p.y), jlimit (0.0f, 1.0f, p.x), jlimit (0.0f, 1.0f, p.y), jlimit (0.0f, 1.0f, -p.x) };
         for (int r = 0; r < 4; ++r)
             if (auto* prm = orbTarget (block, corner * 4 + r))
-                if (std::abs (prm->getValue() - v) > 0.002f) prm->setValueNotifyingHost (v);
+                if (std::abs (prm->getValue() - v[r]) > 0.002f) prm->setValueNotifyingHost (v[r]);
     }
 
     void orbFinishLane (OrbLane& l)
@@ -1228,7 +1231,7 @@ private:
         if (! isActive (selected)) return;
         p = orbClamp (corner, p);
         orbPos[(size_t) selected][(size_t) corner] = p;
-        orbApply (selected, corner, orbValue (p));
+        orbApply (selected, corner, p);
     }
 
     void orbClearMotion()
@@ -1264,7 +1267,7 @@ private:
                 {
                     const auto p = l.s[(size_t) i];
                     orbPos[(size_t) b][(size_t) c] = p;
-                    orbApply (b, c, orbValue (p));
+                    orbApply (b, c, p);
                 }
             }
         }
