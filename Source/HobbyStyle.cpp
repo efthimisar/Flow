@@ -501,9 +501,10 @@ void OrbRecTile::paint (juce::Graphics& g)
         g.setColour (col);
         if (stage == 2)
         {
-            const juce::Rectangle<float> w (c.x - 11.0f, c.y - 8.0f, 22.0f, 16.0f);
-            g.drawRoundedRectangle (w, 2.5f, 2.0f);
-            g.drawLine (w.getX(), w.getY() + 5.0f, w.getRight(), w.getY() + 5.0f, 2.0f);
+            // QR: τρία τετράγωνα στις γωνίες και μία τελεία
+            for (auto o : { juce::Point<float> (-10.0f, -10.0f), juce::Point<float> (3.0f, -10.0f), juce::Point<float> (-10.0f, 3.0f) })
+                g.drawRect (c.x + o.x, c.y + o.y, 7.0f, 7.0f, 2.0f);
+            g.fillRect (c.x + 3.5f, c.y + 3.5f, 6.0f, 6.0f);
         }
         else
         {

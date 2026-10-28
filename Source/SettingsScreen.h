@@ -253,7 +253,6 @@ private:
             { 5, "Master volume", host.masterGet ? String (roundToInt (host.masterGet() * 100.0f)) + "%" : String(), false, [this] { showPage (Master); } },
             { 6, "Ableton Link", linkAv ? (linkOn ? "on" : "off") : "not included", linkOn, [this, linkAv] { if (linkAv && host.linkToggle) { host.linkToggle(); } } },
             { 7, "Panic", cc.isEmpty() ? String ("Esc") : cc, false, [this] { showPage (Panic); } },
-            { 8, "iPad orb", ipad ? "on" : "off", ipad, [this] { showPage (Ipad); } },
             { 4, "Orb images", host.orbFolderText ? host.orbFolderText() : String(), false, [this] { showPage (OrbImages); } },
         };
         const int cols = 5, gap = 16, x0 = 40, y0 = 74;

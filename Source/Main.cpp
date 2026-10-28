@@ -218,7 +218,6 @@ public:
         autoOrbImage();   // νέο (άδειο) set: τυχαία εικόνα από το φάκελο Music/Flow/Orb, αν υπάρχει
         webOrbToken = settings->getValue ("webOrbToken");
         if (webOrbToken.isEmpty()) webOrbToken = String::toHexString (Random::getSystemRandom().nextInt64()).paddedLeft ('0', 8).substring (0, 8);
-        if (settings->getBoolValue ("webOrbOn", false)) startWebOrb();
         orbStage = 1; loopsView.setOrbMode (true); orbRecTile.setState (orbStage, orbRecArmed);   // προεπιλογή: ανοίγει η οθόνη του orb
 
         const String savedFolder = settings->getValue ("tapeFolder");
@@ -265,7 +264,6 @@ public:
     ~MainComponent() override
     {
         webServer.stop();
-        orbWindow.reset();
         stopKnobLearn();
         lightsPump.stopTimer();
         stopTimer();
@@ -1161,16 +1159,15 @@ private:
 
     // ---- Orb: οθόνη (κουμπί ORB): 1ο πάτημα = στην οθόνη του Flow, 2ο = σε δικό του παράθυρο (π.χ. iPad), 3ο = κλείνει ----
     int orbStage = 0;   // 0 κλειστός, 1 στην οθόνη του Flow, 2 σε ξεχωριστό παράθυρο
-    std::unique_ptr<OrbWindow> orbWindow;
 
-    void cycleOrb()
+    void cycleOrb()   // 1ο πάτημα: orb στην οθόνη του Flow, 2ο: QR για το iPad (ξεκινά ο server), 3ο: κλείνει
     {
-        if (orbStage == 0) { orbStage = 1; loopsView.setOrbMode (true); }
+        if (orbStage == 0) { orbStage = 1; loopsView.setOrbMode (true); loopsView.setQr (false, {}); }
         else if (orbStage == 1)
         {
             orbStage = 2;
-            loopsView.setOrbMode (false);
-            orbWindow = std::make_unique<OrbWindow> (loopsView, [this] { MessageManager::callAsync ([safe = SafePointer<MainComponent> (this)] { if (safe != nullptr) safe->closeOrb(); }); });
+            startWebOrb();
+            loopsView.setQr (true, webOrbUrl());
         }
         else closeOrb();
         orbRecTile.setState (orbStage, orbRecArmed);
@@ -1180,8 +1177,9 @@ private:
     void closeOrb()
     {
         orbStage = 0;
+        loopsView.setQr (false, {});
         loopsView.setOrbMode (false);
-        orbWindow.reset();
+        stopWebOrb();
         orbRecTile.setState (orbStage, orbRecArmed);
         repaint();
     }
@@ -1248,6 +1246,7 @@ private:
 
     void pushWebState (const std::array<LoopsView::KnobState, kSlots>& st, const std::array<Point<float>, 4>& pos)
     {
+        if (orbStage == 2 && loopsView.qrClients != webServer.getNumClients()) { loopsView.qrClients = webServer.getNumClients(); loopsView.repaint(); }
         if (! webOrbOn) return;
         auto* o = new DynamicObject();
         Array<var> p, k;
@@ -2450,14 +2449,6 @@ private:
                  engine.setLinkEnabled (on);
                  setMessage (on ? gr ("Ableton Link: on") : gr ("Ableton Link: off"));
              }), LinkBridge::isAvailable(), engine.isLinkEnabled());
-        add (String::fromUTF8 ("\xe2\x97\x89"), gr ("iPad orb (Safari)"),
-             act ([this]
-             {
-                 if (webOrbOn) stopWebOrb(); else startWebOrb();
-                 setMessage (webOrbOn ? gr ("iPad orb: on") : gr ("iPad orb: off"));
-                 if (webOrbOn) MessageManager::callAsync ([safe = SafePointer<MainComponent> (this)] { if (safe != nullptr) safe->showWebOrbQr(); });
-             }), true, webOrbOn);
-        add (String::fromUTF8 ("\xe2\x96\xa6"), gr ("iPad orb QR code\xe2\x80\xa6"), [this] { showWebOrbQr(); }, webOrbOn);
         add (String::fromUTF8 ("\xe2\x96\xa3"), gr ("Orb images folder\xe2\x80\xa6"), act ([this] { chooseOrbFolder(); }));
         {
             LoopsView::MenuEntry m; m.glyph = "!"; m.text = "Panic";
@@ -3594,7 +3585,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.4"; }
+    const String getApplicationVersion() override { return "0.51.5"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

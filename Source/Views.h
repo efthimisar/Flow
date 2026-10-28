@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "Engine.h"
 #include "HobbyStyle.h"
+#include "QrCode.h"
 
 using namespace juce;
 
@@ -388,6 +389,10 @@ public:
     static constexpr int knobAreaH = 0;
     static constexpr int stripY = 16;                 // λωρίδα λαμπακιών κάτω από την progress bar
     bool orbMode = false;
+    bool qrMode = false;          // μέσα στην οθόνη orb: δείχνει το QR για το iPad αντί για τον orb
+    String qrUrl;
+    int qrClients = 0;
+    void setQr (bool on, const String& url) { qrMode = on; qrUrl = url; repaint(); }
     Image orbImage;
     std::function<void (int)> onOrbAssign, onOrbClear;      // θέση 0..15
     std::function<void (int, Point<float>)> onOrbMove;      // γωνία, θέση (-1..1) μέσα στον orb
@@ -661,7 +666,7 @@ public:
 
     void paint (Graphics& g) override
     {
-        if (orbMode) { hot.clear(); tipZones.clear(); paintOrb (g); return; }
+        if (orbMode) { hot.clear(); tipZones.clear(); if (qrMode) paintQr (g); else paintOrb (g); return; }
         const int w = getWidth();
         const int axisBars = engine.axisBarsOut.load();
         const double axisBeats = (double) axisBars * flow::beatsPerBar;
@@ -1080,6 +1085,37 @@ public:
         return Rectangle<float> (0, 0, 24.0f, 24.0f).withCentre ({ gm.cx, gm.cy + gm.R * 0.82f });
     }
 
+    void paintQr (Graphics& g)
+    {
+        const int w = getWidth(), h = getHeight();
+        g.setFont (hobby::makeFont (typeface, 13.0f));
+        g.setColour (Colour (0xffc9c3ba));
+        g.drawText ("ORB \xc2\xb7 iPad", 40, 8, w - 80, 22, Justification::centred, true);
+        const auto code = qr::encode (qrUrl.toStdString());
+        if (code.size <= 0) return;
+        const int quiet = 3, avail = jmax (60, h - 90);
+        const int px = jmax (2, avail / (code.size + 2 * quiet));
+        const int side = px * (code.size + 2 * quiet);
+        const int textW = 300;
+        const int x0 = jmax (14, (w - side - 28 - textW) / 2), y0 = jmax (40, (h - side) / 2 + 8);
+        g.setColour (Colours::white);
+        g.fillRoundedRectangle ((float) x0, (float) y0, (float) side, (float) side, 10.0f);
+        g.setColour (Colours::black);
+        for (int y = 0; y < code.size; ++y)
+            for (int x = 0; x < code.size; ++x)
+                if (code.dark (x, y)) g.fillRect (x0 + (x + quiet) * px, y0 + (y + quiet) * px, px, px);
+        const int tx = x0 + side + 28;
+        g.setColour (Colour (0xffe6e0d8)); g.setFont (hobby::makeFont (typeface, 16.0f).boldened());
+        g.drawText (CharPointer_UTF8 ("\xce\xa3\xce\xba\xce\xac\xce\xbd\xce\xb1\xcf\x81\xce\xb5 \xce\xbc\xce\xb5 \xcf\x84\xce\xb7\xce\xbd \xce\xba\xce\xac\xce\xbc\xce\xb5\xcf\x81\xce\xb1"), tx, y0 + 8, textW, 22, Justification::centredLeft, false);
+        g.drawText ("of the iPad", tx, y0 + 30, textW, 22, Justification::centredLeft, false);
+        g.setColour (Colour (0xff968e86)); g.setFont (hobby::makeFont (typeface, 12.0f));
+        g.drawFittedText (qrUrl, tx, y0 + 70, textW, 36, Justification::topLeft, 2);
+        g.setColour (qrClients > 0 ? hobby::kOn : Colour (0xff968e86)); g.setFont (hobby::makeFont (typeface, 13.0f));
+        g.drawText ("iPad connected: " + String (qrClients), tx, y0 + 118, textW, 20, Justification::centredLeft, false);
+        g.setColour (Colour (0xff786f67)); g.setFont (hobby::makeFont (typeface, 11.0f));
+        g.drawFittedText ("Same Wi-Fi as the Mac. Press ORB again to close.", tx, y0 + 150, textW, 32, Justification::topLeft, 2);
+    }
+
     void paintOrb (Graphics& g)
     {
         const auto gm = orbGeom();
@@ -1285,7 +1321,7 @@ public:
     void mouseDown (const MouseEvent& e) override
     {
         if (e.mods.isPopupMenu()) return;
-        if (orbMode) { orbMouseDown (e.position); return; }
+        if (orbMode) { if (! qrMode) orbMouseDown (e.position); return; }
         if (menuOpen)
         {
             for (auto& z : menuHot)
@@ -1318,7 +1354,7 @@ public:
 
     void mouseDrag (const MouseEvent& e) override
     {
-        if (orbMode) { orbDragTo (e.position); return; }
+        if (orbMode) { if (! qrMode) orbDragTo (e.position); return; }
         if (draggingMetro) setMetroLevelFromX (e.position.x);
     }
     void mouseUp (const MouseEvent&) override { if (orbMode && orbDrag >= 0) { if (onOrbTouch) onOrbTouch (orbDrag, false); orbDrag = -1; repaint(); } if (draggingMetro) { draggingMetro = false; if (onMetroChange) onMetroChange(); } }
