@@ -1110,7 +1110,6 @@ public:
         // κύκλοι που αιωρούνται: σκούρα μαλακή σκιά από κάτω. Όταν κρατάς έναν, σηκώνεται και η σκιά του απομακρύνεται και θολώνει.
         for (int c = 0; c < 4; ++c)
         {
-            const auto col = orbColour (c);
             const auto p = orbDotPoint (c);
             const float r = c == orbDrag ? 12.0f : 10.5f;
             const float lift = orbLift[(size_t) c];
@@ -1118,25 +1117,18 @@ public:
             const float h = 4.0f + 1.5f * bob * (1.0f - lift) + 9.0f * lift;     // «ύψος» σε εικονοστοιχεία
 
             {
-                const float cxs = p.x + h * 0.35f, cys = p.y + h * 1.25f + 4.0f;
-                const float rx = r * (1.0f - h * 0.012f), bl = 2.2f + h * 0.55f;
-                const float a = jlimit (0.15f, 0.9f, 0.92f - h * 0.02f);
+                const float cxs = p.x + h * 0.35f, cys = p.y + h * 1.4f + 4.0f;
+                const float rx = r * 0.95f, bl = 5.0f + h * 0.95f;      // πιο θολή σκιά
+                const float a = jlimit (0.2f, 0.85f, 0.86f - h * 0.02f);
                 Graphics::ScopedSaveState ss (g);
-                g.addTransform (AffineTransform::scale (1.0f, 0.45f, cxs, cys));
+                g.addTransform (AffineTransform::scale (1.0f, 0.5f, cxs, cys));
                 g.setGradientFill (ColourGradient (Colours::black.withAlpha (a), cxs, cys, Colours::transparentBlack, cxs + rx + bl, cys, true));
                 g.fillEllipse (cxs - rx - bl, cys - rx - bl, 2.0f * (rx + bl), 2.0f * (rx + bl));
             }
 
             const float py = p.y - h * 0.45f;
-            g.setColour (col);
+            g.setColour (Colour (0xfffaf8f4));      // άσπρη τελεία (τα χρώματα μένουν στις λίστες)
             g.fillEllipse (p.x - r, py - r, 2.0f * r, 2.0f * r);
-            g.setColour (col.brighter (0.45f).withAlpha (0.85f));
-            g.fillEllipse (p.x - r * 0.55f, py - r * 0.7f, r * 0.65f, r * 0.5f);
-            g.setColour (Colours::white);
-            g.drawEllipse (p.x - r, py - r, 2.0f * r, 2.0f * r, 1.5f);
-            g.setColour (Colour (0xff262220));
-            g.setFont (hobby::makeFont (typeface, 11.0f));
-            g.drawText (String (c + 1), Rectangle<float> (p.x - r, py - r + 1.0f, 2.0f * r, 2.0f * r), Justification::centred, false);
         }
 
         // λίστες αναθέσεων στις 4 γωνίες

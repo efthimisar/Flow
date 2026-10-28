@@ -397,16 +397,13 @@ function draw(t){
   const p=dot(c),r=(d?1.15:1)*Math.max(15,R*0.085);
   const bob=0.5+0.5*Math.sin(t*0.0018+c*1.7);
   const h=(4+1.5*bob*(1-lift[c])+9*lift[c])*(R/120);
-  const cxs=p[0]+h*0.35,cys=p[1]+h*1.25+4,rx=r*(1-h*0.01),bl=(2.2+h*0.55);
-  const a=Math.max(0.15,Math.min(0.9,0.92-h*0.02/(R/120)));
-  g.save();g.translate(cxs,cys);g.scale(1,0.45);
+  const cxs=p[0]+h*0.35,cys=p[1]+h*1.4*(R/120)+4,rx=r*0.95,bl=(5+h*0.95);
+  const a=Math.max(0.2,Math.min(0.85,0.86-h*0.02/(R/120)));
+  g.save();g.translate(cxs,cys);g.scale(1,0.5);
   const gr=g.createRadialGradient(0,0,0,0,0,rx+bl);gr.addColorStop(0,'rgba(0,0,0,'+a+')');gr.addColorStop(1,'rgba(0,0,0,0)');
   g.fillStyle=gr;g.beginPath();g.arc(0,0,rx+bl,0,Math.PI*2);g.fill();g.restore();
   const py=p[1]-h*0.45;
-  g.fillStyle=COL[c];g.beginPath();g.arc(p[0],py,r,0,Math.PI*2);g.fill();
-  g.fillStyle='rgba(255,255,255,0.35)';g.beginPath();g.ellipse(p[0]-r*0.25,py-r*0.45,r*0.4,r*0.28,0,0,Math.PI*2);g.fill();
-  g.strokeStyle='#fff';g.lineWidth=2;g.beginPath();g.arc(p[0],py,r,0,Math.PI*2);g.stroke();
-  g.fillStyle='#262220';g.font='700 '+Math.round(r*0.95)+'px -apple-system,Helvetica,sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(String(c+1),p[0],py+1);
+  g.fillStyle='#faf8f4';g.beginPath();g.arc(p[0],py,r,0,Math.PI*2);g.fill();
  }
  // πρόοδος 16 μέτρων και κουμπιά
  const by=cy+R+Math.max(18,H*0.03);
