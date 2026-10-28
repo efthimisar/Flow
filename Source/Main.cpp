@@ -1387,7 +1387,7 @@ private:
         });
     }
 
-    // ολόκληρη η εικόνα χωράει μέσα στον κύκλο (χωρίς zoom και χωρίς κόψιμο): η διαγώνιός της = η διάμετρος
+    // χωρίς zoom: η μεγάλη πλευρά της εικόνας = η διάμετρος του κύκλου· τετράγωνη εικόνα γεμίζει τον κύκλο και οι γωνίες κόβονται
     static Image orbFit (const Image& src, bool flipIt = false, int quarterTurns = 0)
     {
         constexpr int N = 512;
@@ -1395,7 +1395,7 @@ private:
         Graphics g (out);
         g.setImageResamplingQuality (Graphics::highResamplingQuality);
         const float w = (float) src.getWidth(), h = (float) src.getHeight();
-        const float k = (float) N / std::sqrt (w * w + h * h);
+        const float k = (float) N / jmax (w, h);   // η μεγάλη πλευρά = η διάμετρος· ο κύκλος κόβει τις γωνίες
         g.addTransform (AffineTransform::translation (-w * 0.5f, -h * 0.5f).scaled (flipIt ? -k : k, k)
                             .rotated ((float) quarterTurns * MathConstants<float>::halfPi).translated ((float) N * 0.5f, (float) N * 0.5f));
         g.drawImageAt (src, 0, 0);
@@ -3590,7 +3590,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.7"; }
+    const String getApplicationVersion() override { return "0.51.8"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
