@@ -612,8 +612,8 @@ private:
     {
         if (getWidth() <= 0 || getHeight() <= 0)
         {
-            // προεπιλεγμένο μέγεθος: 1157 x 806 (όπως το ρύθμισε ο χρήστης), μικρότερο μόνο αν δεν χωράει στην οθόνη
-            int w = 1157, h = 806;
+            // προεπιλεγμένο μέγεθος: 1097 x 782 (όπως το ρύθμισε ο χρήστης), μικρότερο μόνο αν δεν χωράει στην οθόνη
+            int w = 1097, h = 782;
             if (auto* d = Desktop::getInstance().getDisplays().getPrimaryDisplay())
             {
                 w = jmin (w, d->userArea.getWidth() - 40);
@@ -3590,7 +3590,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.6"; }
+    const String getApplicationVersion() override { return "0.51.7"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
@@ -3613,7 +3613,16 @@ public:
             setContentOwned (new MainComponent(), true);
             setResizable (true, false);
             setResizeLimits (746, 620, 4000, 3000);
-            centreWithSize (getWidth(), getHeight());
+            {
+                // προεπιλεγμένο μέγεθος παραθύρου (με τον τίτλο): 1097 x 810, μικρότερο μόνο αν δεν χωράει στην οθόνη
+                int w = 1097, h = 810;
+                if (auto* d = Desktop::getInstance().getDisplays().getPrimaryDisplay())
+                {
+                    w = jmin (w, d->userArea.getWidth() - 20);
+                    h = jmin (h, d->userArea.getHeight() - 20);
+                }
+                centreWithSize (jmax (822, w), jmax (648, h));
+            }
             setVisible (true);
         }
 
