@@ -1164,7 +1164,7 @@ private:
     // ---- Orb: οθόνη (κουμπί ORB): 1ο πάτημα = στην οθόνη του Flow, 2ο = σε δικό του παράθυρο (π.χ. iPad), 3ο = κλείνει ----
     int orbStage = 0;   // 0 κλειστός, 1 στην οθόνη του Flow, 2 σε ξεχωριστό παράθυρο
 
-    void cycleOrb()   // 1ο πάτημα: orb στην οθόνη του Flow, 2ο: QR για το iPad (ξεκινά ο server), 3ο: κλείνει
+    void cycleOrb()   // 1ο πάτημα: orb στην οθόνη του Flow, 2ο: QR για το iPad (ξεκινά ο server), 3ο: γυρνά στις λούπες (το iPad μένει συνδεδεμένο)
     {
         if (orbStage == 0) { orbStage = 1; loopsView.setOrbMode (true); loopsView.setQr (false, {}); }
         else if (orbStage == 1)
@@ -1182,8 +1182,7 @@ private:
     {
         orbStage = 0;
         loopsView.setQr (false, {});
-        loopsView.setOrbMode (false);
-        stopWebOrb();
+        loopsView.setOrbMode (false);   // ο server του iPad μένει ανοιχτός μέχρι να κλείσει το Flow
         orbRecTile.setState (orbStage, orbRecArmed);
         repaint();
     }
@@ -3595,7 +3594,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.9"; }
+    const String getApplicationVersion() override { return "0.51.10"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
