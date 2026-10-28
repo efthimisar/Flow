@@ -30,7 +30,22 @@ jobs:
         run: |
           APP=$(find build -maxdepth 4 -name "*.app" -type d | head -1)
           echo "App: $APP"
-          codesign --force --deep --sign - "$APP"
+          # Stable self-signed identity so macOS keeps privacy permissions between builds
+          KC="$RUNNER_TEMP/flow.keychain-db"
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings "$KC"
+          security unlock-keychain -p ci "$KC"
+          security import signing/flow-signing.p12 -P flow -A -t cert -f pkcs12 -k "$KC"
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          HASH=41F591A7A700DB032A3CD9711F1EDE0070DAA24AAE
+          if codesign --force --deep --keychain "$KC" --sign "$HASH" "$APP"; then
+            echo "Signed with Flow Self-Signed"
+          else
+            echo "::warning::Self-signed failed, using ad-hoc"
+            codesign --force --deep --sign - "$APP"
+          fi
+          codesign -dr - "$APP" || true
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent "$APP" dist/Flow-macOS.zip
 
@@ -46,7 +61,7 @@ jobs:
         run: |
           gh release create "build-${{ github.run_number }}" dist/Flow-macOS.zip \
             --title "Flow build ${{ github.run_number }}" \
-            --notes "Apple Silicon (arm64). Unsigned app: right-click, Open the first time. Commit ${{ github.sha }}"
+            --notes "Apple Silicon (arm64). Self-signed app: right-click, Open the first time. Commit ${{ github.sha }}"
 
       - name: Keep only the latest 3 releases
         if: github.ref == 'refs/heads/main'
