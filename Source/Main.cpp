@@ -243,6 +243,7 @@ public:
 
     ~MainComponent() override
     {
+        orbWindow.reset();
         stopKnobLearn();
         lightsPump.stopTimer();
         stopTimer();
@@ -274,7 +275,7 @@ public:
     {
         hobby::drawBody (g, getLocalBounds());
         hobby::drawBrandMark (g, typeface, getWidth());
-        hobby::drawEmbossedText (g, typeface, loopsView.orbMode ? "orb" : "flow", (float) sideM + 8.0f);
+        hobby::drawEmbossedText (g, typeface, orbStage != 0 ? "orb" : "flow", (float) sideM + 8.0f);
 
         hobby::drawBezel (g, loopsBezel.toFloat(), loopsBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
         hobby::drawBezel (g, keysBezel.toFloat(), keysBezel.reduced (5).toFloat(), hobby::kScreen, 18.0f);
@@ -311,7 +312,7 @@ public:
             showPiMenu();
         // κλικ στη λέξη "flow" (πάνω αριστερά): οθόνη orb
         else if (e.x >= sideM && e.x < sideM + 70 && e.y >= (int) hobby::kBrandY - 6 && e.y < (int) hobby::kBrandY + 24 && ! e.mouseWasDraggedSinceMouseDown())
-            loopsView.setOrbMode (! loopsView.orbMode);
+            cycleOrb();
     }
 
     bool keyPressed (const KeyPress& k) override
@@ -319,7 +320,7 @@ public:
         if (k.getModifiers().isAnyModifierKeyDown()) return false;
         const auto c = k.getTextCharacter();
         if (c == 'm' || c == 'M') { toggleMetronome(); return true; }
-        if (k == KeyPress::escapeKey) { if (loopsView.orbMode) { loopsView.setOrbMode (false); return true; } doPanic(); return true; }
+        if (k == KeyPress::escapeKey) { if (orbStage != 0) { closeOrb(); return true; } doPanic(); return true; }
         return false;
     }
 
@@ -1126,6 +1127,31 @@ private:
         rememberKnobs (selected);
         stopKnobLearn();
         saveNow();
+    }
+
+    // ---- Orb: οθόνη (πάτημα στη λέξη flow): 1ο πάτημα = στην οθόνη του Flow, 2ο = σε δικό του παράθυρο (π.χ. iPad), 3ο = κλείνει ----
+    int orbStage = 0;   // 0 κλειστός, 1 στην οθόνη του Flow, 2 σε ξεχωριστό παράθυρο
+    std::unique_ptr<OrbWindow> orbWindow;
+
+    void cycleOrb()
+    {
+        if (orbStage == 0) { orbStage = 1; loopsView.setOrbMode (true); }
+        else if (orbStage == 1)
+        {
+            orbStage = 2;
+            loopsView.setOrbMode (false);
+            orbWindow = std::make_unique<OrbWindow> (loopsView, [this] { MessageManager::callAsync ([safe = SafePointer<MainComponent> (this)] { if (safe != nullptr) safe->closeOrb(); }); });
+        }
+        else closeOrb();
+        repaint();
+    }
+
+    void closeOrb()
+    {
+        orbStage = 0;
+        loopsView.setOrbMode (false);
+        orbWindow.reset();
+        repaint();
     }
 
     // ---- Orb: εικόνα (σώζεται με το set) ----

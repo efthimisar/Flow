@@ -413,6 +413,7 @@ public:
         }
         knobs = k; orbPos = pos; orbLearning = learning; orbRec = rec; orbMotion = motion;
         if (orbMode) repaint();
+        if (orbExternal) orbExternal->repaint();
     }
     std::function<bool()> metroIsCustom;   // έχει φορτωθεί δικός ήχος μετρονόμου;
     std::function<void (int)> onMetroSample;   // 1 = διάλεξε ήχο, 2 = αρχικός ήχος
@@ -943,7 +944,7 @@ public:
     struct OrbGeom { float cx, cy, R; };
     OrbGeom orbGeom() const
     {
-        const float w = (float) getWidth(), h = (float) getHeight();
+        const float w = (float) orbW(), h = (float) orbH();
         return { w * 0.5f, h * 0.5f + 6.0f, jmax (40.0f, jmin ((h - 70.0f) * 0.5f, w * 0.2f)) };
     }
     static Colour orbColour (int c)
@@ -994,7 +995,7 @@ public:
 
         g.setFont (hobby::makeFont (typeface, 13.0f));
         g.setColour (Colour (0xffc9c3ba));
-        g.drawText (title == "FLOW" ? String ("ORB") : title, 40, 8, getWidth() - 80, 22, Justification::centred, true);   // χωρίς επιλεγμένο block γράφει ORB
+        g.drawText (title == "FLOW" ? String ("ORB") : title, 40, 8, orbW() - 80, 22, Justification::centred, true);   // χωρίς επιλεγμένο block γράφει ORB
 
         // ο orb: δική σου εικόνα (σώζεται με το set), αλλιώς ουδέτερη κουκκιδωτή επιφάνεια
         Path circle; circle.addEllipse (cx - R, cy - R, 2.0f * R, 2.0f * R);
@@ -1138,9 +1139,8 @@ public:
         }
     }
 
-    void orbMouseDown (const MouseEvent& e)
+    void orbMouseDown (Point<float> p)
     {
-        const auto p = e.position;
         for (int c = 0; c < 4; ++c)
             if (orbDotRect (c).contains (p))
             {
@@ -1177,10 +1177,31 @@ public:
         if (onOrbMove) onOrbMove (orbDrag, { (p.x - gm.cx) / k, (p.y - gm.cy) / k });
     }
 
+    // Αποσπασμένος orb (δικό του παράθυρο, π.χ. στο iPad): το OrbPanel ζωγραφίζει και στέλνει τα κλικ εδώ
+    Component* orbExternal = nullptr;
+    int orbWo = 0, orbHo = 0;
+    int orbW() const { return orbWo > 0 ? orbWo : getWidth(); }
+    int orbH() const { return orbHo > 0 ? orbHo : getHeight(); }
+    void extPaint (Graphics& g, int w, int h) { orbWo = w; orbHo = h; paintOrb (g); orbWo = orbHo = 0; }
+    void extMouseDown (Point<float> p, int w, int h) { orbWo = w; orbHo = h; orbMouseDown (p); orbWo = orbHo = 0; }
+    void extMouseDrag (Point<float> p, int w, int h) { orbWo = w; orbHo = h; orbDragTo (p); orbWo = orbHo = 0; }
+    void extMouseUp()
+    {
+        if (orbDrag >= 0) { if (onOrbTouch) onOrbTouch (orbDrag, false); orbDrag = -1; if (orbExternal) orbExternal->repaint(); }
+    }
+    void extMouseMove (Point<float> p, int w, int h)
+    {
+        orbWo = w; orbHo = h;
+        int hv = -1;
+        for (int slot = 0; slot < 16; ++slot) if (orbRowRect (slot).contains (p)) hv = slot;
+        orbWo = orbHo = 0;
+        if (hv != orbHover) { orbHover = hv; if (orbExternal) orbExternal->repaint(); }
+    }
+
     void mouseDown (const MouseEvent& e) override
     {
         if (e.mods.isPopupMenu()) return;
-        if (orbMode) { orbMouseDown (e); return; }
+        if (orbMode) { orbMouseDown (e.position); return; }
         if (menuOpen)
         {
             for (auto& z : menuHot)
@@ -1852,4 +1873,51 @@ private:
     Typeface::Ptr typeface;
     std::vector<Rectangle<float>> circles;
     Rectangle<float> plusRect, masterRect, replaceRect, removeRect;
+};
+
+
+// Ο orb σε δικό του παράθυρο (σύρεται σε άλλη οθόνη, π.χ. iPad με Sidecar/Duet)
+class OrbPanel : public Component
+{
+public:
+    explicit OrbPanel (LoopsView& l) : lv (l) { lv.orbExternal = this; }
+    ~OrbPanel() override { if (lv.orbExternal == this) lv.orbExternal = nullptr; }
+    void paint (Graphics& g) override
+    {
+        g.fillAll (hobby::kScreen);
+        lv.extPaint (g, getWidth(), getHeight());
+    }
+    void mouseDown (const MouseEvent& e) override { lv.extMouseDown (e.position, getWidth(), getHeight()); repaint(); }
+    void mouseDrag (const MouseEvent& e) override { lv.extMouseDrag (e.position, getWidth(), getHeight()); }
+    void mouseUp (const MouseEvent&) override { lv.extMouseUp(); }
+    void mouseMove (const MouseEvent& e) override { lv.extMouseMove (e.position, getWidth(), getHeight()); }
+private:
+    LoopsView& lv;
+};
+
+class OrbWindow : public DocumentWindow
+{
+public:
+    OrbWindow (LoopsView& l, std::function<void()> onClose)
+        : DocumentWindow ("Flow orb", hobby::kScreen, DocumentWindow::closeButton | DocumentWindow::minimiseButton | DocumentWindow::maximiseButton),
+          closed (std::move (onClose))
+    {
+        setUsingNativeTitleBar (true);
+        panel = new OrbPanel (l);
+        setContentOwned (panel, false);
+        setResizable (true, false);
+        setResizeLimits (360, 300, 4000, 3000);
+        // αν υπάρχει δεύτερη οθόνη (π.χ. iPad), ο orb ανοίγει εκεί, αλλιώς σε κανονικό μέγεθος στην κύρια
+        const auto& ds = Desktop::getInstance().getDisplays();
+        const Displays::Display* other = nullptr;
+        for (auto& d : ds.displays) if (! d.isMain) { other = &d; break; }
+        if (other != nullptr) setBounds (other->userArea);
+        else centreWithSize (720, 560);
+        setVisible (true);
+        toFront (false);
+    }
+    void closeButtonPressed() override { if (closed) closed(); }
+private:
+    OrbPanel* panel = nullptr;
+    std::function<void()> closed;
 };
