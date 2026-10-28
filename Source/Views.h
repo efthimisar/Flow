@@ -505,7 +505,8 @@ public:
                         g.setColour (segCol.withAlpha (0.10f));
                         g.fillRoundedRectangle (seg.expanded (3.0f), corner + 3.0f);
                     }
-                    g.setColour (segCol);
+                    if (dimSeg) g.setColour (segCol);   // ντεγκραντέ: 100% αριστερά, 70% δεξιά
+                    else g.setGradientFill (ColourGradient (segCol, seg.getX(), 0.0f, segCol.interpolatedWith (hobby::kScreen, 0.3f), seg.getRight(), 0.0f, false));
                     g.fillRoundedRectangle (seg, corner);
                     if (! dimSeg && seg.getWidth() > 4.0f * corner)   // φωτεινή κορυφή
                     {
@@ -1015,7 +1016,11 @@ public:
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
                 Colour c = latchedKey ? Colours::white : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
-                g.setColour (c.withMultipliedAlpha (alpha));
+                const Colour cc = c.withMultipliedAlpha (alpha);
+                if (b >= 0 && ! latchedKey && ! switchKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
+                    g.setGradientFill (ColourGradient (cc, 0.0f, kr.getY(), cc.interpolatedWith (hobby::kScreen, 0.3f), 0.0f, kr.getBottom(), false));
+                else
+                    g.setColour (cc);
                 g.fillRoundedRectangle (kr, 3.0f);
                 g.setColour (hobby::kScreen);
                 g.drawRoundedRectangle (kr.reduced (0.5f), 3.0f, 1.0f);
@@ -1026,7 +1031,8 @@ public:
 
         for (size_t i = 0; i < blackRects.size(); ++i)
         {
-            g.setColour (blackCols[i]);
+            g.setGradientFill (ColourGradient (blackCols[i], 0.0f, blackRects[i].getY(),
+                                               blackCols[i].interpolatedWith (hobby::kScreen, 0.3f), 0.0f, blackRects[i].getBottom(), false));
             g.fillRoundedRectangle (blackRects[i], 2.0f);
             g.setColour (hobby::kScreen);
             g.drawRoundedRectangle (blackRects[i].reduced (0.5f), 2.0f, 1.0f);
