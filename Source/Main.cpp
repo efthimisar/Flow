@@ -239,6 +239,7 @@ public:
 
         refreshSize();
         restoreSession();
+        autoOrbImage();   // σε κάθε εκκίνηση: νέα τυχαία εικόνα από το φάκελο (αν έχει εικόνες)· σώζεται με το set
         refreshAll();
         lastChange = engine.changeCount.load();
         startTimerHz (30);
@@ -3464,7 +3465,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.48.3"; }
+    const String getApplicationVersion() override { return "0.48.4"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
