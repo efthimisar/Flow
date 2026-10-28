@@ -15,19 +15,28 @@ static inline float textWidthOf (const Font& f, const String& t)
     return ga.getBoundingBox (0, -1, true).getWidth();
 }
 
-// Χρώματα των blocks: ανοιχτό για τα λευκά πλήκτρα, πιο βαθύ για τα μαύρα.
+// Χρώματα των blocks: κάθε block έχει μία απόχρωση της παλέτας των φώτων του MK2 (blockHue = δείκτης 0..15:
+// 0 κόκκινο, 1 πορτοκαλί, 2 ανοιχτό πορτοκαλί, 3 ζεστό κίτρινο, 4 κίτρινο, 5 λάιμ, 6 πράσινο, 7 μέντα, 8 τυρκουάζ, 9 κυανό,
+// 10 μπλε, 11 δαμασκηνί, 12 βιολετί, 13 μοβ, 14 ματζέντα, 15 φούξια). Στην οθόνη φαίνεται η παστέλ εκδοχή της ίδιας απόχρωσης.
+static inline int blockHue (int b)
+{
+    static const int h[9] { 1, 3, 7, 6, 10, 12, 15, 9, 8 };   // πορτοκαλί, ζεστό κίτρινο, μέντα, πράσινο, μπλε, βιολετί, φούξια, κυανό, τυρκουάζ
+    return h[((b % 9) + 9) % 9];
+}
+
+// ανοιχτό για τα λευκά πλήκτρα, πιο βαθύ για τα μαύρα
 static inline Colour blockLight (int b)
 {
-    static const Colour c[7] { Colour (0xff9ad4a8), Colour (0xffc4aef0), Colour (0xfff5de8a), Colour (0xfff4a7b9),
-                               Colour (0xff8fc8f0), Colour (0xfff5b88a), Colour (0xffff8f84) };
-    return c[b % 7];
+    static const Colour c[9] { Colour (0xfff5b88a), Colour (0xfff5de8a), Colour (0xff9ee6cf), Colour (0xff9fdc9c), Colour (0xff93acf2),
+                               Colour (0xffb9a0f2), Colour (0xfff5a3d0), Colour (0xff8fc8f0), Colour (0xff8fe3e0) };
+    return c[((b % 9) + 9) % 9];
 }
 
 static inline Colour blockDeep (int b)
 {
-    static const Colour c[7] { Colour (0xff5b9a70), Colour (0xff8670c4), Colour (0xffc2a63f), Colour (0xffc76f87),
-                               Colour (0xff4f93c4), Colour (0xffc98550), Colour (0xffd6594c) };
-    return c[b % 7];
+    static const Colour c[9] { Colour (0xffc98550), Colour (0xffc2a63f), Colour (0xff4fae8a), Colour (0xff5b9a70), Colour (0xff5877c4),
+                               Colour (0xff7a5fc4), Colour (0xffc75a99), Colour (0xff4f93c4), Colour (0xff4fb0ae) };
+    return c[((b % 9) + 9) % 9];
 }
 
 static inline String noteName (int n) { return MidiMessage::getMidiNoteName (n, true, true, 4); }

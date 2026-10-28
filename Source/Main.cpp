@@ -877,20 +877,10 @@ private:
         updateToolLamps();
     }
 
-    // το χρώμα του block στην παλέτα του MK2 (hue 1..16: κόκκινο, πορτοκαλί, ... φούξια. 17 = άσπρο). Φωτεινότητα 0..3.
-    static uint8_t lightByte (Colour c, int brightness)
+    // το φωτάκι του block στην παλέτα του MK2: byte = (απόσταση απόχρωσης + 1) * 4 + φωτεινότητα 0..3. 17 = άσπρο.
+    static uint8_t lightByte (int hueIdx, int brightness)
     {
-        static const float hues[16] { 0, 25, 40, 50, 60, 90, 125, 160, 185, 200, 225, 255, 270, 285, 310, 330 };
-        const float h = c.getHue() * 360.0f;
-        int best = 0;
-        float bestD = 1.0e9f;
-        for (int i = 0; i < 16; ++i)
-        {
-            float d = std::abs (h - hues[i]);
-            d = jmin (d, 360.0f - d);
-            if (d < bestD) { bestD = d; best = i; }
-        }
-        return (uint8_t) ((best + 1) * 4 + jlimit (0, 3, brightness));
+        return (uint8_t) ((jlimit (0, 15, hueIdx) + 1) * 4 + jlimit (0, 3, brightness));
     }
 
     void updateLights (bool force)
@@ -907,7 +897,7 @@ private:
             const int b = engine.blockForNote (n);
             if (b < 0) continue;
             if (engine.blockOff[(size_t) b].load() != 0) continue;
-            buf[(size_t) idx] = lightByte (blockLight (b), b == selected ? 3 : 1);
+            buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? 3 : 1);
         }
 
         const int sb = engine.specialBlock.load();
@@ -1366,7 +1356,7 @@ private:
         const int slot = freeSlot();
         if (slot < 0)
         {
-            setMessage (gr ("Δεν υπάρχει ελεύθερο block (μέγιστο 16)."));
+            setMessage (gr ("Δεν υπάρχει ελεύθερο block (μέγιστο 9)."));
             return;
         }
         pickPlugin (gr ("Διάλεξε plugin"), 0, [this, slot] (const PluginDescription& d)
@@ -1534,7 +1524,7 @@ private:
         saveNow (true);
     }
 
-    // target: block 0..15 ή -1 για master
+    // target: block 0..8 ή -1 για master
     void addFxTo (int target)
     {
         if (target >= 0 && ! isActive (target)) { setMessage (gr ("Φόρτωσε πρώτα ένα instrument (VST)")); return; }

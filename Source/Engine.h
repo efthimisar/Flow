@@ -1,5 +1,5 @@
 #pragma once
-// Flow engine: μέχρι 16 blocks (ένα ανά instrument), καθένα με δική του ζώνη, hold, ένταση, transpose, MIDI loop,
+// Flow engine: μέχρι 9 blocks (ένα ανά instrument), καθένα με δική του ζώνη, hold, ένταση, transpose, MIDI loop,
 // MIDI FX και αλυσίδα FX. Στο τέλος: master FX, metronome, Rec Audio με stems.
 // Όλη η μουσική λογική τρέχει μέσα στο audio callback, άρα ο χρόνος ακολουθεί το ρολόι του ήχου.
 
@@ -16,7 +16,7 @@
 
 namespace flow
 {
-    constexpr int numBlocks   = 16;
+    constexpr int numBlocks   = 9;
     constexpr int lowestNote  = 21;     // A0
     constexpr int highestNote = 108;    // C8
     // καταγραφή βημάτων σε αρχείο (Music/Flow/Flow-log.txt) για να φαίνεται πού σταματά ένα crash
@@ -375,7 +375,7 @@ namespace flow
             return old;
         }
 
-        // αλυσίδα FX: b = 0..15 για block, b = -1 για το master
+        // αλυσίδα FX: b = 0..8 για block, b = -1 για το master
         void addFx (int b, PluginPtr fresh)
         {
             if (fresh == nullptr) return;
