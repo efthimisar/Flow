@@ -40,7 +40,8 @@ public:
           tapeTile (Symbol::Tape, typeface),
           metroTile (Symbol::Tempo, typeface),
           folderTile (Symbol::Sliders, typeface),
-          smartTile (Symbol::Rings, typeface)
+          smartTile (Symbol::Rings, typeface),
+          followTile (Symbol::Follow, typeface)
     {
         PropertiesFile::Options options;
         options.applicationName     = "Flow";
@@ -135,6 +136,17 @@ public:
             else { metroSamplePath = {}; engine.setMetroSample (AudioBuffer<float>()); saveNow(); }
         };
         folderTile.onClick = [this] { if (settingsScreen.isVisible()) settingsScreen.close(); else openSettingsScreen(); refreshSmartTile(); };
+        followTile.setTooltip (gr ("Follow: the loops of the blocks you choose follow the chord you play, in the scale you set (fourth screen). Key B7 turns it on and off"));
+        followTile.onClick = [this]
+        {
+            if (settingsScreen.isFollowDirect()) { settingsScreen.close(); return; }
+            loopsView.openMenu (false);
+            if (audioPanel.isVisible()) audioPanel.close();
+            settingsScreen.setBounds (loopsBezel.reduced (5));
+            settingsScreen.openFollow();
+            settingsScreen.grabKeyboardFocus();
+            refreshSmartTile();
+        };
         smartTile.setTooltip (gr ("Smart master: level of the three bands and stereo width of every block, with suggestions by sound type (third screen)"));
         smartTile.onClick = [this]
         {
@@ -247,6 +259,7 @@ public:
         favPlugins.removeEmptyStrings();
         engine.masterPos = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("masterPos", 1.0));
         engine.limiterOn = settings->getIntValue ("limiterOn", 1) != 0 ? 1 : 0;
+        engine.followSetScale (settings->getIntValue ("followRoot", 9), settings->getIntValue ("followType", 1));
         engine.smartOn = settings->getIntValue ("smartOn", 0) != 0 ? 1 : 0;
         engine.smartAuto = settings->getIntValue ("smartAuto", 0) != 0 ? 1 : 0;
         engine.smartAccept = jlimit (0.0f, 1.0f, (float) settings->getDoubleValue ("smartAccept", 0.6));
@@ -357,9 +370,9 @@ public:
 
 private:
     //==========================================================================
-    std::array<ValueTile*, 12> tiles()
+    std::array<ValueTile*, 13> tiles()
     {
-        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile, &smartTile };
+        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile, &smartTile, &followTile };
     }
 
     bool isActive (int b) const { return b >= 0 && b < flow::numBlocks && engine.active[(size_t) b].load() != 0; }
@@ -608,7 +621,7 @@ private:
         const int leftX = strip.getX() + 14;
         const int midW = 4 * 52 + 3 * 8;
         const int rightX = strip.getRight() - 14 - 52;
-        const int leftEnd = leftX + 5 * 60 + 112 + 60, rightStart = rightX - 60;
+        const int leftEnd = leftX + 5 * 60 + 112 + 120, rightStart = rightX - 60;
         const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);
 
         int x = leftX;
@@ -619,6 +632,7 @@ private:
         }
         orbRecTile.setBounds (x, ty, 112, 52);
         smartTile.setBounds (x + 120, ty, 52, 52);
+        followTile.setBounds (x + 180, ty, 52, 52);
         x = midX;
         for (auto* t : { &recTile, &stopTile, &undoTile, &tapeTile })
         {
@@ -1993,7 +2007,7 @@ private:
             engine.holdMode[(size_t) block] = 0;
             engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
             engine.curveMode[(size_t) block] = 0;
-            engine.smartType[(size_t) block] = 0; engine.smartAppLow[(size_t) block] = 0.0f; engine.smartAppWidth[(size_t) block] = 1.0f;
+            engine.followBlock[(size_t) block] = 0; engine.smartType[(size_t) block] = 0; engine.smartAppLow[(size_t) block] = 0.0f; engine.smartAppWidth[(size_t) block] = 1.0f;
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
             engine.transpose[(size_t) block] = 0;
@@ -2171,7 +2185,7 @@ private:
         engine.holdMode[(size_t) block] = 0;
         engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
         engine.curveMode[(size_t) block] = 0;
-        engine.smartType[(size_t) block] = 0; engine.smartAppLow[(size_t) block] = 0.0f; engine.smartAppWidth[(size_t) block] = 1.0f;
+        engine.followBlock[(size_t) block] = 0; engine.smartType[(size_t) block] = 0; engine.smartAppLow[(size_t) block] = 0.0f; engine.smartAppWidth[(size_t) block] = 1.0f;
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
         engine.transpose[(size_t) block] = 0;
@@ -2602,6 +2616,7 @@ private:
     void refreshSmartTile()
     {
         smartTile.setIconColour (settingsScreen.isSmartDirect() ? hobby::kOn : hobby::kIconGrey);
+        followTile.setIconColour (settingsScreen.isFollowDirect() || engine.followOn.load() != 0 ? hobby::kOn : hobby::kIconGrey);
     }
 
     void openSettingsScreen()
@@ -2708,6 +2723,24 @@ private:
         h.lengthQSet = [this] (int v) { engine.lengthQ = v; saveNow(); };
         h.tapMsGet = [this] { return engine.tapMs.load(); };
         h.tapMsSet = [this] (int v) { engine.tapMs = v; saveNow(); };
+        h.followBlocks = [this]
+        {
+            std::vector<SettingsScreen::FollowBlock> v ((size_t) flow::numBlocks);
+            for (int b = 0; b < flow::numBlocks; ++b)
+            {
+                auto& x = v[(size_t) b];
+                if (auto* p = engine.getPlugin (b)) { x.active = true; x.name = p->getName(); }
+                x.on = engine.followBlock[(size_t) b].load() != 0;
+            }
+            return v;
+        };
+        h.followOnGet = [this] { return engine.followOn.load(); };
+        h.followOnSet = [this] (int v) { engine.followOn = v; refreshSmartTile(); };
+        h.followRootGet = [this] { return engine.followRoot.load(); };
+        h.followTypeGet = [this] { return engine.followType.load(); };
+        h.followRootSet = [this] (int v) { engine.followSetScale (v, engine.followType.load()); saveNow(); };
+        h.followTypeSet = [this] (int v) { engine.followSetScale (engine.followRoot.load(), v); saveNow(); };
+        h.followBlockSet = [this] (int b, bool on) { engine.followBlock[(size_t) b] = on ? 1 : 0; saveNow(); };
         h.smartBlocks = [this]
         {
             std::vector<SettingsScreen::SmartBlock> v ((size_t) flow::numBlocks);
@@ -2926,6 +2959,7 @@ private:
             e->setAttribute ("al", engine.getAlText (b));
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
             e->setAttribute ("stype", engine.smartType[(size_t) b].load());
+            e->setAttribute ("follow", engine.followBlock[(size_t) b].load());
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
             e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : 0);
             e->setAttribute ("lsilent", engine.liveSilent[(size_t) b].load());
@@ -3138,6 +3172,7 @@ private:
             engine.setAlText (slot, e->getStringAttribute ("al"));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
             engine.smartType[(size_t) slot] = jlimit (0, 5, e->getIntAttribute ("stype", 0));
+            engine.followBlock[(size_t) slot] = e->getIntAttribute ("follow", 0) != 0 ? 1 : 0;
             engine.smartAppLow[(size_t) slot] = 0.0f; engine.smartAppWidth[(size_t) slot] = 1.0f;
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
             if (e->getIntAttribute ("special", 0) != 0) engine.specialBlock = slot;
@@ -3302,6 +3337,8 @@ private:
         settings->setValue ("favPlugins", favPlugins.joinIntoString ("\n"));
         settings->setValue ("masterPos", (double) engine.masterPos.load());
         settings->setValue ("limiterOn", engine.limiterOn.load());
+        settings->setValue ("followRoot", engine.followRoot.load());
+        settings->setValue ("followType", engine.followType.load());
         settings->setValue ("smartOn", engine.smartOn.load());
         settings->setValue ("smartAuto", engine.smartAuto.load());
         settings->setValue ("smartAccept", (double) engine.smartAccept.load());
@@ -3497,6 +3534,7 @@ private:
             // ο μετρονόμος αναβοσβήνει σε κάθε beat όταν ο ήχος του είναι ανοιχτός
             const double ph = engine.beatPosOut.load();
             const float flash = jlimit (0.0f, 1.0f, 1.0f - (float) (ph - std::floor (ph)) * 4.0f);
+            refreshSmartTile();
             metroTile.setIconColour (engine.metroOn.load() ? hobby::mix (hobby::kIconGrey, hobby::kOn, 0.3f + 0.7f * flash) : hobby::kIconGrey);
         }
 
@@ -3697,7 +3735,7 @@ private:
     AudioMidiPanel audioPanel { deviceManager, typeface };
     SettingsScreen settingsScreen { typeface };
     bool audioFromSettings = false;
-    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile, smartTile;
+    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile, smartTile, followTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
@@ -3707,7 +3745,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.55.0"; }
+    const String getApplicationVersion() override { return "0.56.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

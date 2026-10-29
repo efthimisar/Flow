@@ -407,6 +407,16 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (p, 1.8f);
             break;
         }
+        case Symbol::Follow:   // Follow: τρεις νότες που ανεβαίνουν, ενωμένες
+        {
+            juce::Path p;
+            p.startNewSubPath (-9.0f, 6.0f); p.lineTo (0.0f, 0.0f); p.lineTo (9.0f, -7.0f);
+            stroke (p, 1.6f);
+            juce::Path d1, d2, d3;
+            d1.addEllipse (-12.0f, 3.0f, 6.0f, 6.0f); d2.addEllipse (-3.0f, -3.0f, 6.0f, 6.0f); d3.addEllipse (6.0f, -10.0f, 6.0f, 6.0f);
+            fill (d1, col); fill (d2, col); fill (d3, col);
+            break;
+        }
         case Symbol::Sliders:   // ρυθμιστικά (ρυθμίσεις)
         {
             juce::Path p;

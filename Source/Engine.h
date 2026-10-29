@@ -19,6 +19,7 @@ namespace flow
     constexpr int numBlocks   = 9;
     constexpr int lowestNote  = 21;     // A0
     constexpr int highestNote = 108;    // C8
+    constexpr int followKeyNote = 107;  // B7: ενεργοποιεί/σβήνει το Follow, δεν παίζει ήχο
     // καταγραφή βημάτων σε αρχείο (Music/Flow/Flow-log.txt) για να φαίνεται πού σταματά ένα crash
     inline void flowLog (const juce::String& s)
     {
@@ -113,6 +114,7 @@ namespace flow
                 transpose[b] = 0;
                 volPos[b] = 1.0f; gainOut[b] = 1.0f;
                 volMap[b] = 0;
+                followBlock[b] = 0;
                 smartType[b] = 0; smartLow[b] = 0.0f; smartMid[b] = 0.0f; smartHigh[b] = 0.0f; smartWidth[b] = 0.0f;
                 smartNeedLow[b] = 0.0f; smartNeedWidth[b] = 1.0f; smartAppLow[b] = 0.0f; smartAppWidth[b] = 1.0f;
                 loopStateOut[b] = loopOff;
@@ -148,6 +150,16 @@ namespace flow
         // master: ένταση (θέση 0..1, κέρδος = θέση²), ασφαλιστικός limiter, CC για ένταση
         std::atomic<float> masterPos { 1.0f };
         std::atomic<int> limiterOn { 1 }, masterCc { 0 }, masterLearn { 0 }, masterLearned { 0 };
+        // Follow: οι λούπες των block που το έχουν ανάψει ακολουθούν τη συγχορδία που παίζεις (μεταφορά με κλίμακα)
+        std::atomic<int> followOn { 0 };                                  // γενικός διακόπτης (πλήκτρο B7 / οθόνη Follow)
+        std::atomic<int> followRoot { 9 }, followType { 1 };             // κλίμακα των λουπών που ηχογράφησες: ρίζα 0..11, τύπος 0..5
+        std::atomic<int> followTRoot { 9 }, followTType { 1 };           // κλίμακα-στόχος (από τη συγχορδία)
+        std::array<std::atomic<int>, numBlocks> followBlock;             // 1 = το block ακολουθεί
+        void followSetScale (int root, int type)
+        {
+            followRoot = juce::jlimit (0, 11, root); followType = juce::jlimit (0, 5, type);
+            followTRoot = followRoot.load(); followTType = followType.load();
+        }
         // Smart master: μέτρηση ανά block (3 ζώνες + πλάτος stereo) και διόρθωση με βάση τον τύπο ήχου
         std::atomic<int> smartOn { 0 }, smartAuto { 0 };            // On/Off, 0 = Ask (✓), 1 = Auto
         std::atomic<float> smartAccept { 0.6f };                    // πόσο από την αναγκαία διόρθωση εφαρμόζεται (0..1)
@@ -611,6 +623,7 @@ namespace flow
             }
 
             dispatchIncoming (numSamples, gs, sr);
+            followUpdateTarget();
             processPedalTaps (gs, sr);
             tapActiveOut = (lastTapT > 0 && (double) (gs - lastTapT) < 3.0 * sr) ? 1 : 0;
 
@@ -884,6 +897,52 @@ namespace flow
                 return info;
             }
         };
+
+        static const int* followScale (int type)
+        {
+            static const int t[6][7] = { { 0, 2, 4, 5, 7, 9, 11 },    // Major
+                                         { 0, 2, 3, 5, 7, 8, 10 },    // Minor
+                                         { 0, 2, 3, 5, 7, 9, 10 },    // Dorian
+                                         { 0, 2, 4, 5, 7, 9, 10 },    // Mixolydian
+                                         { 0, 1, 3, 5, 7, 8, 10 },    // Phrygian
+                                         { 0, 2, 4, 6, 7, 9, 11 } };  // Lydian
+            return t[juce::jlimit (0, 5, type)];
+        }
+
+        // η νότα της λούπας μεταφέρεται από την κλίμακα που ηχογράφησες στην κλίμακα της συγχορδίας, βαθμίδα προς βαθμίδα
+        int followMapNote (int b, int note) const
+        {
+            if (followOn.load() == 0 || followBlock[(size_t) b].load() == 0) return note;
+            const int sR = followRoot.load(), sT = followType.load(), tR = followTRoot.load(), tT = followTType.load();
+            if (sR == tR && sT == tT) return note;
+            const int* sI = followScale (sT);
+            const int* tI = followScale (tT);
+            const int rel = ((note - sR) % 12 + 12) % 12;
+            const int base = note - rel;
+            int d = 0;
+            for (int i = 0; i < 7; ++i) if (sI[i] <= rel) d = i;
+            const int leftover = rel - sI[d];                       // νότα εκτός κλίμακας: κρατά την απόσταση από τη βαθμίδα
+            const int shift = ((tR - sR + 6 + 120) % 12) - 6;      // η ρίζα μετακινείται στο κοντινότερο σημείο
+            return juce::jlimit (0, 127, base + shift + tI[d] + leftover);
+        }
+
+        // η συγχορδία που κρατάς (τουλάχιστον 3 διαφορετικές νότες) ορίζει τη νέα ρίζα και τον τύπο (μείζονα / ελάσσονα)
+        void followUpdateTarget()
+        {
+            if (followOn.load() == 0) return;
+            const uint64_t lo = pressBits[0].load(), hi = pressBits[1].load();
+            int mask = 0, lowest = -1;
+            for (int n = 0; n < 128; ++n)
+            {
+                const bool p = n < 64 ? ((lo >> n) & 1u) != 0 : ((hi >> (n - 64)) & 1u) != 0;
+                if (p) { mask |= 1 << (n % 12); if (lowest < 0) lowest = n; }
+            }
+            if (std::bitset<12> ((unsigned) mask).count() < 3) return;
+            const int root = lowest % 12;
+            const bool m3 = ((mask >> ((root + 3) % 12)) & 1) != 0, M3 = ((mask >> ((root + 4) % 12)) & 1) != 0;
+            followTRoot = root;
+            followTType = (m3 && ! M3) ? 1 : (M3 && ! m3) ? 0 : followType.load();
+        }
 
         static float smartLevel (float meanSquare)
         {
@@ -1183,7 +1242,7 @@ namespace flow
                 if (handlePedal (msg))
                     continue;
 
-                if ((msg.isNoteOn() || msg.isNoteOff()) && msg.getNoteNumber() != highestNote)
+                if ((msg.isNoteOn() || msg.isNoteOff()) && msg.getNoteNumber() != highestNote && msg.getNoteNumber() != followKeyNote)
                 {
                     const int pn = msg.getNoteNumber() & 127;
                     if (msg.isNoteOn()) pressBits[(size_t) (pn >> 6)].fetch_or ((uint64_t) 1 << (pn & 63));
@@ -1193,6 +1252,11 @@ namespace flow
                 if (msg.isNoteOn())
                 {
                     const int n = msg.getNoteNumber();
+                    if (n == followKeyNote)   // B7 = Follow on/off, δεν παίζει ήχο
+                    {
+                        followOn = followOn.load() != 0 ? 0 : 1;
+                        continue;
+                    }
                     if (n == highestNote)     // το τελευταίο πλήκτρο δεξιά (C8) = tap tempo, δεν παίζει ήχο
                     {
                         registerTap (gs + pos, sr);
@@ -2658,7 +2722,7 @@ namespace flow
                         }
                         if (a.on)
                         {
-                            B.loopOut[(size_t) a.note] = (uint8_t) juce::jlimit (0, 127, a.note + transpose[(size_t) b].load());
+                            B.loopOut[(size_t) a.note] = (uint8_t) juce::jlimit (0, 127, followMapNote (b, a.note) + transpose[(size_t) b].load());
                             B.out.addEvent (juce::MidiMessage::noteOn (1, B.loopOut[(size_t) a.note], (juce::uint8) a.vel), a.pos);
                         }
                         else

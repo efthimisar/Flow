@@ -19,6 +19,7 @@ public:
         float lim[4] = { 1, 1, 1, 1 };                  // όρια του τύπου {Low, Mid, High, πλάτος}
         float needLow = 0, needW = 1, appLow = 0, appW = 1;
     };
+    struct FollowBlock { bool active = false; juce::String name; bool on = false; };
     struct SetInfo { juce::String name, date; juce::Image thumb; bool current = false; juce::File file; };
 
     struct Host
@@ -57,6 +58,10 @@ public:
         std::function<void (int)> startQSet, lengthQSet, tapMsSet, snapQSet;
         std::function<int()> autoLoopGet;
         std::function<void (int)> autoLoopSet;
+        std::function<std::vector<FollowBlock>()> followBlocks;
+        std::function<int()> followOnGet, followRootGet, followTypeGet;
+        std::function<void (int)> followOnSet, followRootSet, followTypeSet;
+        std::function<void (int, bool)> followBlockSet;
         std::function<std::vector<SmartBlock>()> smartBlocks;
         std::function<int()> smartOnGet, smartModeGet;
         std::function<float()> smartAcceptGet;
@@ -96,7 +101,14 @@ public:
         direct = true; page = Smart;
         repaint();
     }
+    void openFollow()
+    {
+        open();
+        direct = true; page = Follow;
+        repaint();
+    }
     bool isSmartDirect() const { return isVisible() && direct && page == Smart; }
+    bool isFollowDirect() const { return isVisible() && direct && page == Follow; }
     void open()
     {
         direct = false;
@@ -115,7 +127,7 @@ public:
     }
     void hideForPanel() { stopTimer(); nameEditor.setVisible (false); setVisible (false); }   // χωρίς onClose: επιστρέφει με open()
     // Esc: πίσω στο πλέγμα, και από το πλέγμα κλείνει
-    bool goBack() { if (page == Home || (direct && page == Smart)) { close(); return true; } showPage (Home); return true; }
+    bool goBack() { if (page == Home || direct) { close(); return true; } showPage (Home); return true; }
 
     void resized() override { layoutEditor(); }
 
@@ -126,7 +138,7 @@ public:
         g.setColour (hobby::kScreen);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 
-        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "IPAD ORB", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER" };
+        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "IPAD ORB", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW" };
         g.setColour (dim()); g.setFont (font (13.0f, true));
         g.drawText (titles[(int) page], 40, 26, 500, 20, Justification::centredLeft, false);
         {
@@ -136,7 +148,7 @@ public:
             g.setColour (txt());
             g.drawLine ((float) r.getX() + 8.0f, (float) r.getY() + 8.0f, (float) r.getRight() - 8.0f, (float) r.getBottom() - 8.0f, 2.0f);
             g.drawLine ((float) r.getX() + 8.0f, (float) r.getBottom() - 8.0f, (float) r.getRight() - 8.0f, (float) r.getY() + 8.0f, 2.0f);
-            hits.push_back ({ r, [this] { if (page == Home || (direct && page == Smart)) close(); else showPage (Home); } });
+            hits.push_back ({ r, [this] { if (page == Home || direct) close(); else showPage (Home); } });
         }
 
         switch (page)
@@ -154,6 +166,7 @@ public:
             case Learn:  paintLearn (g); break;
             case WindowSize: paintWindowSize (g); break;
             case Smart: paintSmart (g); break;
+            case Follow: paintFollow (g); break;
         }
     }
 
@@ -192,7 +205,7 @@ public:
     }
 
 private:
-    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, Ipad, OrbImages, LoopRec, Learn, WindowSize, Smart };
+    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, Ipad, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow };
     struct Hit { juce::Rectangle<int> r; std::function<void()> fn; };
 
     static juce::Colour dim()  { return juce::Colour (0xff968e86); }
@@ -693,6 +706,90 @@ private:
             g.setColour (Colour (0xffe6e0d8));
             g.drawLine (cx + dx * (r - thick * 0.5f - 2.0f), cy + dy * (r - thick * 0.5f - 2.0f), cx + dx * (r + thick * 0.5f + 2.0f), cy + dy * (r + thick * 0.5f + 2.0f), 1.6f);
         }
+    }
+
+    void paintFollow (juce::Graphics& g)
+    {
+        using namespace juce;
+        const Colour ok = hobby::kOn;
+        const int W = getWidth(), H = getHeight();
+        const bool on = host.followOnGet && host.followOnGet() != 0;
+        const int root = host.followRootGet ? host.followRootGet() : 9;
+        const int type = host.followTypeGet ? host.followTypeGet() : 1;
+        static const char* notes[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        static const char* types[] = { "Major", "Minor", "Dorian", "Mixolydian", "Phrygian", "Lydian" };
+        g.setColour (txt()); g.setFont (font (14.0f, true));
+        g.drawText ("Scale of the loops you record", 40, 52, 400, 20, Justification::centredLeft, false);
+        const int cwid = jmin (52, (W - 80 - 280) / 12);
+        for (int i = 0; i < 12; ++i)
+        {
+            const Rectangle<int> r (40 + i * cwid, 78, cwid - 6, 30);
+            const bool sel = i == root;
+            g.setColour (sel ? Colour (0xff3c5a46) : Colour (0xff242220)); g.fillRoundedRectangle (r.toFloat(), 15.0f);
+            g.setColour (sel ? ok : lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 15.0f, sel ? 1.6f : 1.0f);
+            g.setColour (sel ? txt() : dim()); g.setFont (font (12.5f, sel));
+            g.drawText (notes[i], r, Justification::centred, false);
+            hits.push_back ({ r, [this, i] { if (host.followRootSet) host.followRootSet (i); repaint(); } });
+        }
+        const int tw = jmin (104, (W - 80 - 280) / 6);
+        for (int i = 0; i < 6; ++i)
+        {
+            const Rectangle<int> r (40 + i * tw, 116, tw - 6, 30);
+            const bool sel = i == type;
+            g.setColour (sel ? Colour (0xff3c5a46) : Colour (0xff242220)); g.fillRoundedRectangle (r.toFloat(), 15.0f);
+            g.setColour (sel ? ok : lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 15.0f, sel ? 1.6f : 1.0f);
+            g.setColour (sel ? txt() : dim()); g.setFont (font (12.0f, sel));
+            g.drawText (types[i], r, Justification::centred, false);
+            hits.push_back ({ r, [this, i] { if (host.followTypeSet) host.followTypeSet (i); repaint(); } });
+        }
+        g.setColour (ok); g.setFont (font (22.0f, true));
+        g.drawText (String (notes[jlimit (0, 11, root)]) + " " + String (types[jlimit (0, 5, type)]).toLowerCase(), W - 40 - 230, 52, 230, 30, Justification::centredRight, false);
+        {   // γενικός διακόπτης (το ίδιο κάνει το πλήκτρο B7)
+            const Rectangle<int> o (W - 40 - 150, 96, 150, 40);
+            g.setColour (on ? Colour (0xff3c5a46) : Colour (0xff2a2725)); g.fillRoundedRectangle (o.toFloat(), 20.0f);
+            g.setColour (on ? ok : lineC()); g.drawRoundedRectangle (o.toFloat().reduced (1.0f), 20.0f, on ? 2.0f : 1.0f);
+            g.setColour (on ? txt() : dim()); g.setFont (font (14.0f, true));
+            g.drawText (on ? "Follow On" : "Follow Off", o, Justification::centred, false);
+            hits.push_back ({ o, [this, on] { if (host.followOnSet) host.followOnSet (on ? 0 : 1); repaint(); } });
+        }
+        // κάρτες block
+        const auto blocks = host.followBlocks ? host.followBlocks() : std::vector<FollowBlock>();
+        std::vector<int> idx;
+        for (int b = 0; b < (int) blocks.size(); ++b) if (blocks[(size_t) b].active) idx.push_back (b);
+        const int top = 166, bottom = H - 30;
+        if (idx.empty())
+        {
+            g.setColour (dim()); g.setFont (font (14.0f));
+            g.drawText ("No block has an instrument yet.", 40, top + 10, W - 80, 24, Justification::centredLeft, false);
+        }
+        else
+        {
+            const int n = (int) idx.size(), gap = 12;
+            const int cw = jmin (260, (W - 80 - (n - 1) * gap) / n), ch = jlimit (70, 130, bottom - top);
+            for (int q = 0; q < n; ++q)
+            {
+                const int b = idx[(size_t) q];
+                const auto& B = blocks[(size_t) b];
+                const Rectangle<int> c (40 + q * (cw + gap), top, cw, ch);
+                g.setColour (card()); g.fillRoundedRectangle (c.toFloat(), 14.0f);
+                g.setColour (B.on ? ok : lineC()); g.drawRoundedRectangle (c.toFloat().reduced (1.0f), 14.0f, B.on ? 2.0f : 1.0f);
+                g.setColour (dim()); g.setFont (font (11.0f, true));
+                g.drawText ("Block " + String (b + 1), c.getX() + 14, c.getY() + 10, cw - 28, 14, Justification::centredLeft, false);
+                g.setColour (txt()); g.setFont (font (15.0f, true));
+                g.drawText (B.name, c.getX() + 14, c.getY() + 26, cw - 100, 20, Justification::centredLeft, true);
+                const Rectangle<int> sw (c.getRight() - 14 - 62, c.getY() + 18, 62, 28);
+                g.setColour (B.on ? Colour (0xff3c5a46) : Colour (0xff242220)); g.fillRoundedRectangle (sw.toFloat(), 14.0f);
+                g.setColour (B.on ? ok : lineC()); g.drawRoundedRectangle (sw.toFloat().reduced (0.5f), 14.0f, 1.5f);
+                g.setColour (B.on ? txt() : dim());
+                g.fillEllipse ((float) (B.on ? sw.getRight() - 24 : sw.getX() + 4), (float) sw.getY() + 4.0f, 20.0f, 20.0f);
+                hits.push_back ({ sw.expanded (4), [this, b, B] { if (host.followBlockSet) host.followBlockSet (b, ! B.on); repaint(); } });
+                g.setColour (B.on ? ok : dim()); g.setFont (font (11.5f));
+                if (ch >= 90) g.drawText (B.on ? "loops follow the chord" : "loops stay as recorded", c.getX() + 14, c.getBottom() - 34, cw - 28, 18, Justification::centredLeft, true);
+            }
+        }
+        g.setColour (dim()); g.setFont (font (11.0f));
+        g.drawFittedText ("Hold a chord of 3 or more notes: its lowest note and third set the new scale. Key B7 turns Follow on and off.",
+                          40, H - 24, W - 80, 16, Justification::centredLeft, 1);
     }
 
     void paintSmart (juce::Graphics& g)

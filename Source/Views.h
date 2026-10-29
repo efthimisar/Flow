@@ -1408,8 +1408,9 @@ public:
             else
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                const bool tapKey = n == flow::highestNote;   // το τελευταίο πλήκτρο δεξιά είναι το tap tempo: κόκκινο
-                Colour c = litKey ? Colours::white : tapKey ? hobby::kRed : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
+                const bool tapKey = n == flow::highestNote;   // C8 = tap tempo και B7 = Follow: σκούρα πλήκτρα με λευκό κυκλάκι (πράσινο όταν είναι ενεργά)
+                const bool followKey = n == flow::followKeyNote;
+                Colour c = litKey && ! followKey ? Colours::white : (tapKey || followKey) ? hobby::kScreen.brighter (0.12f) : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
                 const Colour cc = c.withMultipliedAlpha (alpha);
                 if (b >= 0 && ! litKey && ! switchKey && ! tapKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
                     g.setGradientFill (ColourGradient (cc, 0.0f, kr.getY(), cc.interpolatedWith (hobby::kScreen, 0.3f), 0.0f, kr.getBottom(), false));
@@ -1418,6 +1419,13 @@ public:
                 g.fillRoundedRectangle (kr, 3.0f);
                 g.setColour (hobby::kScreen);
                 g.drawRoundedRectangle (kr.reduced (0.5f), 3.0f, 1.0f);
+                if (tapKey || followKey)
+                {
+                    const bool act = tapKey ? engine.tapActiveOut.load() != 0 : engine.followOn.load() != 0;
+                    const float rad = jmin (kr.getWidth() * 0.32f, 7.0f);
+                    g.setColour (act ? hobby::kOn : Colours::white);
+                    g.fillEllipse (kr.getCentreX() - rad, kr.getCentreY() - rad, rad * 2.0f, rad * 2.0f);
+                }
                 ++wi;
             }
             prev = b;
