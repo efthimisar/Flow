@@ -841,7 +841,7 @@ public:
                 const float right = 18.0f + 28.0f + 44.0f; juce::ignoreUnused (valsOn);
                 return 14.0f + titleW + chordW + 16.0f + (cpuOn ? 76.0f + 16.0f : 0.0f) + toolsW + 16.0f + right;
             };
-            const bool cpuAllowed = ! metroStrip && notice.isEmpty() && ! showRec;
+            const bool cpuAllowed = ! metroStrip && ! showRec;
             bool layoutCpu = true, layoutVals = true;
             if (needed (true, true) > (float) w) layoutVals = false;
             if (needed (true, false) > (float) w) layoutCpu = false;
@@ -900,11 +900,6 @@ public:
                 tipZones.push_back ({ Rectangle<float> (x - 12.0f, ly - 12.0f, 24.0f, 24.0f), custom ? String::fromUTF8 ("Back to the default metronome sound") : String::fromUTF8 ("Choose your own metronome sound") });
                 lampAt (x, custom, custom ? String::fromUTF8 ("\xe2\x86\xba") : String::fromUTF8 ("\xe2\x99\xaa"),
                         [this, custom] { if (onMetroSample) onMetroSample (custom ? 2 : 1); });   // ♪ διάλεξε δικό σου ήχο, ↺ γύρνα στον αρχικό
-            }
-            else if (notice.isNotEmpty())
-            {
-                g.setColour (noticeColour);
-                g.drawText (notice, (int) cx - 140, (int) sy, 165, (int) sh, Justification::centred, true);
             }
             else if (showRec)
             {
@@ -980,6 +975,12 @@ public:
                     zone (lx, String::fromUTF8 ("Auto-detect repeat: Off → Auto (starts by itself) → on Rec MIDI loop press"),
                           [this] { engine.autoLoop = (engine.autoLoop.load() + 1) % 3; if (onMetroChange) onMetroChange(); });
                 }
+            }
+            if (notice.isNotEmpty())   // μηνύματα: γκρι γράμματα κάτω αριστερά στην οθόνη της λούπας, χωρίς φόντο
+            {
+                g.setFont (hobby::makeFont (typeface, 13.0f));
+                g.setColour (hobby::kIconGrey);
+                g.drawText (notice, 16, getHeight() - 28, jmax (120, w / 2), 18, Justification::centredLeft, true);
             }
             g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
             g.fillEllipse ((float) w - 24.0f, sy + sh * 0.5f - 3.5f, 7.0f, 7.0f);
