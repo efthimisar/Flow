@@ -838,8 +838,8 @@ public:
             const float toolsW = (float) tools.size() * 26.0f;
             auto needed = [&] (bool cpuOn, bool valsOn)
             {
-                const float right = 3.0f * 18.0f + 28.0f + (valsOn ? 60.0f : 0.0f) + 44.0f;
-                return 14.0f + titleW + chordW + (cpuOn ? 76.0f : 0.0f) + 16.0f + toolsW + 16.0f + right;
+                const float right = 18.0f + 28.0f + 44.0f; juce::ignoreUnused (valsOn);
+                return 14.0f + titleW + chordW + 16.0f + (cpuOn ? 76.0f + 16.0f : 0.0f) + toolsW + 16.0f + right;
             };
             const bool cpuAllowed = ! metroStrip && notice.isEmpty() && ! showRec;
             bool layoutCpu = true, layoutVals = true;
@@ -850,7 +850,9 @@ public:
             {
                 const float load = jlimit (0.0f, 1.0f, cpu);
                 const Colour cc = load < 0.6f ? hobby::kOn : load < 0.85f ? Colour (0xfff5de8a) : hobby::kRed;
-                const float R = 10.0f, c0 = chordX;
+                const float R = 10.0f;
+                const float cpuW = 2.0f * R + 46.0f, groupW = cpuW + (toolsW > 0.0f ? 16.0f + toolsW : 0.0f);
+                const float c0 = cx - groupW * 0.5f;   // ο δείκτης CPU στη μέση, δίπλα στα εργαλεία (αν υπάρχουν)
                 const Rectangle<float> disc (c0, sy + sh * 0.5f - R, 2.0f * R, 2.0f * R);
                 Path circle; circle.addEllipse (disc);
                 g.setColour (Colour (0xff3a3430));
@@ -872,7 +874,6 @@ public:
                 g.setColour (load >= 0.85f ? hobby::kRed : hobby::kIconGrey);
                 g.drawText (String ((int) std::lround (load * 100.0f)) + "%", Rectangle<float> (c0 + 2.0f * R + 6.0f, sy, 40.0f, sh), Justification::centredLeft, false);
                 tipZones.push_back ({ Rectangle<float> (c0, sy, 2.0f * R + 46.0f, sh), String::fromUTF8 ("Processor load (CPU)") });
-                chordX = c0 + 2.0f * R + 56.0f;
             }
             if (lastChord.isNotEmpty())
             {
@@ -930,9 +931,11 @@ public:
             else
             {
                 // λάμπες εργαλείων στη μέση: σκέτα σύμβολα, φωτίζουν ή σβήνουν. Το μπαλούν λέει τι κάνει η καθεμία.
-                const float leftEnd = 14.0f + titleW + chordW + (showCpu ? 76.0f : 0.0f);
-                const float rightStart = (float) w - 44.0f - (3.0f * 18.0f + 28.0f + (layoutVals ? 60.0f : 0.0f));
-                float tx = jmin (jmax (cx - toolsW * 0.5f, leftEnd + 16.0f), rightStart - 16.0f - toolsW) + 13.0f;
+                const float leftEnd = 14.0f + titleW + chordW;
+                const float rightStart = (float) w - 44.0f - 18.0f - 28.0f;
+                const float cpuBlock = showCpu ? 2.0f * 10.0f + 46.0f + 16.0f : 0.0f;
+                const float groupW = cpuBlock + toolsW;
+                float tx = jmin (jmax (cx - groupW * 0.5f, leftEnd + 16.0f), rightStart - 16.0f - groupW) + cpuBlock + 13.0f;
                 for (auto& tl : tools)
                 {
                     const Rectangle<float> r (tx - 12.0f, sy + sh * 0.5f - 11.0f, 24.0f, 22.0f);
@@ -950,17 +953,14 @@ public:
             {
                 const float ly = sy + sh * 0.5f;
                 const float R = 9.0f;                         // ακτίνα φωτακιού
-                const bool showVals = layoutVals;
-                const float valW = showVals ? 30.0f : 0.0f;
+                const float valW = 0.0f;
                 const int sel = jlimit (0, flow::numBlocks - 1, selected);
                 const int mode = engine.autoLoop.load();
                 const bool paused = engine.autoPausedOut[(size_t) sel].load() != 0;
                 const bool ready = mode != 0 && ! paused && engine.autoReadyOut[(size_t) sel].load() != 0;
-                const int snap = engine.snapQ.load();
 
-                // x από δεξιά: [A] [≈ val] [# val] ... τελεία MIDI
-                const float total = 2.0f * R + 14.0f + (2.0f * R + valW) + 14.0f + (2.0f * R + valW);
-                float lx = (float) w - 44.0f - total + R;
+                // x από δεξιά: [A] ... τελεία MIDI (τα ≈ και # μεταφέρθηκαν στις ρυθμίσεις)
+                float lx = (float) w - 44.0f - 2.0f * R + R;
 
                 // σκέτα σύμβολα (χωρίς κυκλάκι): φωτίζουν όταν είναι ενεργά. Κάθε πάτημα αλλάζει επίπεδο.
                 auto zone = [&] (float x, const String& tip, std::function<void()> fn)
@@ -979,47 +979,6 @@ public:
                     g.drawText ("A", Rectangle<float> (lx - R, ly - R, 2.0f * R, 2.0f * R), Justification::centred, false);
                     zone (lx, String::fromUTF8 ("Auto-detect repeat: Off → Auto (starts by itself) → on Rec MIDI loop press"),
                           [this] { engine.autoLoop = (engine.autoLoop.load() + 1) % 3; if (onMetroChange) onMetroChange(); });
-                }
-                lx += 2.0f * R + 14.0f;
-
-                {   // ≈: αναμονή πατημάτων πεταλιού
-                    const Rectangle<float> r (lx - R, ly - R, 2.0f * R, 2.0f * R);
-                    g.setColour (hobby::kPeach);
-                    for (float dy : { -2.4f, 2.4f })
-                    {
-                        Path p;
-                        p.startNewSubPath (r.getCentreX() - 6.0f, r.getCentreY() + dy);
-                        p.cubicTo (r.getCentreX() - 3.0f, r.getCentreY() + dy - 3.0f, r.getCentreX() - 1.4f, r.getCentreY() + dy - 3.0f, r.getCentreX(), r.getCentreY() + dy);
-                        p.cubicTo (r.getCentreX() + 1.4f, r.getCentreY() + dy + 3.0f, r.getCentreX() + 3.0f, r.getCentreY() + dy + 3.0f, r.getCentreX() + 6.0f, r.getCentreY() + dy);
-                        g.strokePath (p, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
-                    }
-                    if (showVals)
-                    {
-                        g.setColour (hobby::kIconGrey);
-                        g.setFont (hobby::makeFont (typeface, 11.0f));
-                        g.drawText (String ((double) engine.tapMs.load() / 1000.0, 1) + "s", (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
-                    }
-                    zone (lx, String::fromUTF8 ("Pedal press wait (0.5 / 0.7 / 1.0 s)"),
-                          [this] { const int t = engine.tapMs.load(); engine.tapMs = t < 600 ? 700 : t < 900 ? 1000 : 500; if (onMetroChange) onMetroChange(); });
-                }
-                lx += 2.0f * R + valW + 14.0f;
-
-                {   // #: quantize νοτών
-                    const Rectangle<float> r (lx - R, ly - R, 2.0f * R, 2.0f * R);
-                    g.setColour (snap != 0 ? hobby::kLilac : Colour (0xff6b625a));
-                    const float a = 2.8f, b = 6.0f;
-                    g.fillRect (r.getCentreX() - a - 0.8f, r.getCentreY() - b, 1.6f, 2.0f * b);
-                    g.fillRect (r.getCentreX() + a - 0.8f, r.getCentreY() - b, 1.6f, 2.0f * b);
-                    g.fillRect (r.getCentreX() - b, r.getCentreY() - a - 0.8f, 2.0f * b, 1.6f);
-                    g.fillRect (r.getCentreX() - b, r.getCentreY() + a - 0.8f, 2.0f * b, 1.6f);
-                    if (showVals)
-                    {
-                        g.setColour (hobby::kIconGrey);
-                        g.setFont (hobby::makeFont (typeface, 11.0f));
-                        g.drawText (snap == 0 ? String ("Off") : snap == 1 ? String ("1/8") : String ("1/16"), (int) (lx + R + 3.0f), (int) sy, (int) valW, (int) sh, Justification::centredLeft, false);
-                    }
-                    zone (lx, String::fromUTF8 ("Note quantize in the loop: Off → 1/8 → 1/16"),
-                          [this] { engine.snapQ = (engine.snapQ.load() + 1) % 3; if (onMetroChange) onMetroChange(); });
                 }
             }
             g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));

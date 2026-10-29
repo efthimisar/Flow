@@ -335,7 +335,7 @@ public:
         if (k.getModifiers().isAnyModifierKeyDown()) return false;
         const auto c = k.getTextCharacter();
         if (c == 'm' || c == 'M') { toggleMetronome(); return true; }
-        if (k == KeyPress::escapeKey) { if (settingsScreen.isVisible()) { settingsScreen.goBack(); return true; } if (audioPanel.isVisible()) { audioPanel.close(); return true; } if (orbStage != 0) { closeOrb(); return true; } doPanic(); return true; }
+        if (k == KeyPress::escapeKey) { if (learnMode != 0) { learnMode = 0; stopKnobLearn(); setMessage (gr ("MIDI learn cancelled")); updateToolLamps(); return true; } if (settingsScreen.isVisible()) { settingsScreen.goBack(); return true; } if (audioPanel.isVisible()) { audioPanel.close(); return true; } if (orbStage != 0) { closeOrb(); return true; } doPanic(); return true; }
         return false;
     }
 
@@ -1677,21 +1677,7 @@ private:
         }
         if (v)   // ★ ειδικό block (πάνω από τα άλλα, χωρίς λούπα)
             l.push_back ({ String ("SP"), Colours::white, true, false, [this] { toggleSpecial(); }, gr ("SP = special block: on top of the others, no loop, always plays") });
-        // quantize: κάθε πάτημα αλλάζει επίπεδο και το μήνυμα δείχνει το νέο. Σβηστό (γκρι) = Off.
-        auto q3 = [this] (std::atomic<int>& q, const String& name, const char* l0, const char* l1, const char* l2)
-        {
-            q = (q.load() + 1) % 3;
-            setMessage (name + ": " + String (q.load() == 0 ? l0 : q.load() == 1 ? l1 : l2));
-            saveNow();
-            updateToolLamps();
-        };
-        l.push_back ({ String::fromUTF8 ("\xe2\x96\xb6|"), engine.startQ.load() != 0 ? hobby::kOn : hobby::kIconGrey, true, false,
-                       [this, q3] { q3 (engine.startQ, "Start quantize", "Off", "beat", "bar"); }, gr ("Start quantize: where the loop starts (Off / beat / bar)") });
-        l.push_back ({ String::fromUTF8 ("\xe2\x86\x94"), engine.lengthQ.load() != 0 ? hobby::kOn : hobby::kIconGrey, true, false,
-                       [this, q3] { q3 (engine.lengthQ, "Length quantize", "Off", "beat", "bar (4/4)"); }, gr ("Length quantize: loop length in whole beats or bars") });
-        l.push_back ({ String::fromUTF8 ("\xe2\x97\x8e"), learnMode == 0 ? hobby::kIconGrey : learnMode == 1 ? hobby::kOn : hobby::kRed, true, false,
-                       [this] { learnMode = (learnMode + 1) % 3; stopKnobLearn(); if (learnMode == 1) setMessage (gr ("Press the button or knob you want to assign")); updateToolLamps(); },
-                       gr ("MIDI learn: green = assign pedal, red = remove assignment") });
+        // τα Start quantize, Length quantize και MIDI learn είναι πια στις ρυθμίσεις (Loop recording, MIDI learn)
         loopsView.setToolLamps (std::move (l));
     }
 
@@ -2692,6 +2678,21 @@ private:
             return path;
         };
         h.chooseOrbFolder = [this] { chooseOrbFolder(); };
+        h.startQGet = [this] { return engine.startQ.load(); };
+        h.startQSet = [this] (int v) { engine.startQ = v; saveNow(); };
+        h.lengthQGet = [this] { return engine.lengthQ.load(); };
+        h.lengthQSet = [this] (int v) { engine.lengthQ = v; saveNow(); };
+        h.tapMsGet = [this] { return engine.tapMs.load(); };
+        h.tapMsSet = [this] (int v) { engine.tapMs = v; saveNow(); };
+        h.snapQGet = [this] { return engine.snapQ.load(); };
+        h.snapQSet = [this] (int v) { engine.snapQ = v; saveNow(); };
+        h.learnStart = [this] (int mode)
+        {
+            learnMode = mode;
+            stopKnobLearn();
+            setMessage (mode == 1 ? gr ("Press the button or knob you want to assign") : gr ("Press the button or knob to remove its assignment"));
+            updateToolLamps();
+        };
     }
 
     void openAudioSettings()   // οι ρυθμίσεις ήχου και MIDI ανοίγουν μέσα στην οθόνη του Flow
@@ -3594,7 +3595,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.51.11"; }
+    const String getApplicationVersion() override { return "0.52.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

@@ -44,6 +44,9 @@ public:
         std::function<juce::String()> ipadOtherIps;
         std::function<juce::String()> orbFolderText;
         std::function<void()> chooseOrbFolder;
+        std::function<int()> startQGet, lengthQGet, tapMsGet, snapQGet;
+        std::function<void (int)> startQSet, lengthQSet, tapMsSet, snapQSet;
+        std::function<void (int)> learnStart;   // 1 = ανάθεση, 2 = αφαίρεση· η οθόνη ρυθμίσεων κλείνει
     };
 
     explicit SettingsScreen (juce::Typeface::Ptr face) : typeface (face)
@@ -67,7 +70,7 @@ public:
 
     void open()
     {
-        page = Home; loadScroll = 0; saved = false; waitMaster = false; waitPanic = false;
+        page = Home; loadScroll = 0; saved = false; waitPanic = false;
         nameEditor.setVisible (false);
         setVisible (true); toFront (false);
         startTimerHz (4);
@@ -89,11 +92,11 @@ public:
     void paint (juce::Graphics& g) override
     {
         using namespace juce;
-        hits.clear(); sliderRect = {};
+        hits.clear();
         g.setColour (hobby::kScreen);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 
-        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER VOLUME", "PANIC", "IPAD ORB", "ORB IMAGES" };
+        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "IPAD ORB", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN" };
         g.setColour (dim()); g.setFont (font (13.0f, true));
         g.drawText (titles[(int) page], 40, 26, 500, 20, Justification::centredLeft, false);
         {
@@ -117,6 +120,8 @@ public:
             case Panic:  paintPanic (g); break;
             case Ipad:   paintIpad (g); break;
             case OrbImages: paintOrbImages (g); break;
+            case LoopRec: paintLoopRec (g); break;
+            case Learn:  paintLearn (g); break;
         }
     }
 
@@ -125,12 +130,9 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         mouse = e.getPosition();
-        if (page == Master && sliderRect.contains (e.getPosition())) { draggingSlider = true; sliderTo (e.x); }
     }
-    void mouseDrag (const juce::MouseEvent& e) override { if (draggingSlider) { sliderTo (e.x); } }
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (draggingSlider) { draggingSlider = false; if (onChanged) onChanged(); return; }
         for (int i = (int) hits.size(); --i >= 0;)
             if (hits[(size_t) i].r.contains (e.getPosition()))
             {
@@ -147,7 +149,7 @@ public:
     }
 
 private:
-    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, Ipad, OrbImages };
+    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, Ipad, OrbImages, LoopRec, Learn };
     struct Hit { juce::Rectangle<int> r; std::function<void()> fn; };
 
     static juce::Colour dim()  { return juce::Colour (0xff968e86); }
@@ -159,7 +161,7 @@ private:
 
     void showPage (Page p)
     {
-        page = p; loadScroll = 0; saved = false; waitMaster = false; waitPanic = false;
+        page = p; loadScroll = 0; saved = false; waitPanic = false;
         nameEditor.setVisible (p == Save);
         if (p == Save)
         {
@@ -229,6 +231,8 @@ private:
             case 5: drawSymbol (g, Symbol::Speaker, c, 30.0f, col); break;
             case 6: g.setFont (font (30.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x88\x9e"), Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 7: g.setColour (Colour (0xfff26b6b)); g.setFont (font (30.0f, true)); g.drawText ("!", Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
+            case 9: g.setFont (font (22.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x96\xb6|"), Rectangle<float> (c.x - 24.0f, c.y - 16.0f, 48.0f, 32.0f), Justification::centred, false); break;
+            case 10: g.setFont (font (28.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x97\x8e"), Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 8: drawSymbol (g, Symbol::Window, c, 30.0f, col); break;
             default: break;
         }
@@ -238,27 +242,26 @@ private:
     void paintHome (juce::Graphics& g)
     {
         using namespace juce;
-        struct Tile { int icon; String title, sub; bool hot; std::function<void()> fn; };
-        const auto sets = host.listSets ? host.listSets() : std::vector<SetInfo>();
-        const String sess = host.sessionInfo ? host.sessionInfo() : String();
+        struct Tile { int icon; String title; bool hot, dimmed; std::function<void()> fn; };
         const bool linkAv = host.linkAvailable && host.linkAvailable();
         const bool linkOn = host.linkGet && host.linkGet();
-        const bool ipad = host.ipadGet && host.ipadGet();
-        const String cc = host.panicCodeText ? host.panicCodeText() : String();
         std::vector<Tile> tiles {
-            { 0, "Audio & MIDI", host.audioSummary ? host.audioSummary() : String(), false, [this] { if (host.openAudio) host.openAudio(); } },
-            { 1, "Save set", host.currentSetName ? host.currentSetName() : String(), false, [this] { showPage (Save); } },
-            { 2, "Load set", String ((int) sets.size()) + " sets", false, [this] { showPage (Load); } },
-            { 3, "Restore session", sess.isEmpty() ? String ("none") : sess.upToFirstOccurrenceOf ("  ", false, false), false, [this] { showPage (Restore); } },
-            { 4, "Rec Audio folder", host.recFolder ? host.recFolder().getFileName() : String(), false, [this] { showPage (RecFolder); } },
-            { 5, "Master volume", host.masterGet ? String (roundToInt (host.masterGet() * 100.0f)) + "%" : String(), false, [this] { showPage (Master); } },
-            { 6, "Ableton Link", linkAv ? (linkOn ? "on" : "off") : "not included", linkOn, [this, linkAv] { if (linkAv && host.linkToggle) { host.linkToggle(); } } },
-            { 7, "Panic", cc.isEmpty() ? String ("Esc") : cc, false, [this] { showPage (Panic); } },
-            { 4, "Orb images", host.orbFolderText ? host.orbFolderText() : String(), false, [this] { showPage (OrbImages); } },
+            { 0, "Audio & MIDI", false, false, [this] { if (host.openAudio) host.openAudio(); } },
+            { 1, "Save set", false, false, [this] { showPage (Save); } },
+            { 2, "Load set", false, false, [this] { showPage (Load); } },
+            { 3, "Restore session", false, false, [this] { showPage (Restore); } },
+            { 4, "Rec Audio folder", false, false, [this] { showPage (RecFolder); } },
+            { 5, "Master Output", false, false, [this] { showPage (Master); } },
+            { 6, "Ableton Link", linkOn, ! linkAv, [this, linkAv] { if (linkAv && host.linkToggle) host.linkToggle(); } },
+            { 7, "Panic", false, false, [this] { showPage (Panic); } },
+            { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
+            { 9, "Loop recording", false, false, [this] { showPage (LoopRec); } },
+            { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
         };
         const int cols = 5, gap = 16, x0 = 40, y0 = 74;
+        const int rows = ((int) tiles.size() + cols - 1) / cols;
         const int tw = (getWidth() - 2 * x0 - (cols - 1) * gap) / cols;
-        const int th = jlimit (96, 150, (getHeight() - y0 - 40 - gap) / 2);
+        const int th = jlimit (84, 150, (getHeight() - y0 - 30 - (rows - 1) * gap) / rows);
         for (int i = 0; i < (int) tiles.size(); ++i)
         {
             auto& t = tiles[(size_t) i];
@@ -268,14 +271,12 @@ private:
             g.fillRoundedRectangle (r.toFloat(), 16.0f);
             g.setColour (t.hot ? hobby::kOn : lineC());
             g.drawRoundedRectangle (r.toFloat().reduced (1.0f), 16.0f, t.hot ? 2.0f : 1.0f);
-            drawIcon (g, t.icon, { r.getCentreX() + 0.0f, (float) r.getY() + (float) th * 0.36f }, t.hot ? hobby::kOn : txt());
-            g.setColour (txt()); g.setFont (font (14.0f, true));
-            g.drawText (t.title, r.getX() + 6, r.getBottom() - 42, tw - 12, 18, Justification::centred, true);
-            g.setColour (dim()); g.setFont (font (11.0f));
-            g.drawText (t.sub, r.getX() + 8, r.getBottom() - 24, tw - 16, 16, Justification::centred, true);
+            const Colour ink = t.dimmed ? dim().withAlpha (0.5f) : t.hot ? hobby::kOn : txt();
+            drawIcon (g, t.icon, { r.getCentreX() + 0.0f, (float) r.getY() + (float) th * 0.38f }, ink);
+            g.setColour (t.dimmed ? dim().withAlpha (0.6f) : txt()); g.setFont (font (14.0f, true));
+            g.drawText (t.title, r.getX() + 6, r.getBottom() - 32, tw - 12, 20, Justification::centred, true);
             hits.push_back ({ r, t.fn });
         }
-        note (g, "Press a tile to open it. Esc goes back.", getHeight() - 28);
     }
 
     // ---------- save ----------
@@ -438,59 +439,18 @@ private:
         note (g, "The quick choices change immediately. Any other folder opens the macOS folder window.", getHeight() - 28);
     }
 
-    // ---------- master ----------
-    void sliderTo (int x)
-    {
-        const float v = juce::jlimit (0.0f, 1.0f, (float) (x - sliderRect.getX()) / (float) juce::jmax (1, sliderRect.getWidth()));
-        if (host.masterSet) host.masterSet (v);
-        repaint();
-    }
+    // ---------- master output ----------
     void paintMaster (juce::Graphics& g)
     {
         using namespace juce;
-        const float v = host.masterGet ? host.masterGet() : 1.0f;
-        drawSymbol (g, Symbol::Speaker, { 64.0f, 130.0f }, 38.0f, txt());
-        const int tw = juce::jmin (640, getWidth() - 40 - 100 - 120);
-        sliderRect = { 110, 114, tw, 32 };
-        g.setColour (Colour (0xff36322f)); g.fillRoundedRectangle (sliderRect.toFloat(), 16.0f);
-        const float fx = (float) sliderRect.getWidth() * v;
-        g.setColour (Colour (0xff284234)); g.fillRoundedRectangle ((float) sliderRect.getX(), (float) sliderRect.getY(), jmax (32.0f, fx), 32.0f, 16.0f);
-        g.setColour (hobby::kOn); g.drawRoundedRectangle (sliderRect.toFloat().reduced (1.0f), 16.0f, 2.0f);
-        g.setColour (Colour (0xfffaf8f4)); g.fillEllipse ((float) sliderRect.getX() + jmax (16.0f, fx) - 16.0f, (float) sliderRect.getY(), 32.0f, 32.0f);
-        g.setColour (txt()); g.setFont (font (22.0f, true));
-        g.drawText (String (roundToInt (v * 100.0f)) + "%", sliderRect.getRight() + 24, 112, 100, 36, Justification::centredLeft, false);
-        for (float p : { 1.0f, 0.85f, 0.7f, 0.5f })
-        {
-            const Rectangle<int> r (sliderRect.getX() + roundToInt ((float) sliderRect.getWidth() * p) - 28, 156, 56, 26);
-            const bool on = std::abs (v - p) < 0.01f;
-            g.setColour (on ? hobby::kOn : dim()); g.setFont (font (12.0f, on));
-            g.drawText (String (roundToInt (p * 100.0f)) + "%", r, Justification::centred, false);
-            hits.push_back ({ r, [this, p] { if (host.masterSet) host.masterSet (p); if (onChanged) onChanged(); repaint(); } });
-        }
-        // limiter
-        {
-            const Rectangle<int> r (40, 214, 340, 64);
-            const bool on = host.limiterGet && host.limiterGet();
-            g.setColour (hov (r) ? Colour (0xff36322f) : card()); g.fillRoundedRectangle (r.toFloat(), 14.0f);
-            g.setColour (lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 14.0f, 1.0f);
-            g.setColour (txt()); g.setFont (font (15.0f, true)); g.drawText ("Safety limiter", r.getX() + 22, r.getY() + 12, 200, 20, Justification::centredLeft, false);
-            g.setColour (dim()); g.setFont (font (11.0f)); g.drawText ("protects against loud peaks", r.getX() + 22, r.getY() + 34, 220, 16, Justification::centredLeft, false);
-            toggleSwitch (g, { (float) r.getRight() - 64.0f, (float) r.getY() + 20.0f, 42.0f, 24.0f }, on);
-            hits.push_back ({ r, [this, on] { if (host.limiterSet) host.limiterSet (! on); if (onChanged) onChanged(); repaint(); } });
-        }
-        // knob
-        {
-            const Rectangle<int> r (400, 214, juce::jmin (420, getWidth() - 440), 64);
-            const String cc = host.masterCcText ? host.masterCcText() : String();
-            g.setColour (card()); g.fillRoundedRectangle (r.toFloat(), 14.0f);
-            g.setColour (lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 14.0f, 1.0f);
-            g.setColour (txt()); g.setFont (font (15.0f, true)); g.drawText ("Knob", r.getX() + 22, r.getY() + 12, 120, 20, Justification::centredLeft, false);
-            g.setColour (dim()); g.setFont (font (11.0f)); if (waitMaster && cc != ccAtAssign) waitMaster = false;
-            g.drawText (waitMaster ? String ("Move the knob now...") : cc.isEmpty() ? String ("MIDI learn: move a knob") : "Now: " + cc, r.getX() + 22, r.getY() + 34, 200, 16, Justification::centredLeft, true);
-            pill (g, { r.getRight() - 214, r.getY() + 14, 100, 36 }, "Assign", false, true, [this, cc] { if (host.masterAssign) host.masterAssign(); ccAtAssign = cc; waitMaster = true; repaint(); });
-            pill (g, { r.getRight() - 106, r.getY() + 14, 92, 36 }, "Remove", false, cc.isNotEmpty(), [this] { if (host.masterRemove) host.masterRemove(); if (onChanged) onChanged(); repaint(); });
-        }
-        note (g, "Drag the slider or press 100 / 85 / 70 / 50.", getHeight() - 28);
+        const Rectangle<int> r (40, 74, 340, 64);
+        const bool on = host.limiterGet && host.limiterGet();
+        g.setColour (hov (r) ? Colour (0xff36322f) : card()); g.fillRoundedRectangle (r.toFloat(), 14.0f);
+        g.setColour (lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 14.0f, 1.0f);
+        g.setColour (txt()); g.setFont (font (15.0f, true)); g.drawText ("Safety limiter", r.getX() + 22, r.getY() + 12, 200, 20, Justification::centredLeft, false);
+        g.setColour (dim()); g.setFont (font (11.0f)); g.drawText ("protects against loud peaks", r.getX() + 22, r.getY() + 34, 220, 16, Justification::centredLeft, false);
+        toggleSwitch (g, { (float) r.getRight() - 64.0f, (float) r.getY() + 20.0f, 42.0f, 24.0f }, on);
+        hits.push_back ({ r, [this, on] { if (host.limiterSet) host.limiterSet (! on); if (onChanged) onChanged(); repaint(); } });
     }
 
     // ---------- panic ----------
@@ -573,16 +533,69 @@ private:
         note (g, "At every start Flow picks a random image from this folder (jpg, png) and shows it in the orb.", getHeight() - 28);
     }
 
+    // ---------- loop recording ----------
+    void chipRow (juce::Graphics& g, int x, int y, const juce::String& label, const juce::String& desc,
+                  const std::vector<juce::String>& opts, int sel, std::function<void (int)> setFn)
+    {
+        using namespace juce;
+        g.setColour (txt()); g.setFont (font (14.0f, true));
+        g.drawText (label, x, y, 360, 20, Justification::centredLeft, false);
+        g.setColour (dim()); g.setFont (font (11.0f));
+        g.drawText (desc, x, y + 22, 400, 16, Justification::centredLeft, false);
+        for (int i = 0; i < (int) opts.size(); ++i)
+        {
+            const Rectangle<int> r (x + i * 118, y + 46, 108, 40);
+            const bool on = i == sel;
+            g.setColour (on ? Colour (0xff284234) : (hov (r) ? Colour (0xff423d39) : Colour (0xff36322f)));
+            g.fillRoundedRectangle (r.toFloat(), 20.0f);
+            g.setColour (on ? hobby::kOn : lineC());
+            g.drawRoundedRectangle (r.toFloat().reduced (1.0f), 20.0f, on ? 2.0f : 1.0f);
+            g.setColour (on ? hobby::kOn : txt()); g.setFont (font (14.0f, true));
+            g.drawText (opts[(size_t) i], r, Justification::centred, false);
+            hits.push_back ({ r, [this, setFn, i] { setFn (i); if (onChanged) onChanged(); repaint(); } });
+        }
+    }
+    void paintLoopRec (juce::Graphics& g)
+    {
+        const int x1 = 40, x2 = juce::jmax (440, getWidth() / 2 + 10);
+        const int tapMs = host.tapMsGet ? host.tapMsGet() : 500;
+        chipRow (g, x1, 76, "Start quantize", "Where the loop starts when you press Rec MIDI loop", { "Off", "Beat", "Bar" },
+                 host.startQGet ? host.startQGet() : 0, [this] (int v) { if (host.startQSet) host.startQSet (v); });
+        chipRow (g, x2, 76, "Length quantize", "The loop length snaps to whole beats or bars", { "Off", "Beat", "Bar" },
+                 host.lengthQGet ? host.lengthQGet() : 0, [this] (int v) { if (host.lengthQSet) host.lengthQSet (v); });
+        chipRow (g, x1, 200, "Pedal press wait", "Time window for repeated pedal presses", { "0.5 s", "0.7 s", "1.0 s" },
+                 tapMs < 600 ? 0 : tapMs < 900 ? 1 : 2, [this] (int v) { if (host.tapMsSet) host.tapMsSet (v == 0 ? 500 : v == 1 ? 700 : 1000); });
+        chipRow (g, x2, 200, "Note quantize", "The notes you play snap to the grid", { "Off", "1/8", "1/16" },
+                 host.snapQGet ? host.snapQGet() : 0, [this] (int v) { if (host.snapQSet) host.snapQSet (v); });
+    }
+
+    // ---------- midi learn ----------
+    void paintLearn (juce::Graphics& g)
+    {
+        using namespace juce;
+        pill (g, { 40, 84, 330, 56 }, "Assign a pedal or key", true, true, [this] { if (host.learnStart) host.learnStart (1); close(); });
+        {
+            const Rectangle<int> r (390, 84, 300, 56);
+            const bool h = hov (r);
+            g.setColour (h ? Colour (0xff5a3a3a) : Colour (0xff4a3232)); g.fillRoundedRectangle (r.toFloat(), 28.0f);
+            g.setColour (Colour (0xfff26b6b)); g.drawRoundedRectangle (r.toFloat().reduced (1.0f), 28.0f, 2.0f);
+            g.setFont (font (14.0f, true));
+            g.drawText ("Remove an assignment", r, Justification::centred, false);
+            hits.push_back ({ r, [this] { if (host.learnStart) host.learnStart (2); close(); } });
+        }
+        g.setColour (dim()); g.setFont (font (12.0f));
+        g.drawFittedText ("After you press one of them, this screen closes. Press the button on the screen you want to control, then the pedal or key. Esc cancels.",
+                          40, 168, juce::jmin (640, getWidth() - 80), 40, Justification::topLeft, 3);
+    }
+
     void timerCallback() override { if (isVisible()) repaint(); }
 
     juce::Typeface::Ptr typeface;
     juce::TextEditor nameEditor;
     std::vector<Hit> hits;
     juce::Point<int> mouse { -1, -1 };
-    juce::Rectangle<int> sliderRect;
-    bool draggingSlider = false;
     Page page = Home;
     int loadScroll = 0, loadMaxScroll = 0;
-    bool saved = false, waitMaster = false, waitPanic = false;
+    bool saved = false, waitPanic = false;
     juce::String ccAtAssign;
 };

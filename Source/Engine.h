@@ -1210,6 +1210,25 @@ namespace flow
 
             const int code = (kind << 16) | (msg.getChannel() << 8) | num;
 
+            // MIDI learn πεταλιού έντασης (πρώτο, ώστε να μην το καταναλώσει knob ή master): η πρώτη κίνηση ενός CC το αναθέτει στο block.
+            // Το ίδιο CC σβήνεται από knobs, master και κουμπιά: ένα CC ανήκει σε ένα μόνο χειριστήριο.
+            const int vl = volLearn.load();
+            if (vl >= 0 && kind == 2)
+            {
+                volMap[(size_t) vl] = code;
+                for (int i = 0; i < numControls; ++i)
+                    if (mapCode[(size_t) i].load() == code) mapCode[(size_t) i] = 0;
+                for (int k = 0; k < 8; ++k)
+                    if (knobCc[(size_t) k].load() == code) knobCc[(size_t) k] = 0;
+                if (masterCc.load() == code) masterCc = 0;
+                volLearnedBlock = vl;
+                volLearnedCode = code;
+                ++volLearnedCount;
+                volLearn = -1;
+                ++changeCount;
+                return true;
+            }
+
             // ποτενσιόμετρα: learn (πρώτο CC που κινείται) και κανονική λειτουργία (η τιμή περνά στο UI, το plugin δεν παίρνει το CC)
             if (kind == 2)
             {
@@ -1218,6 +1237,8 @@ namespace flow
                 {
                     for (int k = 0; k < 8; ++k)
                         if (knobCc[(size_t) k].load() == code) knobCc[(size_t) k] = 0;
+                    for (int b = 0; b < numBlocks; ++b)
+                        if (volMap[(size_t) b].load() == code) volMap[(size_t) b] = 0;
                     masterCc = code;
                     masterPos = kv;
                     masterLearn = 0;
@@ -1231,6 +1252,9 @@ namespace flow
                 {
                     for (int k = 0; k < 8; ++k)
                         if (knobCc[(size_t) k].load() == code) knobCc[(size_t) k] = 0;
+                    for (int b = 0; b < numBlocks; ++b)
+                        if (volMap[(size_t) b].load() == code) volMap[(size_t) b] = 0;
+                    if (masterCc.load() == code) masterCc = 0;
                     knobCc[(size_t) ks] = code;
                     knobIn[(size_t) ks] = kv;
                     knobLearnedSlot = ks;
@@ -1240,21 +1264,6 @@ namespace flow
                 }
                 for (int k = 0; k < 8; ++k)
                     if (knobCc[(size_t) k].load() == code) { knobIn[(size_t) k] = kv; return true; }
-            }
-
-            // MIDI learn πεταλιού έντασης: η πρώτη κίνηση ενός CC το αναθέτει στο block
-            const int vl = volLearn.load();
-            if (vl >= 0 && kind == 2)
-            {
-                volMap[(size_t) vl] = code;
-                for (int i = 0; i < numControls; ++i)
-                    if (mapCode[(size_t) i].load() == code) mapCode[(size_t) i] = 0;
-                volLearnedBlock = vl;
-                volLearnedCode = code;
-                ++volLearnedCount;
-                volLearn = -1;
-                ++changeCount;
-                return true;
             }
 
             // MIDI learn κουμπιού
