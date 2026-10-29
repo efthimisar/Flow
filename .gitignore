@@ -1,3 +1,8 @@
 build/
 dist/
 .DS_Store
+
+# signing keys never go in the repository (they live in GitHub secrets)
+*.p12
+*.pem
+*.key
