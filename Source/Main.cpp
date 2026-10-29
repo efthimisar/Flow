@@ -2684,6 +2684,8 @@ private:
         h.lengthQSet = [this] (int v) { engine.lengthQ = v; saveNow(); };
         h.tapMsGet = [this] { return engine.tapMs.load(); };
         h.tapMsSet = [this] (int v) { engine.tapMs = v; saveNow(); };
+        h.autoLoopGet = [this] { return engine.autoLoop.load(); };
+        h.autoLoopSet = [this] (int v) { engine.autoLoop = v; saveNow(); };
         h.snapQGet = [this] { return engine.snapQ.load(); };
         h.snapQSet = [this] (int v) { engine.snapQ = v; saveNow(); };
         h.learnStart = [this] (int mode)
@@ -3595,7 +3597,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.52.1"; }
+    const String getApplicationVersion() override { return "0.52.2"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

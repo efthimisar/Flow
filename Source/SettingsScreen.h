@@ -46,6 +46,8 @@ public:
         std::function<void()> chooseOrbFolder;
         std::function<int()> startQGet, lengthQGet, tapMsGet, snapQGet;
         std::function<void (int)> startQSet, lengthQSet, tapMsSet, snapQSet;
+        std::function<int()> autoLoopGet;
+        std::function<void (int)> autoLoopSet;
         std::function<void (int)> learnStart;   // 1 = ανάθεση, 2 = αφαίρεση· η οθόνη ρυθμίσεων κλείνει
     };
 
@@ -565,6 +567,8 @@ private:
                  host.lengthQGet ? host.lengthQGet() : 0, [this] (int v) { if (host.lengthQSet) host.lengthQSet (v); });
         chipRow (g, x1, 200, "Pedal press wait", "Time window for repeated pedal presses", { "0.5 s", "0.7 s", "1.0 s" },
                  tapMs < 600 ? 0 : tapMs < 900 ? 1 : 2, [this] (int v) { if (host.tapMsSet) host.tapMsSet (v == 0 ? 500 : v == 1 ? 700 : 1000); });
+        chipRow (g, x1, 324, "Auto loop", "Detects a repeat: starts by itself, or when you press Rec MIDI loop", { "Off", "Auto", "On Rec" },
+                 host.autoLoopGet ? host.autoLoopGet() : 0, [this] (int v) { if (host.autoLoopSet) host.autoLoopSet (v); });
         chipRow (g, x2, 200, "Note quantize", "The notes you play snap to the grid", { "Off", "1/8", "1/16" },
                  host.snapQGet ? host.snapQGet() : 0, [this] (int v) { if (host.snapQSet) host.snapQSet (v); });
     }

@@ -943,39 +943,7 @@ public:
                     tx += 26.0f;
                 }
             }
-            // φωτάκια ρυθμίσεων looper (δεξιά, μικρά): A = ανίχνευση, ≈ = αναμονή πατημάτων, # = snap νοτών
-            if (! metroStrip)
-            {
-                const float ly = sy + sh * 0.5f;
-                const float R = 9.0f;                         // ακτίνα φωτακιού
-                const float valW = 0.0f;
-                const int sel = jlimit (0, flow::numBlocks - 1, selected);
-                const int mode = engine.autoLoop.load();
-                const bool paused = engine.autoPausedOut[(size_t) sel].load() != 0;
-                const bool ready = mode != 0 && ! paused && engine.autoReadyOut[(size_t) sel].load() != 0;
-
-                // x από δεξιά: [A] ... τελεία MIDI (τα ≈ και # μεταφέρθηκαν στις ρυθμίσεις)
-                float lx = (float) w - 44.0f - 2.0f * R + R;
-
-                // σκέτα σύμβολα (χωρίς κυκλάκι): φωτίζουν όταν είναι ενεργά. Κάθε πάτημα αλλάζει επίπεδο.
-                auto zone = [&] (float x, const String& tip, std::function<void()> fn)
-                {
-                    const Rectangle<float> r (x - R, ly - R - 2.0f, 2.0f * R + valW, 2.0f * R + 4.0f);
-                    hot.push_back ({ r, fn });
-                    tipZones.push_back ({ r, tip });
-                };
-                const bool aOn = mode != 0 && ! paused;
-                const double pul = ready ? hobby::pulse (Time::getMillisecondCounterHiRes() * 0.001 * 1.5) : 0.0;
-
-                {   // A: ανίχνευση επανάληψης
-                    const Colour c = aOn ? (mode == 2 ? hobby::mix (hobby::kLilac, Colours::white, (float) pul * 0.6f) : hobby::kOn) : Colour (0xff6b625a);
-                    g.setColour (c);
-                    g.setFont (hobby::makeFont (typeface, 16.0f));
-                    g.drawText ("A", Rectangle<float> (lx - R, ly - R, 2.0f * R, 2.0f * R), Justification::centred, false);
-                    zone (lx, String::fromUTF8 ("Auto-detect repeat: Off → Auto (starts by itself) → on Rec MIDI loop press"),
-                          [this] { engine.autoLoop = (engine.autoLoop.load() + 1) % 3; if (onMetroChange) onMetroChange(); });
-                }
-            }
+            // τα A (Auto loop), ≈ και # μεταφέρθηκαν στις ρυθμίσεις (Loop recording)
             if (notice.isNotEmpty())   // μηνύματα: γκρι γράμματα κάτω αριστερά στην οθόνη της λούπας, χωρίς φόντο
             {
                 g.setFont (hobby::makeFont (typeface, 13.0f));
