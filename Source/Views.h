@@ -1164,13 +1164,15 @@ public:
             const float h = 4.0f + 1.5f * bob * (1.0f - lift) + 9.0f * lift;     // «ύψος» σε εικονοστοιχεία
 
             {
-                const float cxs = p.x + h * 0.35f, cys = p.y + h * 1.4f + 4.0f;
-                const float rx = r * 0.95f, bl = 5.0f + h * 0.95f;      // πιο θολή σκιά
-                const float a = jlimit (0.2f, 0.85f, 0.86f - h * 0.02f);
-                Graphics::ScopedSaveState ss (g);
-                g.addTransform (AffineTransform::scale (1.0f, 0.5f, cxs, cys));
-                g.setGradientFill (ColourGradient (Colours::black.withAlpha (a), cxs, cys, Colours::transparentBlack, cxs + rx + bl, cys, true));
-                g.fillEllipse (cxs - rx - bl, cys - rx - bl, 2.0f * (rx + bl), 2.0f * (rx + bl));
+                // στρογγυλή, πολύ θολή σκιά ακριβώς κάτω από την τελεία· όταν την κρατάς απομακρύνεται και θολώνει λίγο
+                const float cxs = p.x, cys = p.y + 18.0f + 1.5f * bob * (1.0f - lift) + 8.0f * lift;
+                const float R = (r + 22.0f) * (1.0f + 0.35f * lift);
+                const float a = 0.155f * (1.0f - 0.25f * lift);
+                ColourGradient gr (Colours::black.withAlpha (a), cxs, cys, Colours::transparentBlack, cxs + R, cys, true);
+                gr.addColour (0.35, Colours::black.withAlpha (a * 0.78f));
+                gr.addColour (0.70, Colours::black.withAlpha (a * 0.22f));
+                g.setGradientFill (gr);
+                g.fillEllipse (cxs - R, cys - R, 2.0f * R, 2.0f * R);
             }
 
             const float py = p.y - h * 0.45f;
