@@ -39,7 +39,8 @@ public:
           stopTile (Symbol::Undo, typeface),
           tapeTile (Symbol::Tape, typeface),
           metroTile (Symbol::Tempo, typeface),
-          folderTile (Symbol::Sliders, typeface)
+          folderTile (Symbol::Sliders, typeface),
+          smartTile (Symbol::Rings, typeface)
     {
         PropertiesFile::Options options;
         options.applicationName     = "Flow";
@@ -133,7 +134,18 @@ public:
             if (what == 1) chooseMetroSample();
             else { metroSamplePath = {}; engine.setMetroSample (AudioBuffer<float>()); saveNow(); }
         };
-        folderTile.onClick = [this] { if (settingsScreen.isVisible()) settingsScreen.close(); else openSettingsScreen(); };
+        folderTile.onClick = [this] { if (settingsScreen.isVisible()) settingsScreen.close(); else openSettingsScreen(); refreshSmartTile(); };
+        smartTile.setTooltip (gr ("Smart master: level of the three bands and stereo width of every block, with suggestions by sound type (third screen)"));
+        smartTile.onClick = [this]
+        {
+            if (settingsScreen.isSmartDirect()) { settingsScreen.close(); return; }
+            loopsView.openMenu (false);
+            if (audioPanel.isVisible()) audioPanel.close();
+            settingsScreen.setBounds (loopsBezel.reduced (5));
+            settingsScreen.openSmart();
+            settingsScreen.grabKeyboardFocus();
+            refreshSmartTile();
+        };
         loopsView.onMenuOpen = [this] { buildScreenMenu(); loopsView.setMenuInfo (menuInfoRows()); };
 
         loopsView.onSelect = [this] (int b) { selectBlock (b); };
@@ -345,9 +357,9 @@ public:
 
 private:
     //==========================================================================
-    std::array<ValueTile*, 11> tiles()
+    std::array<ValueTile*, 12> tiles()
     {
-        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
+        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile, &smartTile };
     }
 
     bool isActive (int b) const { return b >= 0 && b < flow::numBlocks && engine.active[(size_t) b].load() != 0; }
@@ -596,7 +608,7 @@ private:
         const int leftX = strip.getX() + 14;
         const int midW = 4 * 52 + 3 * 8;
         const int rightX = strip.getRight() - 14 - 52;
-        const int leftEnd = leftX + 5 * 60 + 112, rightStart = rightX - 60;
+        const int leftEnd = leftX + 5 * 60 + 112 + 60, rightStart = rightX - 60;
         const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);
 
         int x = leftX;
@@ -606,6 +618,7 @@ private:
             x += 60;
         }
         orbRecTile.setBounds (x, ty, 112, 52);
+        smartTile.setBounds (x + 120, ty, 52, 52);
         x = midX;
         for (auto* t : { &recTile, &stopTile, &undoTile, &tapeTile })
         {
@@ -2586,6 +2599,11 @@ private:
     }
 
     //==========================================================================
+    void refreshSmartTile()
+    {
+        smartTile.setIconColour (settingsScreen.isSmartDirect() ? hobby::kOn : hobby::kIconGrey);
+    }
+
     void openSettingsScreen()
     {
         loopsView.openMenu (false);
@@ -2600,7 +2618,7 @@ private:
         auto& h = settingsScreen.host;
         settingsScreen.setWantsKeyboardFocus (true);
         settingsScreen.onChanged = [this] { saveNow(); };
-        settingsScreen.onClose = [this] { grabKeyboardFocus(); repaint(); };
+        settingsScreen.onClose = [this] { grabKeyboardFocus(); refreshSmartTile(); repaint(); };
         h.openAudio = [this] { settingsScreen.hideForPanel(); audioFromSettings = true; openAudioSettings(); };
         h.audioSummary = [this] { auto* d = deviceManager.getCurrentAudioDevice(); return d != nullptr ? d->getName() : String(); };
         h.currentSetName = [this] { return currentSetName; };
@@ -3679,7 +3697,7 @@ private:
     AudioMidiPanel audioPanel { deviceManager, typeface };
     SettingsScreen settingsScreen { typeface };
     bool audioFromSettings = false;
-    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile;
+    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile, smartTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
@@ -3689,7 +3707,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.54.0"; }
+    const String getApplicationVersion() override { return "0.55.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

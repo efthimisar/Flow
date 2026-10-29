@@ -89,8 +89,17 @@ public:
     Host host;
     std::function<void()> onChanged, onClose;
 
+    // η οθόνη Smart master ανοίγει απευθείας από το δικό της κουμπί (όχι από το πλέγμα των ρυθμίσεων)
+    void openSmart()
+    {
+        open();
+        direct = true; page = Smart;
+        repaint();
+    }
+    bool isSmartDirect() const { return isVisible() && direct && page == Smart; }
     void open()
     {
+        direct = false;
         page = Home; loadScroll = 0; saved = false; waitPanic = false;
         nameEditor.setVisible (false);
         setVisible (true); toFront (false);
@@ -106,7 +115,7 @@ public:
     }
     void hideForPanel() { stopTimer(); nameEditor.setVisible (false); setVisible (false); }   // χωρίς onClose: επιστρέφει με open()
     // Esc: πίσω στο πλέγμα, και από το πλέγμα κλείνει
-    bool goBack() { if (page == Home) { close(); return true; } showPage (Home); return true; }
+    bool goBack() { if (page == Home || (direct && page == Smart)) { close(); return true; } showPage (Home); return true; }
 
     void resized() override { layoutEditor(); }
 
@@ -127,7 +136,7 @@ public:
             g.setColour (txt());
             g.drawLine ((float) r.getX() + 8.0f, (float) r.getY() + 8.0f, (float) r.getRight() - 8.0f, (float) r.getBottom() - 8.0f, 2.0f);
             g.drawLine ((float) r.getX() + 8.0f, (float) r.getBottom() - 8.0f, (float) r.getRight() - 8.0f, (float) r.getY() + 8.0f, 2.0f);
-            hits.push_back ({ r, [this] { if (page == Home) close(); else showPage (Home); } });
+            hits.push_back ({ r, [this] { if (page == Home || (direct && page == Smart)) close(); else showPage (Home); } });
         }
 
         switch (page)
@@ -299,7 +308,6 @@ private:
             { 9, "Loop recording", false, false, [this] { showPage (LoopRec); } },
             { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
             { 8, "Window size", false, false, [this] { showPage (WindowSize); } },
-            { 11, "Smart master", false, false, [this] { showPage (Smart); } },
         };
         const int cols = 5, gap = 16, x0 = 40, y0 = 74;
         const int rows = ((int) tiles.size() + cols - 1) / cols;
@@ -860,6 +868,7 @@ private:
     juce::TextEditor nameEditor;
     std::vector<Hit> hits;
     juce::Point<int> mouse { -1, -1 };
+    bool direct = false;
     juce::Rectangle<int> dialRect;
     bool dialDrag = false, dialMoved = false;
     int dialY0 = 0;

@@ -397,6 +397,16 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (s, 2.2f);
             break;
         }
+        case Symbol::Rings:   // Smart master: τρεις ομόκεντροι δακτύλιοι
+        {
+            juce::Path p;
+            const float r[3] { 10.0f, 6.5f, 3.2f }, sweep[3] { 250.0f, 200.0f, 150.0f };
+            for (int i = 0; i < 3; ++i)
+                p.addCentredArc (0.0f, 0.0f, r[i], r[i], 0.0f, juce::degreesToRadians (-135.0f),
+                                 juce::degreesToRadians (-135.0f + sweep[i]), true);
+            stroke (p, 1.8f);
+            break;
+        }
         case Symbol::Sliders:   // ρυθμιστικά (ρυθμίσεις)
         {
             juce::Path p;
