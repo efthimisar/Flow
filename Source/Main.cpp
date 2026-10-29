@@ -235,6 +235,9 @@ public:
         favPlugins.removeEmptyStrings();
         engine.masterPos = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("masterPos", 1.0));
         engine.limiterOn = settings->getIntValue ("limiterOn", 1) != 0 ? 1 : 0;
+        engine.smartOn = settings->getIntValue ("smartOn", 0) != 0 ? 1 : 0;
+        engine.smartAuto = settings->getIntValue ("smartAuto", 0) != 0 ? 1 : 0;
+        engine.smartAccept = jlimit (0.0f, 1.0f, (float) settings->getDoubleValue ("smartAccept", 0.6));
         engine.masterCc = settings->getIntValue ("masterCc", 0);
         metroSamplePath = settings->getValue ("metroSample");
 
@@ -1977,6 +1980,7 @@ private:
             engine.holdMode[(size_t) block] = 0;
             engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
             engine.curveMode[(size_t) block] = 0;
+            engine.smartType[(size_t) block] = 0; engine.smartAppLow[(size_t) block] = 0.0f; engine.smartAppWidth[(size_t) block] = 1.0f;
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
             engine.transpose[(size_t) block] = 0;
@@ -2154,6 +2158,7 @@ private:
         engine.holdMode[(size_t) block] = 0;
         engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
         engine.curveMode[(size_t) block] = 0;
+        engine.smartType[(size_t) block] = 0; engine.smartAppLow[(size_t) block] = 0.0f; engine.smartAppWidth[(size_t) block] = 1.0f;
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
         engine.transpose[(size_t) block] = 0;
@@ -2685,6 +2690,43 @@ private:
         h.lengthQSet = [this] (int v) { engine.lengthQ = v; saveNow(); };
         h.tapMsGet = [this] { return engine.tapMs.load(); };
         h.tapMsSet = [this] (int v) { engine.tapMs = v; saveNow(); };
+        h.smartBlocks = [this]
+        {
+            std::vector<SettingsScreen::SmartBlock> v ((size_t) flow::numBlocks);
+            for (int b = 0; b < flow::numBlocks; ++b)
+            {
+                auto& x = v[(size_t) b];
+                if (auto* p = engine.getPlugin (b)) { x.active = true; x.name = p->getName(); }
+                x.type = engine.smartType[(size_t) b].load();
+                x.low = engine.smartLow[(size_t) b].load(); x.mid = engine.smartMid[(size_t) b].load();
+                x.high = engine.smartHigh[(size_t) b].load(); x.width = engine.smartWidth[(size_t) b].load();
+                flow::smartLimits (x.type, x.lim);
+                x.needLow = engine.smartNeedLow[(size_t) b].load(); x.needW = engine.smartNeedWidth[(size_t) b].load();
+                x.appLow = engine.smartAppLow[(size_t) b].load(); x.appW = engine.smartAppWidth[(size_t) b].load();
+            }
+            return v;
+        };
+        h.smartOnGet = [this] { return engine.smartOn.load(); };
+        h.smartOnSet = [this] (int v) { engine.smartOn = v; saveNow(); };
+        h.smartModeGet = [this] { return engine.smartAuto.load(); };
+        h.smartModeSet = [this] (int v) { engine.smartAuto = v; saveNow(); };
+        h.smartAcceptGet = [this] { return engine.smartAccept.load(); };
+        h.smartAcceptSet = [this] (float v) { engine.smartAccept = v; saveNow(); };
+        h.smartTypeSet = [this] (int b, int t)
+        {
+            engine.smartType[(size_t) b] = jlimit (0, 5, t);
+            engine.smartAppLow[(size_t) b] = 0.0f; engine.smartAppWidth[(size_t) b] = 1.0f;   // νέος τύπος: καθαρή αρχή
+            saveNow();
+        };
+        h.smartApply = [this] (int b)
+        {
+            // Ask: ✓ εφαρμόζει την τρέχουσα πρόταση (στο ποσοστό αποδοχής)· ✓ ξανά την αναιρεί
+            const bool applied = engine.smartAppLow[(size_t) b].load() > 0.2f || engine.smartAppWidth[(size_t) b].load() < 0.98f;
+            if (applied) { engine.smartAppLow[(size_t) b] = 0.0f; engine.smartAppWidth[(size_t) b] = 1.0f; return; }
+            const float acc = engine.smartAccept.load();
+            engine.smartAppLow[(size_t) b] = engine.smartNeedLow[(size_t) b].load() * acc;
+            engine.smartAppWidth[(size_t) b] = 1.0f - (1.0f - engine.smartNeedWidth[(size_t) b].load()) * acc;
+        };
         h.windowSizeGet = [this] { return windowSizeMode; };
         h.windowSizeSet = [this] (int v) { windowSizeMode = jlimit (0, 3, v); applyWindowSize (true); saveNow(); };
         h.windowSizeFits = [this] (int v) { return windowSizeFits (v); };
@@ -2865,6 +2907,7 @@ private:
             e->setAttribute ("hold", engine.holdMode[(size_t) b].load());
             e->setAttribute ("al", engine.getAlText (b));
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
+            e->setAttribute ("stype", engine.smartType[(size_t) b].load());
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
             e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : 0);
             e->setAttribute ("lsilent", engine.liveSilent[(size_t) b].load());
@@ -3076,6 +3119,8 @@ private:
             engine.holdMode[(size_t) slot]  = jlimit (0, 4, e->getIntAttribute ("hold", 0));
             engine.setAlText (slot, e->getStringAttribute ("al"));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
+            engine.smartType[(size_t) slot] = jlimit (0, 5, e->getIntAttribute ("stype", 0));
+            engine.smartAppLow[(size_t) slot] = 0.0f; engine.smartAppWidth[(size_t) slot] = 1.0f;
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
             if (e->getIntAttribute ("special", 0) != 0) engine.specialBlock = slot;
             engine.liveSilent[(size_t) slot] = jlimit (0, 1, e->getIntAttribute ("lsilent", 1));
@@ -3239,6 +3284,9 @@ private:
         settings->setValue ("favPlugins", favPlugins.joinIntoString ("\n"));
         settings->setValue ("masterPos", (double) engine.masterPos.load());
         settings->setValue ("limiterOn", engine.limiterOn.load());
+        settings->setValue ("smartOn", engine.smartOn.load());
+        settings->setValue ("smartAuto", engine.smartAuto.load());
+        settings->setValue ("smartAccept", (double) engine.smartAccept.load());
         settings->setValue ("masterCc", engine.masterCc.load());
         settings->setValue ("metroChannel", engine.metroChannel.load());
         settings->setValue ("metroSample", metroSamplePath);
@@ -3641,7 +3689,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.53.0"; }
+    const String getApplicationVersion() override { return "0.54.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
