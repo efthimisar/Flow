@@ -48,6 +48,9 @@ public:
         std::function<void (int)> startQSet, lengthQSet, tapMsSet, snapQSet;
         std::function<int()> autoLoopGet;
         std::function<void (int)> autoLoopSet;
+        std::function<int()> windowSizeGet;      // 0 Compact, 1 Default, 2 Large, 3 Free
+        std::function<void (int)> windowSizeSet;
+        std::function<bool (int)> windowSizeFits;
         std::function<void (int)> learnStart;   // 1 = ανάθεση, 2 = αφαίρεση· η οθόνη ρυθμίσεων κλείνει
     };
 
@@ -98,7 +101,7 @@ public:
         g.setColour (hobby::kScreen);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 
-        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "IPAD ORB", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN" };
+        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "IPAD ORB", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE" };
         g.setColour (dim()); g.setFont (font (13.0f, true));
         g.drawText (titles[(int) page], 40, 26, 500, 20, Justification::centredLeft, false);
         {
@@ -124,6 +127,7 @@ public:
             case OrbImages: paintOrbImages (g); break;
             case LoopRec: paintLoopRec (g); break;
             case Learn:  paintLearn (g); break;
+            case WindowSize: paintWindowSize (g); break;
         }
     }
 
@@ -151,7 +155,7 @@ public:
     }
 
 private:
-    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, Ipad, OrbImages, LoopRec, Learn };
+    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, Ipad, OrbImages, LoopRec, Learn, WindowSize };
     struct Hit { juce::Rectangle<int> r; std::function<void()> fn; };
 
     static juce::Colour dim()  { return juce::Colour (0xff968e86); }
@@ -259,6 +263,7 @@ private:
             { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
             { 9, "Loop recording", false, false, [this] { showPage (LoopRec); } },
             { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
+            { 8, "Window size", false, false, [this] { showPage (WindowSize); } },
         };
         const int cols = 5, gap = 16, x0 = 40, y0 = 74;
         const int rows = ((int) tiles.size() + cols - 1) / cols;
@@ -571,6 +576,36 @@ private:
                  host.autoLoopGet ? host.autoLoopGet() : 0, [this] (int v) { if (host.autoLoopSet) host.autoLoopSet (v); });
         chipRow (g, x2, 200, "Note quantize", "The notes you play snap to the grid", { "Off", "1/8", "1/16" },
                  host.snapQGet ? host.snapQGet() : 0, [this] (int v) { if (host.snapQSet) host.snapQSet (v); });
+    }
+
+    // ---------- window size ----------
+    void paintWindowSize (juce::Graphics& g)
+    {
+        using namespace juce;
+        struct Opt { const char* name; const char* dim; };
+        const Opt opts[] = { { "Compact", "822 x 650" }, { "Default", "1097 x 810" }, { "Large", "1280 x 940" }, { "Free", "drag the edges" } };
+        const int cur = host.windowSizeGet ? host.windowSizeGet() : 1;
+        const int gap = 16, x0 = 40, y0 = 84;
+        const int tw = juce::jmin (230, (getWidth() - 2 * x0 - 3 * gap) / 4);
+        for (int i = 0; i < 4; ++i)
+        {
+            const bool fits = ! host.windowSizeFits || host.windowSizeFits (i);
+            const bool on = i == cur;
+            const Rectangle<int> r (x0 + i * (tw + gap), y0, tw, 110);
+            g.setColour (hov (r) && fits ? Colour (0xff36322f) : card());
+            g.fillRoundedRectangle (r.toFloat(), 16.0f);
+            g.setColour (on ? hobby::kOn : lineC());
+            g.drawRoundedRectangle (r.toFloat().reduced (1.0f), 16.0f, on ? 2.0f : 1.0f);
+            g.setColour (fits ? (on ? hobby::kOn : txt()) : dim().withAlpha (0.5f));
+            g.setFont (font (16.0f, true));
+            g.drawText (opts[i].name, r.getX(), r.getY() + 26, r.getWidth(), 24, Justification::centred, false);
+            g.setColour (dim().withAlpha (fits ? 1.0f : 0.5f)); g.setFont (font (13.0f));
+            g.drawText (fits ? String (opts[i].dim) : String ("does not fit this display"), r.getX() + 6, r.getY() + 58, r.getWidth() - 12, 20, Justification::centred, false);
+            if (fits) hits.push_back ({ r, [this, i] { if (host.windowSizeSet) host.windowSizeSet (i); repaint(); } });
+        }
+        g.setColour (dim()); g.setFont (font (12.0f));
+        g.drawFittedText ("Outer window size, including the title bar. Only Free lets you resize the window by dragging.",
+                          40, y0 + 130, juce::jmin (720, getWidth() - 80), 40, Justification::topLeft, 2);
     }
 
     // ---------- midi learn ----------

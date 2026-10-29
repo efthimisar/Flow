@@ -219,6 +219,7 @@ public:
         loopsView.onOrbImageClear = [this] { setOrbImage ({}); };
 
         orbFolderPath = settings->getValue ("orbFolder");
+        windowSizeMode = jlimit (0, 3, settings->getIntValue ("windowSize", 1));
         autoOrbImage();   // νέο (άδειο) set: τυχαία εικόνα από το φάκελο Music/Flow/Orb, αν υπάρχει
         webOrbToken = settings->getValue ("webOrbToken");
         if (webOrbToken.isEmpty()) webOrbToken = String::toHexString (Random::getSystemRandom().nextInt64()).paddedLeft ('0', 8).substring (0, 8);
@@ -626,8 +627,7 @@ private:
             setSize (jmax (minWinW(), w), jmax (defaultWinH(), h));
         }
 
-        if (auto* w = findParentComponentOfClass<DocumentWindow>())
-            w->setResizeLimits (minWinW(), minWinH() + 28, 4000, 3000);
+        applyWindowSize (false);
 
         layoutFor (getWidth(), getHeight());
         placeChildren();
@@ -1368,6 +1368,7 @@ private:
     }
 
     // ---- Orb: αυτόματη εικόνα από τον φάκελο Music/Flow/Orb, με τυχαία παραλλαγή ----
+    int windowSizeMode = 1;     // 0 Compact, 1 Default, 2 Large, 3 Free
     String orbFolderPath;       // ρύθμιση χρήστη· κενό = Music/Flow/Orb
     std::unique_ptr<FileChooser> orbFolderChooser;
 
@@ -2684,6 +2685,9 @@ private:
         h.lengthQSet = [this] (int v) { engine.lengthQ = v; saveNow(); };
         h.tapMsGet = [this] { return engine.tapMs.load(); };
         h.tapMsSet = [this] (int v) { engine.tapMs = v; saveNow(); };
+        h.windowSizeGet = [this] { return windowSizeMode; };
+        h.windowSizeSet = [this] (int v) { windowSizeMode = jlimit (0, 3, v); applyWindowSize (true); saveNow(); };
+        h.windowSizeFits = [this] (int v) { return windowSizeFits (v); };
         h.autoLoopGet = [this] { return engine.autoLoop.load(); };
         h.autoLoopSet = [this] (int v) { engine.autoLoop = v; saveNow(); };
         h.snapQGet = [this] { return engine.snapQ.load(); };
@@ -2696,6 +2700,45 @@ private:
             updateToolLamps();
         };
     }
+
+public:
+    int getWindowSizeMode() const { return windowSizeMode; }
+    static Point<int> windowSizeFor (int mode)
+    {
+        return mode == 0 ? Point<int> (822, 650) : mode == 2 ? Point<int> (1280, 940) : Point<int> (1097, 810);
+    }
+    static Rectangle<int> windowArea()
+    {
+        if (auto* d = Desktop::getInstance().getDisplays().getPrimaryDisplay()) return d->userArea;
+        return { 0, 0, 1920, 1080 };
+    }
+    bool windowSizeFits (int mode) const
+    {
+        if (mode == 3) return true;
+        const auto s = windowSizeFor (mode);
+        const auto a = windowArea();
+        return s.x <= a.getWidth() && s.y <= a.getHeight();
+    }
+    // εφαρμόζει το επιλεγμένο μέγεθος στο παράθυρο (resize = true: αλλάζει και το τρέχον μέγεθος)
+    void applyWindowSize (bool resize)
+    {
+        auto* w = dynamic_cast<DocumentWindow*> (getTopLevelComponent());
+        if (w == nullptr) return;
+        if (windowSizeMode == 3)
+        {
+            w->setResizable (true, false);
+            w->setResizeLimits (minWinW(), minWinH() + 28, 4000, 3000);
+            return;
+        }
+        const auto a = windowArea();
+        auto s = windowSizeFor (windowSizeMode);
+        s.x = jmin (s.x, a.getWidth());
+        s.y = jmin (s.y, a.getHeight());
+        w->setResizeLimits (s.x, s.y, s.x, s.y);
+        w->setResizable (false, false);
+        if (resize) w->centreWithSize (s.x, s.y);
+    }
+private:
 
     void openAudioSettings()   // οι ρυθμίσεις ήχου και MIDI ανοίγουν μέσα στην οθόνη του Flow
     {
@@ -3202,6 +3245,7 @@ private:
         settings->setValue ("link", engine.isLinkEnabled());
         settings->setValue ("keyLights", lightsWanted);
         settings->setValue ("orbFolder", orbFolderPath);
+        settings->setValue ("windowSize", windowSizeMode);
         settings->setValue ("webOrbOn", webOrbOn);
         settings->setValue ("webOrbToken", webOrbToken);
 
@@ -3597,7 +3641,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.52.2"; }
+    const String getApplicationVersion() override { return "0.53.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
@@ -3620,15 +3664,20 @@ public:
             setContentOwned (new MainComponent(), true);
             setResizable (true, false);
             setResizeLimits (746, 620, 4000, 3000);
+            if (auto* mc = dynamic_cast<MainComponent*> (getContentComponent()))
             {
-                // προεπιλεγμένο μέγεθος παραθύρου (με τον τίτλο): 1097 x 810, μικρότερο μόνο αν δεν χωράει στην οθόνη
-                int w = 1097, h = 810;
-                if (auto* d = Desktop::getInstance().getDisplays().getPrimaryDisplay())
+                // το επιλεγμένο μέγεθος (Settings > Window size), προεπιλογή 1097 x 810
+                mc->applyWindowSize (true);
+                if (mc->getWindowSizeMode() == 3)
                 {
-                    w = jmin (w, d->userArea.getWidth() - 20);
-                    h = jmin (h, d->userArea.getHeight() - 20);
+                    int w = 1097, h = 810;
+                    if (auto* d = Desktop::getInstance().getDisplays().getPrimaryDisplay())
+                    {
+                        w = jmin (w, d->userArea.getWidth() - 20);
+                        h = jmin (h, d->userArea.getHeight() - 20);
+                    }
+                    centreWithSize (jmax (822, w), jmax (648, h));
                 }
-                centreWithSize (jmax (822, w), jmax (648, h));
             }
             setVisible (true);
         }
