@@ -213,6 +213,7 @@ namespace flow
         std::atomic<bool> metroOn { false };
         std::atomic<double> metroCycleOut { 4.0 };   // κύκλος σε beats: ο μεγαλύτερος κύκλος λούπας ή ένα μέτρο (για το κλικ και την μπάρα)
         std::array<std::atomic<int>, numBlocks> liveSilent;   // 1 = όσο παίζει η λούπα του block, το live του block μένει σιωπηλό (default). 0 = ακούγεται και το live.
+        std::atomic<int> shiftHeld { 0 };       // sustain CC64 πατημένο: το ειδικό block παίρνει όλο το πληκτρολόγιο όσο το κρατάς
         std::atomic<int> specialBlock { -1 };   // ειδικό block: πάνω από τα άλλα, χωρίς λούπα, παίζει πάντα ζωντανά (-1 = κανένα)
         std::atomic<float> metroLevel { 0.8f };
         std::atomic<int> metroChannel { 2 };      // έξοδος 3 (0-based 2)
@@ -320,6 +321,11 @@ namespace flow
         // ποιο block παίζει το πλήκτρο n (-1 = κανένα). Αν επικαλύπτονται ζώνες, κερδίζει η πιο πρόσφατη.
         int blockForNote (int n) const
         {
+            if (shiftHeld.load() != 0 && n >= firstPlayNote)
+            {
+                const int sb = specialBlock.load();
+                if (sb >= 0 && sb < numBlocks && active[(size_t) sb].load() != 0 && blockOff[(size_t) sb].load() == 0) return sb;
+            }
             int best = -1, bestSeq = -1;
             for (int b = 0; b < numBlocks; ++b)
                 if (b != specialBlock.load() && active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
@@ -332,12 +338,8 @@ namespace flow
         }
 
         // το ειδικό block παίζει το πλήκτρο n (εφόσον υπάρχει, είναι αναμμένο και το πλήκτρο είναι στη ζώνη του)
-        int specialForNote (int n) const
-        {
-            const int sb = specialBlock.load();
-            if (sb < 0 || sb >= numBlocks || active[(size_t) sb].load() == 0 || zoneState[(size_t) sb].load() != 0 || blockOff[(size_t) sb].load() != 0) return -1;
-            return n >= lo[(size_t) sb].load() && n <= hi[(size_t) sb].load() ? sb : -1;
-        }
+        // (το ειδικό block δεν παίζει πια από ζώνη: παίζει όλο το πληκτρολόγιο μόνο όσο κρατιέται το sustain, βλ. blockForNote)
+        int specialForNote (int) const { return -1; }
 
         void startVolumeLearn (int b) { mapLearnTarget = -1; volLearn = b; }
         void cancelLearns()           { mapLearnTarget = -1; volLearn = -1; knobLearnSlot = -1; masterLearn = 0; }
@@ -1262,6 +1264,16 @@ namespace flow
                 const int pos = juce::jlimit (0, numSamples - 1, metadata.samplePosition);
                 if (! msg.isMidiClock() && ! msg.isActiveSense()) ++midiCount;
 
+                if (msg.isController() && msg.getControllerNumber() == 64)   // sustain = shift για το ειδικό block (momentary)
+                {
+                    const int sb = specialBlock.load();
+                    const bool has = sb >= 0 && sb < numBlocks && active[(size_t) sb].load() != 0;
+                    if (has || shiftHeld.load() != 0)
+                    {
+                        shiftHeld = (has && msg.getControllerValue() >= 64) ? 1 : 0;
+                        if (has) continue;
+                    }
+                }
                 if (handlePedal (msg))
                     continue;
 
@@ -1325,7 +1337,7 @@ namespace flow
                     if (b >= 0)
                     {
                         owner[(size_t) n] = b;
-                        lastPlayed = b;
+                        if (b != specialBlock.load()) lastPlayed = b;
                         Action a;
                         a.pos = pos; a.order = 1; a.kind = Kind::Live; a.note = n; a.vel = msg.getVelocity(); a.on = true;
                         inActions[(size_t) b].push_back (a);
@@ -1534,7 +1546,7 @@ namespace flow
                         case ctlUndo:  { const int t = recTarget (true); if (t >= 0) pressUndo (t); } break;     // ✕ σβήσιμο λούπας, όπως το κουμπί της οθόνης
                         case ctlStop:  { const int t = recTarget (true); if (t >= 0) pressReRec (t); } break;    // ξαναγράφω, όπως το κουμπί της οθόνης
                         case ctlMute:  ++pedalMute; break;
-                        case ctlSpecial: { const int sb = specialBlock.load(); if (sb >= 0 && sb < numBlocks) { blockOff[(size_t) sb] = blockOff[(size_t) sb].load() != 0 ? 0 : 1; ++changeCount; } } break;
+                        case ctlSpecial: break;   // αντικαταστάθηκε από το shift (sustain CC64)
                         case ctlTape:  recorder.pressButton(); break;
                         case ctlMetro: break;   // ο μετρονόμος αφαιρέθηκε
                         case ctlPanic: ++panicCount; break;
