@@ -79,6 +79,8 @@ public:
         std::function<int()> windowSizeGet;      // 0 Compact, 1 Default, 2 Large, 3 Free
         std::function<void (int)> windowSizeSet;
         std::function<bool (int)> windowSizeFits;
+        std::function<bool()> helpGet;           // μπαλονάκια βοήθειας on/off
+        std::function<void()> helpToggle;
         std::function<void (int)> learnStart;   // 1 = ανάθεση, 2 = αφαίρεση· η οθόνη ρυθμίσεων κλείνει
     };
 
@@ -310,6 +312,7 @@ private:
             case 13: g.setFont (font (22.0f, true)); g.drawText ("iPad", Rectangle<float> (c.x - 26.0f, c.y - 14.0f, 52.0f, 28.0f), Justification::centred, false); break;
             case 16: g.setFont (font (28.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x86\xbb"), Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 14: g.setFont (font (24.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x87\x84"), Rectangle<float> (c.x - 22.0f, c.y - 16.0f, 44.0f, 32.0f), Justification::centred, false); break;
+            case 17: g.setFont (font (26.0f, true)); g.drawText ("?", Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 15: g.drawEllipse (c.x - 11.0f, c.y - 11.0f, 22.0f, 22.0f, 2.2f); g.fillEllipse (c.x - 3.0f, c.y - 3.0f, 6.0f, 6.0f); break;
             default: break;
         }
@@ -341,6 +344,7 @@ private:
             { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
             { 13, "iPad", host.ipadGet && host.ipadGet(), false, [this] { showPage (Ipad); } },
             { 8, "Window size", false, false, [this] { showPage (WindowSize); } },
+            { 17, "Help", host.helpGet && host.helpGet(), false, [this] { if (host.helpToggle) host.helpToggle(); repaint(); } },
         };
         // κύκλοι στη μέση· το περιεχόμενο του επιλεγμένου ανοίγει αριστερά και δεξιά
         const int W = getWidth(), H = getHeight();

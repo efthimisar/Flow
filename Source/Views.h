@@ -970,7 +970,7 @@ public:
             {
                 g.setFont (hobby::makeFont (typeface, 13.0f));
                 g.setColour (hobby::kIconGrey);
-                g.drawText (notice, 16, getHeight() - 28, jmax (120, w / 2), 18, Justification::centredLeft, true);
+                g.drawText (notice, w / 5, getHeight() - 28, w * 3 / 5, 18, Justification::centred, true);
             }
             g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
             g.fillEllipse ((float) w - 24.0f, sy + sh * 0.5f - 3.5f, 7.0f, 7.0f);
@@ -1134,7 +1134,7 @@ public:
         if (notice.isNotEmpty())
         {
             g.setFont (hobby::makeFont (typeface, 13.0f * s)); g.setColour (hobby::kIconGrey);
-            g.drawText (notice, Rectangle<float> (16.0f * s, h - 28.0f * s, w * 0.4f, 20.0f * s), Justification::centredLeft, true);
+            g.drawText (notice, Rectangle<float> (w * 0.2f, h - 28.0f * s, w * 0.6f, 20.0f * s), Justification::centred, true);
         }
         g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
         g.fillEllipse (w - 14.0f * s - 7.0f, h - 14.0f * s - 7.0f, 7.0f, 7.0f);

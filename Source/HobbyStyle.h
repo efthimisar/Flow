@@ -63,6 +63,17 @@ public:
     HobbyLookAndFeel();
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
     void drawButtonText (juce::Graphics&, juce::TextButton&, bool, bool) override;
+    // μπαλονάκια βοήθειας: κάτω στο κέντρο του παραθύρου, όχι δίπλα στο ποντίκι
+    juce::Rectangle<int> getTooltipBounds (const juce::String& tipText, juce::Point<int> screenPos, juce::Rectangle<int> parentArea) override
+    {
+        auto r = juce::LookAndFeel_V4::getTooltipBounds (tipText, screenPos, parentArea);
+        auto area = parentArea;
+        if (auto* c = juce::Desktop::getInstance().getMainMouseSource().getComponentUnderMouse())
+            if (auto* top = c->getTopLevelComponent())
+                area = top->getScreenBounds();
+        r.setPosition (area.getCentreX() - r.getWidth() / 2, area.getBottom() - r.getHeight() - 14);
+        return r.constrainedWithin (parentArea);
+    }
 };
 
 // Τετράγωνο κουμπί 52x52 χωρίς μενού: κάθε πάτημα → επόμενη τιμή, μετά την τελευταία ξανά η πρώτη.

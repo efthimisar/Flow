@@ -49,6 +49,11 @@ public:
         options.filenameSuffix      = ".settings";
         options.osxLibrarySubFolder = "Application Support";
         properties.setStorageParameters (options);
+        if (auto* us = properties.getUserSettings())
+        {
+            helpOn = us->getBoolValue ("helpOn", true);
+            if (! helpOn) tooltipWindow.setMillisecondsBeforeTipAppears (2000000000);
+        }
 
         formatManager.addFormat (std::make_unique<VST3PluginFormat>());
        #if JUCE_MAC
@@ -2764,6 +2769,14 @@ private:
             engine.setLinkEnabled (on);
             setMessage (on ? gr ("Ableton Link: on") : gr ("Ableton Link: off"));
         };
+        h.helpGet = [this] { return helpOn; };
+        h.helpToggle = [this]
+        {
+            helpOn = ! helpOn;
+            tooltipWindow.setMillisecondsBeforeTipAppears (helpOn ? 600 : 2000000000);
+            if (auto* us = properties.getUserSettings()) { us->setValue ("helpOn", helpOn); us->saveIfNeeded(); }
+            setMessage (helpOn ? String ("Help: on") : String ("Help: off"));
+        };
         h.panicNow = [this] { doPanic(); };
         h.panicAssign = [this] { startPedalLearn (flow::ctlPanic); };
         h.panicRemove = [this] { engine.mapCode[flow::ctlPanic] = 0; saveNow(); };
@@ -3775,6 +3788,7 @@ private:
     AudioDeviceManager deviceManager;
     AudioPluginFormatManager formatManager;
     TooltipWindow tooltipWindow { nullptr, 600 };
+    bool helpOn = true;
 
     Typeface::Ptr typeface;
     int selected = 0;
