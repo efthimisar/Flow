@@ -301,14 +301,11 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (p, 1.7f);
             break;
         }
-        case Symbol::Block:
+        case Symbol::Block:   // ένα απλό γεμάτο τετράγωνο
         {
             juce::Path p;
-            p.addRoundedRectangle (-8.0f, -8.0f, 6.5f, 6.5f, 1.5f);
-            p.addRoundedRectangle (1.5f, -8.0f, 6.5f, 6.5f, 1.5f);
-            p.addRoundedRectangle (-8.0f, 1.5f, 6.5f, 6.5f, 1.5f);
-            p.addRoundedRectangle (1.5f, 1.5f, 6.5f, 6.5f, 1.5f);
-            stroke (p, 1.7f);
+            p.addRoundedRectangle (-8.0f, -8.0f, 16.0f, 16.0f, 3.0f);
+            fill (p, col);
             break;
         }
         case Symbol::Learn:

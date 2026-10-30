@@ -3579,7 +3579,7 @@ private:
         const int nfx = valid ? engine.numFx (sel) : 0;
         // πράσινο = υπάρχει (block / VST / MIDI FX / FX στο επιλεγμένο block), άσπρο = δεν υπάρχει
         const Colour tileWhite (0xfff3f4f6);
-        blockTile.setIconColour (firstActive() >= 0 ? hobby::kOn : tileWhite);
+        blockTile.setIconColour (hobby::kOn);   // πάντα ένα απλό πράσινο τετράγωνο
         vstTile.setIconColour (valid ? hobby::kOn : tileWhite);
         mfxTile.setIconColour (hasMfx ? hobby::kOn : tileWhite);
         mfxTile.setDots (hasMfx ? 1 : 0);
