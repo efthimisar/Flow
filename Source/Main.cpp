@@ -3853,7 +3853,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.57.3"; }
+    const String getApplicationVersion() override { return "0.57.4"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
