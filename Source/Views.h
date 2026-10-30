@@ -1874,8 +1874,6 @@ public:
             if (open)
             {
                 x = jlimit (14.0f, (float) getWidth() - 14.0f - total, x);
-                g.setColour (hobby::kScreen);
-                g.fillRoundedRectangle (x - 5.0f, labelY - 3.0f, total + 10.0f, D + 6.0f, 9.0f);
             }
             const float cy = labelY;
 
@@ -1909,6 +1907,7 @@ public:
             {
                 holdRect[(size_t) b] = { x, cy, D, D };
                 const auto hr = holdRect[(size_t) b];
+                if (open) { g.setColour (hobby::kScreen); g.fillEllipse (hr); }   // καπακώνει ό,τι είναι από κάτω, χωρίς φόντο στο μενού
                 g.setColour (col.withMultipliedAlpha (alpha * (hold != 0 ? 0.4f : 0.16f)));
                 g.fillEllipse (hr);
                 Colour holdCol = col;
@@ -1937,6 +1936,7 @@ public:
             {
                 trRect[(size_t) b] = { x, cy, D, D };
                 const auto tr2 = trRect[(size_t) b];
+                if (open) { g.setColour (hobby::kScreen); g.fillEllipse (tr2); }   // καπακώνει ό,τι είναι από κάτω, χωρίς φόντο στο μενού
                 g.setColour (col.withMultipliedAlpha (alpha * (tr != 0 ? 0.4f : 0.16f)));
                 g.fillEllipse (tr2);
                 g.setColour (col.withMultipliedAlpha (tr != 0 ? alpha : 0.5f));
@@ -1949,6 +1949,7 @@ public:
             {
                 silentRect[(size_t) b] = { x, cy, D, D };
                 const auto sr2 = silentRect[(size_t) b];
+                if (open) { g.setColour (hobby::kScreen); g.fillEllipse (sr2); }   // καπακώνει ό,τι είναι από κάτω, χωρίς φόντο στο μενού
                 const bool silent = engine.liveSilent[(size_t) b].load() != 0;
                 g.setColour (col.withMultipliedAlpha (alpha * (silent ? 0.4f : 0.16f)));
                 g.fillEllipse (sr2);
@@ -1964,6 +1965,7 @@ public:
             {
                 swapRect[(size_t) b] = { x, cy, D, D };
                 const auto wr = swapRect[(size_t) b];
+                if (open) { g.setColour (hobby::kScreen); g.fillEllipse (wr); }   // καπακώνει ό,τι είναι από κάτω, χωρίς φόντο στο μενού
                 g.setColour (col.withMultipliedAlpha (alpha * 0.16f));
                 g.fillEllipse (wr);
                 g.setColour (col.withMultipliedAlpha (0.7f));
@@ -1976,6 +1978,7 @@ public:
             {
                 spRect[(size_t) b] = { x, cy, D, D };
                 const auto pr = spRect[(size_t) b];
+                if (open) { g.setColour (hobby::kScreen); g.fillEllipse (pr); }   // καπακώνει ό,τι είναι από κάτω, χωρίς φόντο στο μενού
                 g.setColour (col.withMultipliedAlpha (alpha * (isSpecial ? 0.4f : 0.16f)));
                 g.fillEllipse (pr);
                 g.setColour (col.withMultipliedAlpha (isSpecial ? alpha : 0.7f));
@@ -1988,6 +1991,7 @@ public:
             {
                 xRect[(size_t) b] = { x, cy, D, D };
                 const auto xr = xRect[(size_t) b];
+                if (open) { g.setColour (hobby::kScreen); g.fillEllipse (xr); }   // καπακώνει ό,τι είναι από κάτω, χωρίς φόντο στο μενού
                 const bool armed = armedBlock == b && Time::getMillisecondCounter() < armedUntil;
                 const Colour xc = armed ? hobby::kRed : col.withMultipliedAlpha (0.4f);
                 g.setColour (xc.withAlpha (armed ? 0.3f : 0.14f));
