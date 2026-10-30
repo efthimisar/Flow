@@ -1074,11 +1074,11 @@ public:
         const float w = (float) getWidth(), h = (float) getHeight();
         HomeGeom hg;
         hg.s = jlimit (0.55f, 1.5f, jmin (w / 1065.0f, h / 500.0f));
-        hg.cy = h * 0.5f;
+        hg.cy = h * 0.47f;
         hg.ocx = w * 0.5f;
-        hg.orbR = 165.0f * hg.s;
-        hg.lr = 118.0f * hg.s; hg.lw = 17.0f * hg.s;
-        hg.lcx = w * 0.172f; hg.rcx = w * (1.0f - 0.172f);   // συμμετρικοί γύρω από τον orb
+        hg.orbR = 190.0f * hg.s;                                 // μεγάλος orb: κυρίαρχο στοιχείο
+        hg.lr = 96.0f * hg.s; hg.lw = 14.0f * hg.s;              // οι πλαϊνοί κύκλοι μικραίνουν
+        hg.lcx = w * 0.155f; hg.rcx = w * (1.0f - 0.155f);   // συμμετρικοί γύρω από τον orb
         return hg;
     }
     bool homeStyle() const { return orbWo == 0; }
