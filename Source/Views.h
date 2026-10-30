@@ -1274,7 +1274,7 @@ public:
             {
                 String t = tapeState == RecorderEngine::State::Error ? String ("ERROR") : clockText (engine.recorder.getElapsedSeconds());
                 if (engine.recorder.isZipping()) t = "...";
-                g.setColour (hobby::kRed);
+                g.setColour (hobby::kIconGrey);
                 g.drawText (t, Rectangle<float> (hg.ocx - 120.0f * s, ty, 240.0f * s, 18.0f * s), Justification::centred, false);
                 ty += 18.0f * s;
             }
