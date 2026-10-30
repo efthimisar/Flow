@@ -1311,16 +1311,7 @@ public:
         {
             const float yb = cy + r + lw * 0.5f + 28.0f * s, fr = 13.0f * s;
             const bool fon = engine.followOn.load() != 0;
-            const Point<float> fc (cx - 78.0f * s, yb);
-            g.setColour (fon ? Colour (0xff3c5a46) : Colour (0xff2a2725)); g.fillEllipse (fc.x - fr - 4.0f * s, fc.y - fr * 0.9f, 2.0f * (fr + 4.0f * s), 1.8f * fr);
-            g.setColour (fon ? okC : Colour (0xff4a4642)); g.drawEllipse (fc.x - fr - 4.0f * s, fc.y - fr * 0.9f, 2.0f * (fr + 4.0f * s), 1.8f * fr, 2.0f);
-            g.setColour (fon ? txtC : dimC);
-            g.fillEllipse ((fon ? fc.x + 4.0f * s : fc.x - 4.0f * s) - 6.0f * s, fc.y - 6.0f * s, 12.0f * s, 12.0f * s);
             g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 10.0f * s));
-            g.drawText ("Follow", Rectangle<float> (fc.x - 30.0f * s, fc.y + fr, 60.0f * s, 14.0f * s), Justification::centred, false);
-            const Rectangle<float> fh (fc.x - fr - 10.0f * s, fc.y - fr - 4.0f * s, 2.0f * (fr + 10.0f * s), 2.0f * fr + 22.0f * s);
-            hot.push_back ({ fh, [this] { if (onFollowToggle) onFollowToggle(); } });
-            tipZones.push_back ({ fh, String ("Follow: the loops follow the chord you play (key A0)") });
             if (fon)
                 g.drawText (chordWord (engine.followRoot.load(), engine.followType.load()) + String::fromUTF8 (" \xe2\x86\x92 ") + chordWord (engine.followTRoot.load(), engine.followTType.load()),
                             Rectangle<float> (cx - 90.0f * s, yb + fr + 15.0f * s, 180.0f * s, 14.0f * s), Justification::centred, false);
