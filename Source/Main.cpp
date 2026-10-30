@@ -793,18 +793,41 @@ private:
         const String key = "pwpos_" + p->getName();
         auto w = std::make_unique<PluginWindow> (*this, p, windowTitle (p), e, key);
 
-        docked = false;   // ελεύθερο παράθυρο: ανοίγει εκεί που ήταν την τελευταία φορά, αλλιώς δεξιά από το Flow
+        docked = false;   // ελεύθερο παράθυρο
         {
-            const String saved = properties.getUserSettings()->getValue (key);
-            const auto parts = StringArray::fromTokens (saved, " ", "");
-            Point<int> at = dockPos (*w);
-            if (parts.size() == 2)
+            // Αν υπάρχει δεύτερη οθόνη (Sidecar / iPad), ανοίγει centered εκεί
+            const auto& displays = Desktop::getInstance().getDisplays();
+            const Desktop::Displays::Display* secondary = nullptr;
+            for (int i = 0; i < displays.displays.size(); ++i)
             {
-                at = { parts[0].getIntValue(), parts[1].getIntValue() };
-                const auto total = Desktop::getInstance().getDisplays().getTotalBounds (true);
-                if (! total.contains (at)) at = dockPos (*w);
+                const auto& d = displays.displays.getReference (i);
+                if (! d.isMain) { secondary = &d; break; }
             }
-            w->setTopLeftPosition (at);
+            if (secondary != nullptr)
+            {
+                // Centered στη δεύτερη οθόνη (χωρίς αποθηκευμένη θέση)
+                auto area = secondary->userArea;
+                int cx = area.getCentreX() - w->getWidth()  / 2;
+                int cy = area.getCentreY() - w->getHeight() / 2;
+                cx = jlimit (area.getX(), jmax (area.getX(), area.getRight()  - w->getWidth()),  cx);
+                cy = jlimit (area.getY(), jmax (area.getY(), area.getBottom() - w->getHeight()), cy);
+                w->setTopLeftPosition (cx, cy);
+                flow::flowLog ("openWindowFor: secondary display at " + String (cx) + "," + String (cy));
+            }
+            else
+            {
+                // Μία οθόνη: θέση από προηγούμενη χρήση ή δεξιά από το Flow
+                const String saved = properties.getUserSettings()->getValue (key);
+                const auto parts = StringArray::fromTokens (saved, " ", "");
+                Point<int> at = dockPos (*w);
+                if (parts.size() == 2)
+                {
+                    at = { parts[0].getIntValue(), parts[1].getIntValue() };
+                    const auto total = displays.getTotalBounds (true);
+                    if (! total.contains (at)) at = dockPos (*w);
+                }
+                w->setTopLeftPosition (at);
+            }
         }
         w->setVisible (true);
         w->toFront (true);
