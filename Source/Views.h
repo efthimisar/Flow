@@ -412,6 +412,9 @@ public:
     void setQr (bool on, const String& url) { qrMode = on; qrUrl = url; repaint(); }
     Image orbImage;
     std::function<void (int)> onOrbAssign, onOrbClear;      // θέση 0..15
+    std::function<void (int)> onOrbRing;                    // πάτημα δαχτυλιδιού: τυχαία κίνηση της τελείας
+    std::array<bool, 4> orbAutoOn { { false, false, false, false } };
+    void setOrbAuto (const std::array<bool, 4>& a) { if (a != orbAutoOn) { orbAutoOn = a; repaint (orbRect()); } }
     std::function<void (int, Point<float>)> onOrbMove;      // γωνία, θέση (-1..1) μέσα στον orb
     std::function<void (int, bool)> onOrbTouch;
     std::function<void()> onOrbClearMotion, onOrbImage, onOrbImageClear;
@@ -1251,8 +1254,8 @@ public:
                 Colour rc = any ? Colour (0xff48443f) : Colour (0xff35312e);
                 if (c == orbDrag) rc = Colour (0xff9a948b);
                 if (learningHere) rc = hobby::kOn.withAlpha (0.35f + 0.65f * (float) hobby::pulse (tn * 0.001 * 2.0));
-                g.setColour (rc);
-                g.strokePath (ring, PathStrokeType (jmax (2.5f, 4.0f * s)));
+                if (orbAutoOn[(size_t) c]) { g.setColour (Colour (0xfff5f1ea)); g.fillPath (ring); }   // τυχαία κίνηση: γεμάτος άσπρος δακτύλιος
+                else { g.setColour (rc); g.strokePath (ring, PathStrokeType (jmax (2.5f, 4.0f * s))); }
             }
             // ενδείξεις κάτω από τον orb: Rec Audio και Rec motion
             float ty = gmBottom();
@@ -1679,12 +1682,11 @@ public:
         }
         for (auto& h : hot)
             if (h.first.contains (e.position)) { auto fn = h.second; fn(); repaint(); return; }
-        // δαχτυλίδια γύρω από τον orb: πάτημα = learn στην πρώτη ελεύθερη ανάθεση της γωνίας
+        // δαχτυλίδια γύρω από τον orb: πάτημα = τυχαία κίνηση της τελείας (η ανάθεση γίνεται από τις ρυθμίσεις)
         for (int c = 0; c < 4; ++c)
             if (orbRingCentre (c).getDistanceFrom (e.position) <= 14.0f * homeGeom().s + 8.0f)
             {
-                for (int r = 0; r < 4; ++r)
-                    if (! knobs[(size_t) (c * 4 + r)].bound) { if (onOrbAssign) onOrbAssign (c * 4 + r); return; }
+                if (onOrbRing) onOrbRing (c);
                 return;
             }
         for (int c = 0; c < 4; ++c)
