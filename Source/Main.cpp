@@ -1976,27 +1976,36 @@ private:
             return;
         }
 
-        std::vector<PluginDescription> list;
-        // 0 = VST (instrument με ήχο), 1 = FX (effect ήχου), 2 = MIDI FX (MIDI-only ή instruments: πολλά MIDI plugins δηλώνουν instrument)
-        auto midiOnly = [] (const PluginDescription& d) { return d.numOutputChannels == 0 || d.category.containsIgnoreCase ("midi"); };
+        // Κάθε λίστα δείχνει ΟΛΑ τα plugins: πρώτα αυτά που ταιριάζουν στο κουμπί, μετά τα υπόλοιπα με την ένδειξη «other»
+        // (έτσι τίποτα δεν κρύβεται αν ένα plugin δηλώνει λάθος τον τύπο του).
+        //   VST: instruments με έξοδο ήχου · FX: effects ήχου · MIDI FX: χωρίς έξοδο ήχου ή με κατηγορία midi
+        auto fits = [kind] (const PluginDescription& d)
+        {
+            const bool noOut = d.numOutputChannels == 0, midiCat = d.category.containsIgnoreCase ("midi");
+            if (kind == 0) return d.isInstrument && ! noOut;
+            if (kind == 1) return ! d.isInstrument && ! noOut && ! midiCat;
+            return noOut || midiCat;
+        };
+        std::vector<PluginDescription> primary, others;
         for (const auto& d : knownPlugins.getTypes())
         {
             flow::flowLog ("plugin: " + d.name + " [" + d.pluginFormatName + "] instrument=" + String ((int) d.isInstrument) + " in=" + String (d.numInputChannels)
                            + " out=" + String (d.numOutputChannels) + " category=" + d.category);
-            const bool m = midiOnly (d);
-            if (kind == 2 ? (m || d.isInstrument) : kind == 0 ? (d.isInstrument && ! m) : (! d.isInstrument && ! m))   // MIDI FX: και τα MIDI-only και ό,τι δηλώνει instrument (π.χ. Stepic)
-                list.push_back (d);
+            (fits (d) ? primary : others).push_back (d);
         }
-        std::sort (list.begin(), list.end(), [] (const PluginDescription& a, const PluginDescription& b)
-                   { return a.name.compareIgnoreCase (b.name) < 0; });
-
+        auto byName = [] (const PluginDescription& a, const PluginDescription& b) { return a.name.compareIgnoreCase (b.name) < 0; };
+        std::sort (primary.begin(), primary.end(), byName);
+        std::sort (others.begin(), others.end(), byName);
+        std::vector<PluginDescription> list = primary;
+        list.insert (list.end(), others.begin(), others.end());
 
         // η λίστα εμφανίζεται μέσα στην οθόνη των loops (στη θέση τους): διάλεξε όνομα, ↻ νέα σάρωση, … αρχείο, ✕ κλείσιμο
         StringArray names, formats, keys;
-        for (const auto& d : list)
+        for (size_t i = 0; i < list.size(); ++i)
         {
+            const auto& d = list[i];
             names.add (d.name);
-            formats.add (d.pluginFormatName);
+            formats.add (d.pluginFormatName + (i >= primary.size() ? String::fromUTF8 (" \xc2\xb7 other") : String()));
             keys.add (d.createIdentifierString());
         }
 
@@ -3931,7 +3940,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.57.7"; }
+    const String getApplicationVersion() override { return "0.57.8"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
