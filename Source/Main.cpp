@@ -1513,7 +1513,7 @@ private:
     int orbPhysBlock = -1;
     bool orbRecArmed = false;
 
-    // τυχαία κίνηση: πάτημα στον δακτύλιο της γωνίας· ο στόχος κινείται σε μοτίβο και η τελεία τον ακολουθεί ελαστικά
+    // κινήσεις: κάθε πάτημα στον δακτύλιο της γωνίας δίνει την επόμενη (1..7), το όγδοο σβήνει· ο στόχος κινείται σε μοτίβο και η τελεία τον ακολουθεί ελαστικά
     static constexpr int orbPatterns = 7;   // κύκλος, οκτώ, σάρωση, σπείρα, παλμός, περιπλάνηση, άλμα και επιστροφή
     static constexpr double orbAutoPeriod = 8.0;   // δευτερόλεπτα ανά κύκλο
     std::array<int, 4> orbAutoPat { { -1, -1, -1, -1 } };
@@ -1535,9 +1535,10 @@ private:
     void orbAutoPress (int c)
     {
         if (selected < 0 || selected >= flow::numBlocks) return;
-        if (orbAutoPat[(size_t) c] >= 0) { orbAutoStop (c); syncOrbAuto(); setMessage (gr ("Random motion: off")); return; }   // δεύτερο πάτημα = σβήνει
         auto& rnd = Random::getSystemRandom();
-        orbAutoPat[(size_t) c] = rnd.nextInt (orbPatterns);
+        const int next = orbAutoPat[(size_t) c] + 1;   // κάθε πάτημα: επόμενη κίνηση· μετά την τελευταία σβήνει
+        if (next >= orbPatterns) { orbAutoStop (c); syncOrbAuto(); setMessage (gr ("Motion: off")); return; }
+        orbAutoPat[(size_t) c] = next;
         orbAutoT0[(size_t) c] = Time::getMillisecondCounterHiRes() * 0.001;
         for (auto& v : orbAutoPh[(size_t) c]) v = rnd.nextFloat() * MathConstants<float>::twoPi;
         for (auto& t : orbAutoTg[(size_t) c]) t = { rnd.nextFloat() * 1.4f - 0.7f, rnd.nextFloat() * 1.4f - 0.7f };
@@ -1550,7 +1551,7 @@ private:
             if (l.s.empty()) { l.s.assign ((size_t) orbN, {}); l.ok.assign ((size_t) orbN, 0); }
             l.recording = true;
         }
-        setMessage (gr ("Random motion: press the ring again to stop"));
+        setMessage ("Motion " + String (orbAutoPat[(size_t) c] + 1) + " / " + String (orbPatterns));
     }
 
     Point<float> orbAutoGoal (int c) const
