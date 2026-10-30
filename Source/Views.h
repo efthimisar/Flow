@@ -1867,7 +1867,7 @@ public:
             // κλικ στον αριθμό ανοίγει τις υπόλοιπες λειτουργίες: hold, καμπύλη, transpose, ♪ (live σιωπηλό όσο παίζει λούπα), ✕
             const bool open = b == expanded;
             const bool showChord = false;   // το Chord δεν χρησιμοποιείται πια: δεν υπάρχει κυκλάκι
-            const bool showCurve = open, showHold = open, showTr = open, showSilent = open && ! isSpecial, showX = false, showSwap = open, showSp = open;
+            const bool showCurve = open, showHold = open, showTr = open, showSilent = open && ! isSpecial, showX = open, showSwap = open, showSp = open;
             const int shown = 1 + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showSilent ? 1 : 0) + (showSwap ? 1 : 0) + (showSp ? 1 : 0) + (showX ? 1 : 0);
             const float total = (float) shown * D + (float) (shown - 1) * gap;
             float x = isSpecial ? s.l : s.l + (width - total) * 0.5f;   // το ειδικό block: τα κυκλάκια τέρμα αριστερά στη λωρίδα του

@@ -184,7 +184,7 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         mouse = e.getPosition();
-        dialDrag = (page == Smart || (page == Home && selTile == 12)) && dialRect.contains (mouse) && host.smartAcceptSet != nullptr;
+        dialDrag = (page == Smart || (page == Home && selTile == 11)) && dialRect.contains (mouse) && host.smartAcceptSet != nullptr;
         dialY0 = e.getPosition().y; dialV0 = host.smartAcceptGet ? host.smartAcceptGet() : 0.0f; dialMoved = false;
     }
     void mouseDrag (const juce::MouseEvent& e) override
@@ -335,7 +335,6 @@ private:
             { 7, "Panic", false, false, [this] { showPage (Panic); } },
             { 9, "Loop recording", false, false, [this] { showPage (LoopRec); } },
             { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
-            { 14, "Block tools", false, false, [this] { showPage (Tools); }, true },
             { 11, "Smart master", host.smartOnGet && host.smartOnGet() != 0, false, [this] { showPage (Smart); }, true },
             { 12, "Follow", host.followOnGet && host.followOnGet() != 0, false, [this] { showPage (Follow); }, true },
             { 15, "Orb knobs", false, false, [this] { showPage (OrbKnobs); }, true },
@@ -376,10 +375,9 @@ private:
             g.setColour (card()); g.fillRoundedRectangle (c.toFloat(), 18.0f);
             g.setColour (lineC()); g.drawRoundedRectangle (c.toFloat().reduced (0.5f), 18.0f, 1.0f);
         }
-        if (selTile == 12) cardsSmart (g, L, R);
-        else if (selTile == 13) cardsFollow (g, L, R);
-        else if (selTile == 11) cardsTools (g, L, R);
-        else if (selTile == 14) cardsOrb (g, L, R);
+        if (selTile == 11) cardsSmart (g, L, R);
+        else if (selTile == 12) cardsFollow (g, L, R);
+        else if (selTile == 13) cardsOrb (g, L, R);
     }
 
     juce::Rectangle<int> cardHeader (juce::Graphics& g, juce::Rectangle<int> c, const juce::String& t)
@@ -1301,7 +1299,7 @@ private:
     float dialV0 = 0.0f;
     Page page = Home;
     int loadScroll = 0, loadMaxScroll = 0;
-    int selTile = 12;
+    int selTile = 11;
     juce::String delArmed; juce::uint32 delArmedAt = 0;   // ✕ διαγραφής set: οπλισμένο για 3 δλ
     bool saved = false, waitPanic = false;
     juce::String ccAtAssign;
