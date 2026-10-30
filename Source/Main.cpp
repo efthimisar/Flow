@@ -3679,7 +3679,7 @@ private:
         updateToolLamps();
         knobTick();
 
-        loopsView.repaint();
+        loopsView.repaintDynamic();
         keyboardView.repaint();
     }
 

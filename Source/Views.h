@@ -5,6 +5,23 @@
 #include "HobbyStyle.h"
 #include "QrCode.h"
 
+// μετρά πόση ώρα παίρνει ένα paint και γράφει στο Flow-log.txt όσα καρέ ξεπερνούν τα 25 ms (το πολύ ένα μήνυμα ανά δευτερόλεπτο)
+struct PaintTimer
+{
+    const char* name; int w, h; double t0 = juce::Time::getMillisecondCounterHiRes();
+    PaintTimer (const char* n, int ww, int hh) : name (n), w (ww), h (hh) {}
+    ~PaintTimer()
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes(), dt = now - t0;
+        static double lastLog = 0.0;
+        if (dt > 25.0 && now - lastLog > 1000.0)
+        {
+            lastLog = now;
+            flow::flowLog (juce::String ("paint: ") + name + " " + juce::String (dt, 1) + " ms (clip " + juce::String (w) + "x" + juce::String (h) + ")");
+        }
+    }
+};
+
 using namespace juce;
 
 static inline String gr (const char* utf8Text) { return String::fromUTF8 (utf8Text); }
@@ -411,11 +428,14 @@ public:
     {
         for (int c = 0; c < 4; ++c)
             orbLift[(size_t) c] += ((c == orbDrag ? 1.0f : 0.0f) - orbLift[(size_t) c]) * 0.25f;    // ο κύκλος σηκώνεται ομαλά όταν τον κρατάς
+        bool changed = pos != orbPos || learning != orbLearning || rec != orbRec || motion != orbMotion || learning >= 0;
+        for (size_t i = 0; i < knobs.size() && ! changed; ++i)
+            changed = knobs[i].bound != k[i].bound;
         knobs = k; orbPos = pos; orbLearning = learning; orbRec = rec; orbMotion = motion;
-        repaint();
+        if (changed) repaint (orbRect());
         if (orbExternal) orbExternal->repaint();
     }
-    void setOrbPos (const std::array<Point<float>, 4>& p) { orbPos = p; repaint(); }
+    void setOrbPos (const std::array<Point<float>, 4>& p) { orbPos = p; repaint (orbRect()); }
     std::function<bool()> metroIsCustom;   // έχει φορτωθεί δικός ήχος μετρονόμου;
     std::function<void (int)> onMetroSample;   // 1 = διάλεξε ήχο, 2 = αρχικός ήχος
 
@@ -665,6 +685,7 @@ public:
 
     void paint (Graphics& g) override
     {
+        PaintTimer pt ("loops", g.getClipBounds().getWidth(), g.getClipBounds().getHeight());
         if (orbMode) { hot.clear(); tipZones.clear(); if (qrMode) paintQr (g); else paintOrb (g); return; }
         paintHome (g);
         return;
@@ -1017,6 +1038,36 @@ public:
     }
 
     // ---------------------------------------------------------------- Νέα κύρια οθόνη: τρεις κύκλοι (loop του block, orb, Smart + Follow)
+    // ---- επιλεκτικό repaint: ξαναζωγραφίζεται μόνο ό,τι άλλαξε (πριν ξαναζωγραφιζόταν όλη η οθόνη 30 φορές το δευτερόλεπτο)
+    Rectangle<int> leftRect() const  { const auto hg = homeGeom(); const float e = hg.lr + hg.lw + 40.0f * hg.s; return Rectangle<float> (hg.lcx - e, hg.cy - e, 2.0f * e, 2.0f * e).getSmallestIntegerContainer().getIntersection (getLocalBounds()); }
+    Rectangle<int> rightRect() const { const auto hg = homeGeom(); const float e = hg.lr + hg.lw + 40.0f * hg.s; return Rectangle<float> (hg.rcx - e, hg.cy - e, 2.0f * e, 2.0f * e).getSmallestIntegerContainer().getIntersection (getLocalBounds()); }
+    Rectangle<int> orbRect() const   { const auto hg = homeGeom(); const float e = hg.orbR * 1.45f + 30.0f * hg.s; return Rectangle<float> (hg.ocx - e, hg.cy - e, 2.0f * e, 2.0f * e).getSmallestIntegerContainer().getIntersection (getLocalBounds()); }
+    Rectangle<int> orbTextRect() const { const auto hg = homeGeom(); return Rectangle<float> (hg.ocx - 150.0f * hg.s, hg.cy + hg.orbR, 300.0f * hg.s, 90.0f * hg.s).getSmallestIntegerContainer().getIntersection (getLocalBounds()); }
+    Rectangle<int> topRect() const   { return Rectangle<int> (0, 0, getWidth(), (int) (44.0f * homeGeom().s)); }
+    int64 rightSig = 0, topSig = 0;
+
+    void repaintDynamic()
+    {
+        if (menuOpen || orbMode || list.isVisible()) { repaint(); return; }
+        const int sel = selected;
+        const bool valid = sel >= 0 && sel < flow::numBlocks && engine.active[(size_t) sel].load() != 0;
+        auto q = [] (float v) { return (int64) std::lround (v * 200.0f); };
+        int64 h = (int64) engine.smartOn.load() * 7 + engine.smartAuto.load() * 13 + q (engine.smartAccept.load()) + (valid ? 1 : 0) + sel * 31;
+        if (valid)
+        {
+            const auto b = (size_t) sel;
+            for (int64 v : { (int64) engine.smartType[b].load(), q (engine.smartLow[b].load()), q (engine.smartMid[b].load()), q (engine.smartHigh[b].load()), q (engine.smartWidth[b].load()),
+                             q (engine.smartNeedLow[b].load()), q (engine.smartNeedWidth[b].load()), q (engine.smartAppLow[b].load()), q (engine.smartAppWidth[b].load()) })
+                h = h * 1000003 + v;
+        }
+        if (h != rightSig) { rightSig = h; repaint (rightRect()); }
+        int64 t = (int64) lastChord.hashCode64() * 31 + (int64) std::lround (jlimit (0.0f, 1.0f, cpu) * 100.0f) * 7 + (midiActive ? 1 : 0) + (int64) notice.hashCode64() * 3 + chordName.hashCode64();
+        if (t != topSig) { topSig = t; repaint (topRect()); repaint (getLocalBounds().removeFromBottom (40)); }
+        repaint (leftRect());                       // ο κύκλος του loop κινείται συνέχεια
+        repaint (orbTextRect());                    // μπάρα 16 μέτρων και ενδείξεις Rec
+        if (orbSpinV > 1.0e-4f) repaint (orbRect());    // ο orb γυρίζει όσο γράφει Rec Audio
+    }
+
     struct HomeGeom { float s, cy, lcx, lr, lw, ocx, orbR, rcx; };
     HomeGeom homeGeom() const
     {
@@ -1384,28 +1435,50 @@ public:
         }
 
         // ο orb: δική σου εικόνα (σώζεται με το set), αλλιώς ουδέτερη κουκκιδωτή επιφάνεια
+        if (home)
+        {
+            // στην κύρια οθόνη ο δίσκος φτιάχνεται μία φορά σε εικόνα (cache) και μετά απλώς αντιγράφεται: χωρίς ανακλίμακα εικόνας σε κάθε καρέ
+            const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
+            const int side = jmax (8, roundToInt (2.0f * R * scale));
+            const void* key = orbImage.isValid() ? (const void*) orbImage.getPixelData().get() : nullptr;
+            if (! orbCache.isValid() || orbCache.getWidth() != side || orbCacheKey != key)
+            {
+                orbCacheKey = key;
+                orbCache = Image (Image::ARGB, side, side, true);
+                Graphics cg (orbCache);
+                cg.addTransform (AffineTransform::scale ((float) side / (2.0f * R)));
+                Path cc; cc.addEllipse (0.0f, 0.0f, 2.0f * R, 2.0f * R);
+                cg.setColour (Colour (0xff2e2a27)); cg.fillPath (cc);
+                cg.reduceClipRegion (cc);
+                if (orbImage.isValid())
+                    cg.drawImage (orbImage, Rectangle<float> (0.0f, 0.0f, 2.0f * R, 2.0f * R), RectanglePlacement::fillDestination | RectanglePlacement::centred);
+                else
+                {
+                    cg.setTiledImageFill (dotGaps(), 0, 0, 1.0f);
+                    cg.fillRect (Rectangle<float> (0.0f, 0.0f, 2.0f * R, 2.0f * R));
+                }
+            }
+            if (std::abs (orbSpin) > 1.0e-4f)
+                g.drawImageTransformed (orbCache, AffineTransform::scale (2.0f * R / (float) side).translated (-R, -R).rotated (orbSpin).translated (cx, cy));
+            else
+                g.drawImage (orbCache, Rectangle<float> (cx - R, cy - R, 2.0f * R, 2.0f * R), RectanglePlacement::stretchToFit);
+        }
+        else
+        {
         Path circle; circle.addEllipse (cx - R, cy - R, 2.0f * R, 2.0f * R);
         g.setColour (Colour (0xff2e2a27));
         g.fillPath (circle);
         g.saveState();
         g.reduceClipRegion (circle);
         if (orbImage.isValid())
-        {
-            if (home && std::abs (orbSpin) > 1.0e-4f)
-            {
-                const float sc = 2.0f * R / (float) jmin (orbImage.getWidth(), orbImage.getHeight());
-                g.drawImageTransformed (orbImage, AffineTransform::translation (-0.5f * (float) orbImage.getWidth(), -0.5f * (float) orbImage.getHeight())
-                                                      .scaled (sc, sc).rotated (orbSpin).translated (cx, cy));
-            }
-            else
-                g.drawImage (orbImage, Rectangle<float> (cx - R, cy - R, 2.0f * R, 2.0f * R), RectanglePlacement::fillDestination | RectanglePlacement::centred);
-        }
+            g.drawImage (orbImage, Rectangle<float> (cx - R, cy - R, 2.0f * R, 2.0f * R), RectanglePlacement::fillDestination | RectanglePlacement::centred);
         else
         {
             g.setTiledImageFill (dotGaps(), 0, 0, 1.0f);
             g.fillRect (Rectangle<float> (cx - R, cy - R, 2.0f * R, 2.0f * R));
         }
         g.restoreState();
+        }
         g.setColour (Colour (0xff4a423c));
         g.drawEllipse (cx - R, cy - R, 2.0f * R, 2.0f * R, 1.4f);
         g.setFont (hobby::makeFont (typeface, 11.0f));
@@ -1568,6 +1641,7 @@ public:
     }
 
     // Αποσπασμένος orb (δικό του παράθυρο, π.χ. στο iPad): το OrbPanel ζωγραφίζει και στέλνει τα κλικ εδώ
+    Image orbCache; const void* orbCacheKey = nullptr;
     Component* orbExternal = nullptr;
     int orbWo = 0, orbHo = 0;
     int orbW() const { return orbWo > 0 ? orbWo : getWidth(); }
