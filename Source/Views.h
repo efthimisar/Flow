@@ -412,7 +412,7 @@ public:
         for (int c = 0; c < 4; ++c)
             orbLift[(size_t) c] += ((c == orbDrag ? 1.0f : 0.0f) - orbLift[(size_t) c]) * 0.25f;    // ο κύκλος σηκώνεται ομαλά όταν τον κρατάς
         knobs = k; orbPos = pos; orbLearning = learning; orbRec = rec; orbMotion = motion;
-        if (orbMode) repaint();
+        repaint();
         if (orbExternal) orbExternal->repaint();
     }
     std::function<bool()> metroIsCustom;   // έχει φορτωθεί δικός ήχος μετρονόμου;
@@ -657,16 +657,18 @@ public:
     void resized() override
     {
         list.setBounds (0, 44, getWidth(), jmax (60, getHeight() - 44 - knobAreaH - 4));
-        const int by = stripY;
-        tempoBox.setBounds (getWidth() / 2 - 150, by, 100, 22);
-        tapDot.setBounds (tempoBox.getRight() + 8, by, 22, 22);
-        tempoBox.setVisible (metroStrip && ! orbMode);
-        tapDot.setVisible (metroStrip && ! orbMode);
+        const int tw = getWidth(), ts = 22;
+        tapDot.setBounds (tw - 14 - ts, 12, ts, ts);
+        tempoBox.setBounds (tapDot.getX() - 8 - 100, 12, 100, 22);
+        tempoBox.setVisible (! orbMode);
+        tapDot.setVisible (! orbMode);
     }
 
     void paint (Graphics& g) override
     {
         if (orbMode) { hot.clear(); tipZones.clear(); if (qrMode) paintQr (g); else paintOrb (g); return; }
+        paintHome (g);
+        return;
         const int w = getWidth();
         const int axisBars = engine.axisBarsOut.load();
         const double axisBeats = (double) axisBars * flow::beatsPerBar;
@@ -970,6 +972,7 @@ public:
     struct OrbGeom { float cx, cy, R; };
     OrbGeom orbGeom() const
     {
+        if (orbWo == 0) { const auto hg = homeGeom(); return { hg.ocx, hg.cy, hg.orbR }; }
         const float w = (float) orbW(), h = (float) orbH();
         return { w * 0.5f, h * 0.5f + 6.0f, jmax (40.0f, jmin ((h - 70.0f) * 0.5f, w * 0.2f)) };
     }
@@ -1005,12 +1008,343 @@ public:
     Rectangle<float> orbBottomRect() const   // "✕ motion"
     {
         const auto gm = orbGeom();
+        if (orbWo == 0) return Rectangle<float> (gm.cx - 60.0f, gm.cy + gm.R + 8.0f + 40.0f * homeGeom().s, 120.0f, 16.0f);
         return Rectangle<float> (gm.cx + 60.0f, gm.cy + gm.R + 24.0f, 90.0f, 16.0f);
     }
     Rectangle<float> orbImageClearRect() const
     {
         const auto gm = orbGeom();
         return Rectangle<float> (0, 0, 24.0f, 24.0f).withCentre ({ gm.cx, gm.cy + gm.R * 0.82f });
+    }
+
+    // ---------------------------------------------------------------- Νέα κύρια οθόνη: τρεις κύκλοι (loop του block, orb, Smart + Follow)
+    struct HomeGeom { float s, cy, lcx, lr, lw, ocx, orbR, rcx; };
+    HomeGeom homeGeom() const
+    {
+        const float w = (float) getWidth(), h = (float) getHeight();
+        HomeGeom hg;
+        hg.s = jlimit (0.55f, 1.5f, jmin (w / 1065.0f, h / 500.0f));
+        hg.cy = h * 0.5f;
+        hg.ocx = w * 0.5f;
+        hg.orbR = 165.0f * hg.s;
+        hg.lr = 118.0f * hg.s; hg.lw = 17.0f * hg.s;
+        hg.lcx = w * 0.172f; hg.rcx = w * 0.86f;
+        return hg;
+    }
+    bool homeStyle() const { return orbWo == 0; }
+    Point<float> orbRingCentre (int c) const
+    {
+        const auto gm = orbGeom();
+        const float k = gm.R * 0.91f;
+        static const float sx[4] { -1.0f, 1.0f, 1.0f, -1.0f }, sy[4] { -1.0f, -1.0f, 1.0f, 1.0f };
+        return { gm.cx + sx[c & 3] * k, gm.cy + sy[c & 3] * k };
+    }
+
+    std::function<void()> onSmartCycle, onFollowToggle;     // Off → Ask → Auto, Follow on/off
+    std::function<void (int)> onSmartType, onSmartApply;    // block
+    float orbSpin = 0.0f, orbSpinV = 0.0f;
+    double lastSpinMs = 0.0;
+
+    static String chordWord (int root, int type)
+    {
+        static const char* nm[12] { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        return String (nm[((root % 12) + 12) % 12]) + (type == 1 ? "m" : "");
+    }
+
+    void paintHome (Graphics& g)
+    {
+        tipZones.clear(); hot.clear(); metroSliderRect = {};
+        const auto hg = homeGeom();
+        const float s = hg.s, w = (float) getWidth(), h = (float) getHeight();
+        const double now = engine.beatPosOut.load();
+        const Colour txtC (0xffe6e0d8), dimC (0xff968e86), trackC (0xff343130);
+        const int sel = selected;
+        const bool valid = sel >= 0 && sel < flow::numBlocks && engine.active[(size_t) sel].load() != 0;
+        const auto tapeState = engine.recorder.getState();
+        const bool taping = tapeState == RecorderEngine::State::Recording;
+
+        // ---- γωνίες: συγχορδία, CPU, tempo (το tempo και το tap είναι components πάνω δεξιά), μήνυμα, ένδειξη MIDI
+        if (chordName.isNotEmpty()) lastChord = chordName;
+        if (lastChord.isNotEmpty())
+        {
+            g.setFont (hobby::makeFont (typeface, 18.0f * s)); g.setColour (hobby::kLilac);
+            g.drawText (lastChord, Rectangle<float> (30.0f * s, 10.0f * s, 160.0f * s, 26.0f * s), Justification::centredLeft, false);
+        }
+        {
+            const float load = jlimit (0.0f, 1.0f, cpu);
+            const float R = 9.0f * s, cx0 = w * 0.5f - 22.0f * s, cy0 = 22.0f * s;
+            g.setColour (Colour (0xff3a3430)); g.fillEllipse (cx0 - R, cy0 - R, 2.0f * R, 2.0f * R);
+            if (load > 0.005f)
+            {
+                Path pie; pie.addPieSegment (Rectangle<float> (cx0 - R, cy0 - R, 2.0f * R, 2.0f * R), MathConstants<float>::pi * -0.75f, MathConstants<float>::pi * -0.75f + MathConstants<float>::pi * 1.5f * load, 0.0f);
+                g.setColour (load >= 0.85f ? hobby::kRed : dimC); g.fillPath (pie);
+            }
+            g.setFont (hobby::makeFont (typeface, 13.0f * s)); g.setColour (load >= 0.85f ? hobby::kRed : dimC);
+            g.drawText (String ((int) std::lround (load * 100.0f)) + "%", Rectangle<float> (cx0 + R + 6.0f * s, 8.0f * s, 50.0f * s, 28.0f * s), Justification::centredLeft, false);
+            tipZones.push_back ({ Rectangle<float> (cx0 - R, 8.0f * s, 2.0f * R + 56.0f * s, 28.0f * s), String ("Processor load (CPU)") });
+        }
+        if (notice.isNotEmpty())
+        {
+            g.setFont (hobby::makeFont (typeface, 13.0f * s)); g.setColour (hobby::kIconGrey);
+            g.drawText (notice, Rectangle<float> (16.0f * s, h - 28.0f * s, w * 0.4f, 20.0f * s), Justification::centredLeft, true);
+        }
+        g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
+        g.fillEllipse (w - 14.0f * s - 7.0f, h - 14.0f * s - 7.0f, 7.0f, 7.0f);
+        if (metroStrip)   // ♪ / ↺: δικός σου ήχος μετρονόμου ⇄ αρχικός
+        {
+            const bool custom = metroIsCustom && metroIsCustom();
+            const Rectangle<float> r (w - 34.0f * s - 11.0f, 40.0f * s, 22.0f, 22.0f);
+            g.setColour (custom ? hobby::kOn : Colour (0xff6b625a)); g.setFont (hobby::makeFont (typeface, 16.0f));
+            g.drawText (custom ? String::fromUTF8 ("\xe2\x86\xba") : String::fromUTF8 ("\xe2\x99\xaa"), r, Justification::centred, false);
+            hot.push_back ({ r.expanded (3.0f), [this, custom] { if (onMetroSample) onMetroSample (custom ? 2 : 1); } });
+            tipZones.push_back ({ r, custom ? String ("Back to the default metronome sound") : String ("Choose your own metronome sound") });
+        }
+
+        // ---- αριστερός κύκλος: το loop του επιλεγμένου block στον κοινό άξονα (4 / 8 / 16 μέτρα)
+        {
+            const float cx = hg.lcx, cy = hg.cy, r = hg.lr, lw = hg.lw;
+            const int axisBars = jmax (1, engine.axisBarsOut.load());
+            const double axisBeats = (double) axisBars * flow::beatsPerBar;
+            const int st = valid ? engine.loopStateOut[(size_t) sel].load() : flow::loopOff;
+            const double L = valid ? jmax (0.0, engine.loopBeatsOut[(size_t) sel].load()) : 0.0;
+            const int layers = valid ? engine.loopLayersOut[(size_t) sel].load() : 0;
+            const bool playing = st == flow::loopPlay || st == flow::loopOver;
+            const bool recLoop = st == flow::loopRec, over = st == flow::loopOver;
+            const bool muted = valid && (engine.blockOff[(size_t) sel].load() != 0 || engine.loopStoppedOut[(size_t) sel].load() != 0);
+            Colour base = ! valid ? trackC : muted ? Colour (0xff4a4a52) : recLoop ? hobby::kRed : over ? Colour (0xffe8883a) : blockLight (sel);
+            // παλμός με το tempo: ο πρώτος χτύπος κάθε μέτρου πιο έντονος
+            const double bt = std::floor (jmax (0.0, now) + 1.0e-9), frac = jmax (0.0, now - bt);
+            const bool barStart = std::fmod (bt, flow::beatsPerBar) < 1.0e-6;
+            const float decay = jlimit (0.0f, 1.0f, 1.0f - (float) frac * 2.8f);
+            const float pulse = (valid && (playing || recLoop)) ? decay * decay * (barStart ? 0.9f : 0.35f) : 0.0f;
+
+            Path track; track.addCentredArc (cx, cy, r, r, 0.0f, 0.0f, MathConstants<float>::twoPi, true);
+            g.setColour (trackC.interpolatedWith (Colour (0xfff0ebe2), pulse * 0.45f));
+            g.strokePath (track, PathStrokeType (lw));
+            g.setColour (hobby::kScreen);
+            for (int i = 0; i < axisBars; ++i)   // ένα σημάδι ανά μέτρο
+            {
+                const float a = MathConstants<float>::twoPi * (float) i / (float) axisBars;
+                const float dx = std::sin (a), dy = -std::cos (a);
+                g.drawLine (cx + dx * (r - lw * 0.5f - 1.0f), cy + dy * (r - lw * 0.5f - 1.0f), cx + dx * (r + lw * 0.5f + 1.0f), cy + dy * (r + lw * 0.5f + 1.0f), jmax (1.5f, 2.0f * s));
+            }
+            double span = 0.0;
+            if (playing) span = jmin (axisBeats, jmax (0.25, L));
+            else if (recLoop)
+            {
+                const double elapsed = jmax (0.0, now - engine.recStartBeatOut[(size_t) sel].load());
+                span = jmin (axisBeats, elapsed);
+            }
+            if (span > 0.0)
+            {
+                const float f = (float) (span / axisBeats);
+                Path arc; arc.addCentredArc (cx, cy, r, r, 0.0f, 0.0f, MathConstants<float>::twoPi * jmin (0.9999f, f), true);
+                g.setColour (base.interpolatedWith (Colours::white, pulse));
+                g.strokePath (arc, PathStrokeType (lw));
+                if (f > 0.0f)   // επανάληψη του κύκλου μέσα στον άξονα: αχνά τμήματα
+                    for (double k = span; playing && k < axisBeats - 1.0e-6; k += span)
+                    {
+                        const float a0 = MathConstants<float>::twoPi * (float) (k / axisBeats);
+                        const float a1 = MathConstants<float>::twoPi * (float) (jmin (axisBeats, k + span) / axisBeats);
+                        Path rp; rp.addCentredArc (cx, cy, r, r, 0.0f, a0, jmin (a1, a0 + MathConstants<float>::twoPi * 0.9999f), true);
+                        g.setColour (base.withAlpha (0.28f));
+                        g.strokePath (rp, PathStrokeType (lw));
+                    }
+            }
+            if (valid && (playing || recLoop))   // playhead
+            {
+                const double headBeats = playing ? axisBeats : axisBeats;
+                const float a = MathConstants<float>::twoPi * (float) (std::fmod (jmax (0.0, now), headBeats) / axisBeats);
+                const float dx = std::sin (a), dy = -std::cos (a);
+                g.setColour (Colours::white);
+                g.drawLine (cx + dx * (r - lw * 0.5f - 5.0f * s), cy + dy * (r - lw * 0.5f - 5.0f * s), cx + dx * (r + lw * 0.5f + 5.0f * s), cy + dy * (r + lw * 0.5f + 5.0f * s), jmax (2.0f, 3.0f * s));
+            }
+            // κέντρο: μήκος και στρώματα
+            g.setColour (valid ? txtC : dimC);
+            if (playing && L > 0.0)
+            {
+                const int bars = jmax (1, (int) std::lround (L / flow::beatsPerBar));
+                g.setFont (hobby::makeFont (typeface, 24.0f * s).boldened());
+                g.drawText (String (bars) + (bars == 1 ? " bar" : " bars"), Rectangle<float> (cx - r, cy - 26.0f * s, 2.0f * r, 30.0f * s), Justification::centred, false);
+                g.setFont (hobby::makeFont (typeface, 13.0f * s)); g.setColour (dimC);
+                g.drawText (String (layers) + (layers == 1 ? " layer" : " layers"), Rectangle<float> (cx - r, cy + 6.0f * s, 2.0f * r, 20.0f * s), Justification::centred, false);
+            }
+            else
+            {
+                g.setFont (hobby::makeFont (typeface, 20.0f * s).boldened());
+                g.setColour (recLoop ? hobby::kRed : dimC);
+                g.drawText (! valid ? String ("-") : recLoop ? String (over ? "Overdub" : "Rec") : String ("ready"), Rectangle<float> (cx - r, cy - 16.0f * s, 2.0f * r, 32.0f * s), Justification::centred, false);
+            }
+            g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 12.0f * s).boldened());
+            if (valid) g.drawText ("Block " + String (sel + 1), Rectangle<float> (cx - r, cy - r - lw - 26.0f * s, 2.0f * r, 18.0f * s), Justification::centred, false);
+            g.setFont (hobby::makeFont (typeface, 11.0f * s));
+            g.drawText ("axis " + String (axisBars) + " bars", Rectangle<float> (cx - r, cy + r + lw * 0.5f + 8.0f * s, 2.0f * r, 16.0f * s), Justification::centred, false);
+            if (recLoop || over)
+            {
+                g.setColour (over ? hobby::kPeach : hobby::kRed);
+                g.drawText (over ? "Overdub (Rec MIDI loop)" : "Rec MIDI loop", Rectangle<float> (cx - r, cy + r + lw * 0.5f + 26.0f * s, 2.0f * r, 16.0f * s), Justification::centred, false);
+            }
+        }
+
+        // ---- κεντρικός κύκλος: orb (πρώτο πλάνο) + 4 δαχτυλίδια γύρω του (τρίτο πλάνο)
+        {
+            const double tn = Time::getMillisecondCounterHiRes();
+            const float dt = lastSpinMs > 0.0 ? jlimit (0.0f, 0.2f, (float) ((tn - lastSpinMs) * 0.001)) : 0.0f;
+            lastSpinMs = tn;
+            orbSpinV += ((taping ? 0.25f : 0.0f) - orbSpinV) * jmin (1.0f, dt * 1.5f);   // περίπου μία στροφή ανά 25 δλ, ομαλή επιτάχυνση και επιβράδυνση
+            orbSpin = std::fmod (orbSpin + orbSpinV * dt, MathConstants<float>::twoPi);
+            paintOrb (g);
+            const float rr = 14.0f * s;
+            for (int c = 0; c < 4; ++c)
+            {
+                bool any = false;
+                for (int r = 0; r < 4; ++r) any = any || knobs[(size_t) (c * 4 + r)].bound;
+                const auto pc = orbRingCentre (c);
+                const bool learningHere = orbLearning >= c * 4 && orbLearning < c * 4 + 4;
+                Path ring; ring.addEllipse (pc.x - rr, pc.y - rr, 2.0f * rr, 2.0f * rr);
+                Colour rc = any ? Colour (0xff48443f) : Colour (0xff35312e);
+                if (c == orbDrag) rc = Colour (0xff9a948b);
+                if (learningHere) rc = hobby::kOn.withAlpha (0.35f + 0.65f * (float) hobby::pulse (tn * 0.001 * 2.0));
+                g.setColour (rc);
+                g.strokePath (ring, PathStrokeType (jmax (2.5f, 4.0f * s)));
+            }
+            // ενδείξεις κάτω από τον orb: Rec Audio και Rec motion
+            float ty = gmBottom();
+            g.setFont (hobby::makeFont (typeface, 13.0f * s));
+            if (taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error)
+            {
+                const float pl = (float) hobby::pulse (tn * 0.001 * 1.5);
+                String t = tapeState == RecorderEngine::State::Error ? String ("REC AUDIO ERROR") : "Rec Audio " + clockText (engine.recorder.getElapsedSeconds());
+                if (engine.recorder.isZipping()) t = "Rec Audio zip...";
+                g.setColour (hobby::kRed.withAlpha (taping ? 0.5f + 0.5f * pl : 1.0f));
+                g.drawText (t, Rectangle<float> (hg.ocx - 120.0f * s, ty, 240.0f * s, 18.0f * s), Justification::centred, false);
+                ty += 18.0f * s;
+            }
+            if (orbRec)
+            {
+                g.setColour (hobby::kCoral);
+                g.drawText ("Rec motion", Rectangle<float> (hg.ocx - 120.0f * s, ty, 240.0f * s, 18.0f * s), Justification::centred, false);
+                ty += 18.0f * s;
+            }
+            if (orbMotion)
+            {
+                g.setColour (dimC);
+                g.drawText (String::fromUTF8 ("\xe2\x9c\x95 motion"), orbBottomRect(), Justification::centred, false);
+            }
+        }
+
+        // ---- δεξιός κύκλος: Smart master (δαχτυλίδια Low / Mid / High + κύκλος stereo) και Follow
+        paintSmartCircle (g, hg, valid);
+    }
+
+    float gmBottom() const { const auto gm = orbGeom(); return gm.cy + gm.R + 8.0f * homeGeom().s; }
+
+    void paintSmartCircle (Graphics& g, const HomeGeom& hg, bool valid)
+    {
+        const float s = hg.s, cx = hg.rcx, cy = hg.cy, r = hg.lr, lw = hg.lw;
+        const Colour txtC (0xffe6e0d8), dimC (0xff968e86), trackC (0xff343130), okC = hobby::kOn, amber (0xffebb45a);
+        auto back = [] (Colour c) { return c.interpolatedWith (hobby::kScreen, 0.45f); };
+        const bool on = engine.smartOn.load() != 0;
+        const int mode = engine.smartAuto.load();
+        const float acc = engine.smartAccept.load();
+        const int sel = selected;
+        const int type = valid ? engine.smartType[(size_t) sel].load() : 0;
+        static const char* typeNames[] { "Other", "Bass", "Keys", "Pad", "Lead", "Strings" };
+        const Colour bc = valid ? blockLight (sel) : Colour (0xff6b625a);
+        const bool active = on && type != 0;
+        const Colour cols[3] { back (bc.interpolatedWith (Colours::black, 0.25f)), back (bc), back (bc.interpolatedWith (Colours::white, 0.45f)) };
+        float lim[4]; flow::smartLimits (type, lim);
+        const float vals[3] { valid ? engine.smartLow[(size_t) sel].load() : 0.0f, valid ? engine.smartMid[(size_t) sel].load() : 0.0f, valid ? engine.smartHigh[(size_t) sel].load() : 0.0f };
+        const float width = valid ? engine.smartWidth[(size_t) sel].load() : 0.0f;
+        const float full = degreesToRadians (270.0f), start = degreesToRadians (-135.0f);
+        for (int k = 0; k < 3; ++k)
+        {
+            const float rad = r - (float) k * (lw + 4.0f * s) + 0.0f;
+            const bool isOver = active && vals[k] > lim[k];
+            Path tp; tp.addCentredArc (cx, cy, rad, rad, 0.0f, start, start + full, true);
+            g.setColour (trackC); g.strokePath (tp, PathStrokeType (lw));
+            if (vals[k] > 0.003f)
+            {
+                Path vp; vp.addCentredArc (cx, cy, rad, rad, 0.0f, start, start + full * jlimit (0.0f, 1.0f, vals[k]), true);
+                g.setColour (isOver ? back (hobby::kRed) : cols[k]); g.strokePath (vp, PathStrokeType (lw));
+            }
+            if (active && lim[k] < 0.999f)
+            {
+                const float a = start + full * lim[k];
+                const float dx = std::sin (a), dy = -std::cos (a);
+                g.setColour (txtC.withAlpha (0.8f));
+                g.drawLine (cx + dx * (rad - lw * 0.5f - 2.0f), cy + dy * (rad - lw * 0.5f - 2.0f), cx + dx * (rad + lw * 0.5f + 2.0f), cy + dy * (rad + lw * 0.5f + 2.0f), jmax (1.4f, 1.6f * s));
+            }
+        }
+        // κέντρο: κύκλος του πλάτους stereo. Πάτημα = Off → Ask → Auto
+        {
+            const float sr = 26.0f * s;
+            g.setColour (Colour (0xff4a4642)); g.drawEllipse (cx - sr, cy - sr, 2.0f * sr, 2.0f * sr, 2.0f);
+            const float ew = jmax (1.5f, width * sr);
+            const bool wOver = active && width > lim[3];
+            g.setColour (! on ? Colour (0xff4a4642) : wOver ? back (hobby::kRed) : cols[1]);
+            g.fillEllipse (cx - ew, cy - sr + 3.0f, 2.0f * ew, 2.0f * sr - 6.0f);
+            if (on)
+            {
+                g.setColour (mode == 1 ? okC : dimC);
+                g.setFont (hobby::makeFont (typeface, 10.0f * s).boldened());
+                g.drawText (mode == 1 ? "Auto" : "Ask", Rectangle<float> (cx - 30.0f * s, cy + sr + 3.0f * s, 60.0f * s, 14.0f * s), Justification::centred, false);
+            }
+            const Rectangle<float> hit (cx - sr - 8.0f, cy - sr - 8.0f, 2.0f * sr + 16.0f, 2.0f * sr + 16.0f);
+            hot.push_back ({ hit, [this] { if (onSmartCycle) onSmartCycle(); } });
+            tipZones.push_back ({ hit, String (on ? (mode == 1 ? "Smart master: Auto (press = Off)" : "Smart master: Ask (press = Auto)") : "Smart master: Off (press = Ask)") });
+        }
+        // τύπος ήχου: πάτημα = επόμενος τύπος
+        {
+            const Rectangle<float> tr (cx - 70.0f * s, cy - r - lw * 0.5f - 34.0f * s, 140.0f * s, 24.0f * s);
+            g.setColour (type != 0 ? txtC : dimC); g.setFont (hobby::makeFont (typeface, 16.0f * s).boldened());
+            g.drawText (valid ? String (typeNames[jlimit (0, 5, type)]) : String ("-"), tr, Justification::centred, false);
+            if (valid) { hot.push_back ({ tr, [this, b = selected] { if (onSmartType) onSmartType (b); } }); tipZones.push_back ({ tr, String ("Sound type of the block (press = next)") }); }
+        }
+        // κάτω: διακόπτης Follow, πρόταση, ✓
+        {
+            const float yb = cy + r + lw * 0.5f + 28.0f * s, fr = 13.0f * s;
+            const bool fon = engine.followOn.load() != 0;
+            const Point<float> fc (cx - 78.0f * s, yb);
+            g.setColour (fon ? Colour (0xff3c5a46) : Colour (0xff2a2725)); g.fillEllipse (fc.x - fr - 4.0f * s, fc.y - fr * 0.9f, 2.0f * (fr + 4.0f * s), 1.8f * fr);
+            g.setColour (fon ? okC : Colour (0xff4a4642)); g.drawEllipse (fc.x - fr - 4.0f * s, fc.y - fr * 0.9f, 2.0f * (fr + 4.0f * s), 1.8f * fr, 2.0f);
+            g.setColour (fon ? txtC : dimC);
+            g.fillEllipse ((fon ? fc.x + 4.0f * s : fc.x - 4.0f * s) - 6.0f * s, fc.y - 6.0f * s, 12.0f * s, 12.0f * s);
+            g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 10.0f * s));
+            g.drawText ("Follow", Rectangle<float> (fc.x - 30.0f * s, fc.y + fr, 60.0f * s, 14.0f * s), Justification::centred, false);
+            const Rectangle<float> fh (fc.x - fr - 10.0f * s, fc.y - fr - 4.0f * s, 2.0f * (fr + 10.0f * s), 2.0f * fr + 22.0f * s);
+            hot.push_back ({ fh, [this] { if (onFollowToggle) onFollowToggle(); } });
+            tipZones.push_back ({ fh, String ("Follow: the loops follow the chord you play (key A0)") });
+            if (fon)
+                g.drawText (chordWord (engine.followRoot.load(), engine.followType.load()) + String::fromUTF8 (" \xe2\x86\x92 ") + chordWord (engine.followTRoot.load(), engine.followTType.load()),
+                            Rectangle<float> (cx - 90.0f * s, yb + fr + 15.0f * s, 180.0f * s, 14.0f * s), Justification::centred, false);
+
+            const float needLow = valid ? engine.smartNeedLow[(size_t) sel].load() : 0.0f, needW = valid ? engine.smartNeedWidth[(size_t) sel].load() : 1.0f;
+            const float appLow = valid ? engine.smartAppLow[(size_t) sel].load() : 0.0f, appW = valid ? engine.smartAppWidth[(size_t) sel].load() : 1.0f;
+            const bool nL = active && needLow > 0.5f, nW = active && needW < 0.97f, applied = appLow > 0.2f || appW < 0.98f, need = nL || nW;
+            String msg;
+            if (! valid) msg = "";
+            else if (! on) msg = "Smart off";
+            else if (type == 0) msg = "Pick a sound type";
+            else if (need)
+            {
+                if (nL) msg = "Lows -" + String (needLow * acc, 1) + " dB";
+                if (nW) msg += String (msg.isEmpty() ? "" : "  ") + "Width " + String ((int) std::round (100.0f - (1.0f - needW) * acc * 100.0f)) + " %";
+            }
+            else msg = applied ? "Correcting" : "In range";
+            g.setColour (need ? amber : dimC); g.setFont (hobby::makeFont (typeface, 12.0f * s).boldened());
+            g.drawText (msg, Rectangle<float> (cx - 60.0f * s, yb - 9.0f * s, 150.0f * s, 18.0f * s), Justification::centred, true);
+            if (valid && on && mode == 0 && type != 0 && (need || applied) && acc > 0.0f)
+            {
+                const Point<float> kc (cx + 96.0f * s, yb);
+                const float kr = 15.0f * s;
+                g.setColour (applied ? Colour (0xff3c5a46) : Colour (0xff35493c)); g.fillEllipse (kc.x - kr, kc.y - kr, 2.0f * kr, 2.0f * kr);
+                g.setColour (okC); g.drawEllipse (kc.x - kr, kc.y - kr, 2.0f * kr, 2.0f * kr, applied ? 2.4f : 1.6f);
+                Path ck; ck.startNewSubPath (kc.x - 6.0f * s, kc.y); ck.lineTo (kc.x - 2.0f * s, kc.y + 5.0f * s); ck.lineTo (kc.x + 7.0f * s, kc.y - 5.0f * s);
+                g.setColour (txtC); g.strokePath (ck, PathStrokeType (2.6f, PathStrokeType::curved, PathStrokeType::rounded));
+                hot.push_back ({ Rectangle<float> (kc.x - kr - 4.0f, kc.y - kr - 4.0f, 2.0f * kr + 8.0f, 2.0f * kr + 8.0f), [this, b = selected] { if (onSmartApply) onSmartApply (b); } });
+            }
+        }
     }
 
     void paintQr (Graphics& g)
@@ -1050,9 +1384,11 @@ public:
         const float cx = gm.cx, cy = gm.cy, R = gm.R;
         const double nowMs = Time::getMillisecondCounterHiRes();
 
-        g.setFont (hobby::makeFont (typeface, 13.0f));
+        const bool home = orbWo == 0 && ! orbMode;
+        if (! home) { g.setFont (hobby::makeFont (typeface, 13.0f));
         g.setColour (Colour (0xffc9c3ba));
         g.drawText (title == "FLOW" ? String ("ORB") : title, 40, 8, orbW() - 80, 22, Justification::centred, true);   // χωρίς επιλεγμένο block γράφει ORB
+        }
 
         // ο orb: δική σου εικόνα (σώζεται με το set), αλλιώς ουδέτερη κουκκιδωτή επιφάνεια
         Path circle; circle.addEllipse (cx - R, cy - R, 2.0f * R, 2.0f * R);
@@ -1061,7 +1397,16 @@ public:
         g.saveState();
         g.reduceClipRegion (circle);
         if (orbImage.isValid())
-            g.drawImage (orbImage, Rectangle<float> (cx - R, cy - R, 2.0f * R, 2.0f * R), RectanglePlacement::fillDestination | RectanglePlacement::centred);
+        {
+            if (home && std::abs (orbSpin) > 1.0e-4f)
+            {
+                const float sc = 2.0f * R / (float) jmin (orbImage.getWidth(), orbImage.getHeight());
+                g.drawImageTransformed (orbImage, AffineTransform::translation (-0.5f * (float) orbImage.getWidth(), -0.5f * (float) orbImage.getHeight())
+                                                      .scaled (sc, sc).rotated (orbSpin).translated (cx, cy));
+            }
+            else
+                g.drawImage (orbImage, Rectangle<float> (cx - R, cy - R, 2.0f * R, 2.0f * R), RectanglePlacement::fillDestination | RectanglePlacement::centred);
+        }
         else
         {
             g.setTiledImageFill (dotGaps(), 0, 0, 1.0f);
@@ -1071,7 +1416,8 @@ public:
         g.setColour (Colour (0xff4a423c));
         g.drawEllipse (cx - R, cy - R, 2.0f * R, 2.0f * R, 1.4f);
         g.setFont (hobby::makeFont (typeface, 11.0f));
-        if (! orbImage.isValid())
+        if (home) {}
+        else if (! orbImage.isValid())
         {
             g.setColour (Colour (0xff78706a));
             g.drawText ("+ image", Rectangle<float> (cx - 50.0f, cy + R * 0.7f, 100.0f, 18.0f), Justification::centred, false);
@@ -1109,7 +1455,7 @@ public:
         }
 
         // λίστες αναθέσεων στις 4 γωνίες
-        for (int c = 0; c < 4; ++c)
+        for (int c = 0; c < 4 && ! home; ++c)
         {
             const auto col = orbColour (c);
             const bool left = orbLeft (c);
@@ -1165,6 +1511,7 @@ public:
         }
 
         // μπάρα θέσης στον κύκλο + ένδειξη εγγραφής κίνησης
+        if (! home)
         {
             const double cyc = 64.0;   // 16 μέτρα
             const float ph = (float) (std::fmod (jmax (0.0, engine.beatPosOut.load()), cyc) / cyc);
@@ -1266,12 +1613,24 @@ public:
             return;
         }
         for (auto& h : hot)
-            if (h.first.contains (e.position)) { h.second(); repaint(); return; }
-        if (stepOut <= 0) return;
-        const auto list = activeBlocks (engine);
-        const int i = (e.y - topOut) / stepOut;
-        if (e.y >= topOut && i >= 0 && i < list.size() && onSelect)
-            onSelect (list[i].getIntValue());
+            if (h.first.contains (e.position)) { auto fn = h.second; fn(); repaint(); return; }
+        // δαχτυλίδια γύρω από τον orb: πάτημα = learn στην πρώτη ελεύθερη ανάθεση της γωνίας
+        for (int c = 0; c < 4; ++c)
+            if (orbRingCentre (c).getDistanceFrom (e.position) <= 14.0f * homeGeom().s + 8.0f)
+            {
+                for (int r = 0; r < 4; ++r)
+                    if (! knobs[(size_t) (c * 4 + r)].bound) { if (onOrbAssign) onOrbAssign (c * 4 + r); return; }
+                return;
+            }
+        for (int c = 0; c < 4; ++c)
+            if (orbDotPoint (c).getDistanceFrom (e.position) <= 18.0f)
+            {
+                orbDrag = c;
+                if (onOrbTouch) onOrbTouch (c, true);
+                orbDragTo (e.position);
+                return;
+            }
+        if (orbMotion && orbBottomRect().contains (e.position)) { if (onOrbClearMotion) onOrbClearMotion(); return; }
     }
 
     String getTooltip() override
@@ -1285,9 +1644,10 @@ public:
     void mouseDrag (const MouseEvent& e) override
     {
         if (orbMode) { if (! qrMode) orbDragTo (e.position); return; }
+        if (orbDrag >= 0) orbDragTo (e.position);
         if (draggingMetro) setMetroLevelFromX (e.position.x);
     }
-    void mouseUp (const MouseEvent&) override { if (orbMode && orbDrag >= 0) { if (onOrbTouch) onOrbTouch (orbDrag, false); orbDrag = -1; repaint(); } if (draggingMetro) { draggingMetro = false; if (onMetroChange) onMetroChange(); } }
+    void mouseUp (const MouseEvent&) override { if (orbDrag >= 0) { if (onOrbTouch) onOrbTouch (orbDrag, false); orbDrag = -1; repaint(); } if (draggingMetro) { draggingMetro = false; if (onMetroChange) onMetroChange(); } }
 
 private:
     void setMetroLevelFromX (float px)
@@ -1338,6 +1698,7 @@ public:
     std::function<void (int)> onSelect, onRedoZone, onCurve, onVolumeMenu, onHold;
     std::function<void (int)> onRemoveBlock;
     std::function<void (int)> onToggleOff;   // (δεν χρησιμοποιείται πια από τον αριθμό)
+    std::function<void (int)> onSwapInstrument, onToggleSpecialBlock;   // ⇄ και SP στη σειρά του block
     std::function<void (int)> onToggleSilent;   // κυκλάκι ♪: το live του block μένει σιωπηλό όσο παίζει η λούπα του
     std::function<void (int, int)> onChordType;   // (block, +1 / -1 / 0 = maj ή νέα τονική)
     std::function<void (int, float)> onVolume;
@@ -1408,22 +1769,24 @@ public:
             else
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                const bool tapKey = n == flow::highestNote;   // C8 = tap tempo και B7 = Follow: σκούρα πλήκτρα με λευκό κυκλάκι (πράσινο όταν είναι ενεργά)
+                const bool tapKey = n == flow::tapKeyNote;   // A0 = Follow, B0 = tap tempo, C1 = Rec Audio: σκούρα πλήκτρα με κύκλο (πράσινος όταν είναι ενεργά, κόκκινος στο Rec Audio)
                 const bool followKey = n == flow::followKeyNote;
-                Colour c = litKey && ! followKey ? Colours::white : (tapKey || followKey) ? hobby::kScreen.brighter (0.12f) : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
+                const bool recKey = n == flow::recAudioKeyNote;
+                Colour c = litKey && ! (followKey || recKey) ? Colours::white : (tapKey || followKey || recKey) ? hobby::kScreen.brighter (0.12f) : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
                 const Colour cc = c.withMultipliedAlpha (alpha);
-                if (b >= 0 && ! litKey && ! switchKey && ! tapKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
+                if (b >= 0 && ! litKey && ! switchKey && ! tapKey && ! followKey && ! recKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
                     g.setGradientFill (ColourGradient (cc, 0.0f, kr.getY(), cc.interpolatedWith (hobby::kScreen, 0.3f), 0.0f, kr.getBottom(), false));
                 else
                     g.setColour (cc);
                 g.fillRoundedRectangle (kr, 3.0f);
                 g.setColour (hobby::kScreen);
                 g.drawRoundedRectangle (kr.reduced (0.5f), 3.0f, 1.0f);
-                if (tapKey || followKey)
+                if (tapKey || followKey || recKey)
                 {
-                    const bool act = tapKey ? engine.tapActiveOut.load() != 0 : engine.followOn.load() != 0;
+                    const bool act = tapKey ? engine.tapActiveOut.load() != 0 : followKey ? engine.followOn.load() != 0
+                                   : engine.recorder.getState() == RecorderEngine::State::Recording;
                     const float rad = jmin (kr.getWidth() * 0.32f, 7.0f);
-                    g.setColour (act ? hobby::kOn : Colours::white);
+                    g.setColour (act ? (recKey ? hobby::kRed : hobby::kOn) : Colours::white);
                     g.fillEllipse (kr.getCentreX() - rad, kr.getCentreY() - rad, rad * 2.0f, rad * 2.0f);
                 }
                 ++wi;
@@ -1493,7 +1856,7 @@ public:
             if (b < 0) continue;
             auto& s = spans[(size_t) b];
             silentRect[(size_t) b] = {};
-            for (auto* r : { &numRect[(size_t) b], &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &barRect[(size_t) b], &xRect[(size_t) b] })
+            for (auto* r : { &numRect[(size_t) b], &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &barRect[(size_t) b], &xRect[(size_t) b], &swapRect[(size_t) b], &spRect[(size_t) b] })
                 *r = {};
             if (! s.used) continue;
 
@@ -1509,8 +1872,8 @@ public:
             // κλικ στον αριθμό ανοίγει τις υπόλοιπες λειτουργίες: hold, καμπύλη, transpose, ♪ (live σιωπηλό όσο παίζει λούπα), ✕
             const bool open = b == expanded;
             const bool showChord = false;   // το Chord δεν χρησιμοποιείται πια: δεν υπάρχει κυκλάκι
-            const bool showCurve = open, showHold = open, showTr = open, showSilent = open && ! isSpecial, showX = open;
-            const int shown = 1 + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showSilent ? 1 : 0) + (showX ? 1 : 0);
+            const bool showCurve = open, showHold = open, showTr = open, showSilent = open && ! isSpecial, showX = false, showSwap = open, showSp = open;
+            const int shown = 1 + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showSilent ? 1 : 0) + (showSwap ? 1 : 0) + (showSp ? 1 : 0) + (showX ? 1 : 0);
             const float total = (float) shown * D + (float) (shown - 1) * gap;
             float x = isSpecial ? s.l : s.l + (width - total) * 0.5f;   // το ειδικό block: τα κυκλάκια τέρμα αριστερά στη λωρίδα του
             if (open)
@@ -1602,6 +1965,30 @@ public:
                 x += D + gap;
             }
 
+            if (showSwap)    // ⇄: αλλαγή οργάνου (VST) του block
+            {
+                swapRect[(size_t) b] = { x, cy, D, D };
+                const auto wr = swapRect[(size_t) b];
+                g.setColour (col.withMultipliedAlpha (alpha * 0.16f));
+                g.fillEllipse (wr);
+                g.setColour (col.withMultipliedAlpha (0.7f));
+                g.setFont (smallFont);
+                g.drawText (String::fromUTF8 ("\xe2\x87\x84"), wr, Justification::centred, false);
+                x += D + gap;
+            }
+
+            if (showSp)      // SP: ειδικό block (πάνω από τα άλλα, χωρίς λούπα, παίζει πάντα)
+            {
+                spRect[(size_t) b] = { x, cy, D, D };
+                const auto pr = spRect[(size_t) b];
+                g.setColour (col.withMultipliedAlpha (alpha * (isSpecial ? 0.4f : 0.16f)));
+                g.fillEllipse (pr);
+                g.setColour (col.withMultipliedAlpha (isSpecial ? alpha : 0.7f));
+                g.setFont (hobby::makeFont (typeface, 10.0f));
+                g.drawText ("SP", pr, Justification::centred, false);
+                x += D + gap;
+            }
+
             if (showX)       // σβήσιμο block: δύο πατήματα (το πρώτο κοκκινίζει για 3 δευτερόλεπτα)
             {
                 xRect[(size_t) b] = { x, cy, D, D };
@@ -1654,10 +2041,22 @@ public:
                     return;
                 }
 
+        // τα κυκλάκια του ανοιχτού μενού ελέγχονται πρώτα, ανεξάρτητα από το πλάτος της ζώνης του block (μικρά blocks: τα κυκλάκια πέφτουν έξω από τη ζώνη)
+        if (! e.mods.isPopupMenu() && expanded >= 0 && expanded < flow::numBlocks && spans[(size_t) expanded].used)
+        {
+            const int b = expanded;
+            if (swapRect[(size_t) b].expanded (2.0f).contains (p))   { if (onSwapInstrument) onSwapInstrument (b); repaint(); return; }
+            if (spRect[(size_t) b].expanded (2.0f).contains (p))     { if (onToggleSpecialBlock) onToggleSpecialBlock (b); repaint(); return; }
+            if (silentRect[(size_t) b].expanded (2.0f).contains (p)) { if (onToggleSilent) onToggleSilent (b); repaint(); return; }
+            if (holdRect[(size_t) b].expanded (2.0f).contains (p))   { if (onHold) onHold (b); return; }
+            if (curveRect[(size_t) b].expanded (2.0f).contains (p))  { if (onCurve) onCurve (b); return; }
+            if (trRect[(size_t) b].expanded (2.0f).contains (p))     { if (onTranspose) onTranspose (b, e.getNumberOfClicks() >= 2 ? 0 : 1); return; }
+        }
+
         bool onCircle = false;   // κλικ σε κυκλάκι κανονικού block μένει στο block, ακόμα κι αν η λωρίδα του ειδικού περνά από πάνω
         for (int b = 0; b < flow::numBlocks && ! onCircle; ++b)
             if (spans[(size_t) b].used)
-                for (const auto* r : { &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &silentRect[(size_t) b] })
+                for (const auto* r : { &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &silentRect[(size_t) b], &swapRect[(size_t) b], &spRect[(size_t) b] })
                     if (r->expanded (2.0f).contains (p)) { onCircle = true; break; }
 
         if (! onCircle && ! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
@@ -1822,7 +2221,7 @@ private:
     int expanded = -1;
     int lastSelSeen = -2;
     std::array<Rectangle<float>, flow::numBlocks> silentRect;
-    std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect, xRect;
+    std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect, xRect, swapRect, spRect;
     int armedBlock = -1;
     uint32 armedUntil = 0;
     float kw = 1.0f, labelY = 46.0f, keysY = 77.0f;

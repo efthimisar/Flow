@@ -19,7 +19,12 @@ namespace flow
     constexpr int numBlocks   = 9;
     constexpr int lowestNote  = 21;     // A0
     constexpr int highestNote = 108;    // C8
-    constexpr int followKeyNote = 107;  // B7: ενεργοποιεί/σβήνει το Follow, δεν παίζει ήχο
+    constexpr int followKeyNote = 21;   // A0: ενεργοποιεί/σβήνει το Follow, δεν παίζει ήχο
+    constexpr int silentKeyNote = 22;   // A#0: σιωπηλό (ανάμεσα στα πλήκτρα ελέγχου)
+    constexpr int tapKeyNote    = 23;   // B0: tap tempo, δεν παίζει ήχο
+    constexpr int recAudioKeyNote = 24; // C1: Rec Audio (σταματά ή νέο take), δεν παίζει ήχο
+    constexpr int firstPlayNote = 25;   // C#1: το πρώτο πλήκτρο που παίζει ήχο
+    inline bool isControlKey (int n) { return n >= lowestNote && n < firstPlayNote; }
     // καταγραφή βημάτων σε αρχείο (Music/Flow/Flow-log.txt) για να φαίνεται πού σταματά ένα crash
     inline void flowLog (const juce::String& s)
     {
@@ -105,7 +110,7 @@ namespace flow
             for (int b = 0; b < numBlocks; ++b)
             {
                 active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
-                lo[b] = lowestNote; hi[b] = lowestNote;
+                lo[b] = firstPlayNote; hi[b] = firstPlayNote;
                 holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0; swBits[(size_t) b * 2] = 0; swBits[(size_t) b * 2 + 1] = 0; autoReadyOut[(size_t) b] = 0; autoPausedOut[(size_t) b] = 0;
                 liveSilent[b] = 1;
                 blockOff[b] = 0; chordMode[b] = 0; chordType[b] = 0; chordMinor[b] = 0; chordTonic[b] = -1; pcMaskOut[b] = 0; bassOut[b] = -1;
@@ -153,11 +158,22 @@ namespace flow
         // Follow: οι λούπες των block που το έχουν ανάψει ακολουθούν τη συγχορδία που παίζεις (μεταφορά με κλίμακα)
         std::atomic<int> followOn { 0 };                                  // γενικός διακόπτης (πλήκτρο B7 / οθόνη Follow)
         std::atomic<int> followRoot { 9 }, followType { 1 };             // κλίμακα των λουπών που ηχογράφησες: ρίζα 0..11, τύπος 0..5
-        std::atomic<int> followTRoot { 9 }, followTType { 1 };           // κλίμακα-στόχος (από τη συγχορδία)
+        std::atomic<int> followTRoot { 9 }, followTType { 1 };
+        std::atomic<int> followHomeRoot { 9 }, followHomeType { 1 }, followHomeSet { 0 };   // τελευταία συγχορδία με σβηστό Follow (τονικότητα πηγής)           // κλίμακα-στόχος (από τη συγχορδία)
         std::array<std::atomic<int>, numBlocks> followBlock;             // 1 = το block ακολουθεί
+        // Follow on/off (πλήκτρο A0 ή οθόνη): όταν ανάβει, η τελευταία συγχορδία που κράτησες με σβηστό Follow γίνεται η τονικότητα πηγής
+        void toggleFollow()
+        {
+            const int nowOn = followOn.load() != 0 ? 0 : 1;
+            if (nowOn != 0 && followHomeSet.load() != 0)
+                followSetScale (followHomeRoot.load(), followHomeType.load());
+            followOn = nowOn;
+        }
+        // μόνο Major (0) και Minor (1): οι παλιές κλίμακες γίνονται η πιο κοντινή (Dorian, Phrygian → Minor, Mixolydian, Lydian → Major)
+        static int followTypeNorm (int t) { return (t == 1 || t == 2 || t == 4) ? 1 : 0; }
         void followSetScale (int root, int type)
         {
-            followRoot = juce::jlimit (0, 11, root); followType = juce::jlimit (0, 5, type);
+            followRoot = juce::jlimit (0, 11, root); followType = followTypeNorm (type);
             followTRoot = followRoot.load(); followTType = followType.load();
         }
         // Smart master: μέτρηση ανά block (3 ζώνες + πλάτος stereo) και διόρθωση με βάση τον τύπο ήχου
@@ -285,8 +301,8 @@ namespace flow
 
         void setZone (int b, int l, int h, int seq = -1)
         {
-            lo[b] = juce::jmin (l, h);
-            hi[b] = juce::jmax (l, h);
+            lo[b] = juce::jmax (firstPlayNote, juce::jmin (l, h));
+            hi[b] = juce::jmax (lo[b].load(), juce::jmax (l, h));
             zoneSeq[b] = seq >= 0 ? seq : ++seqCounter;
             seqCounter = juce::jmax (seqCounter.load(), zoneSeq[b].load());
             zoneState[b] = 0;
@@ -929,7 +945,6 @@ namespace flow
         // η συγχορδία που κρατάς (τουλάχιστον 3 διαφορετικές νότες) ορίζει τη νέα ρίζα και τον τύπο (μείζονα / ελάσσονα)
         void followUpdateTarget()
         {
-            if (followOn.load() == 0) return;
             const uint64_t lo = pressBits[0].load(), hi = pressBits[1].load();
             int mask = 0, lowest = -1;
             for (int n = 0; n < 128; ++n)
@@ -940,8 +955,14 @@ namespace flow
             if (std::bitset<12> ((unsigned) mask).count() < 3) return;
             const int root = lowest % 12;
             const bool m3 = ((mask >> ((root + 3) % 12)) & 1) != 0, M3 = ((mask >> ((root + 4) % 12)) & 1) != 0;
+            const int type = (m3 && ! M3) ? 1 : (M3 && ! m3) ? 0 : followType.load();
+            if (followOn.load() == 0)    // με σβηστό Follow: μαθαίνει την τονικότητα πηγής από την τελευταία συγχορδία
+            {
+                followHomeRoot = root; followHomeType = type; followHomeSet = 1;
+                return;
+            }
             followTRoot = root;
-            followTType = (m3 && ! M3) ? 1 : (M3 && ! m3) ? 0 : followType.load();
+            followTType = type;
         }
 
         static float smartLevel (float meanSquare)
@@ -1242,7 +1263,7 @@ namespace flow
                 if (handlePedal (msg))
                     continue;
 
-                if ((msg.isNoteOn() || msg.isNoteOff()) && msg.getNoteNumber() != highestNote && msg.getNoteNumber() != followKeyNote)
+                if ((msg.isNoteOn() || msg.isNoteOff()) && ! isControlKey (msg.getNoteNumber()))
                 {
                     const int pn = msg.getNoteNumber() & 127;
                     if (msg.isNoteOn()) pressBits[(size_t) (pn >> 6)].fetch_or ((uint64_t) 1 << (pn & 63));
@@ -1252,16 +1273,22 @@ namespace flow
                 if (msg.isNoteOn())
                 {
                     const int n = msg.getNoteNumber();
-                    if (n == followKeyNote)   // B7 = Follow on/off, δεν παίζει ήχο
+                    if (n == followKeyNote)   // A0 = Follow on/off, δεν παίζει ήχο
                     {
-                        followOn = followOn.load() != 0 ? 0 : 1;
+                        toggleFollow();
                         continue;
                     }
-                    if (n == highestNote)     // το τελευταίο πλήκτρο δεξιά (C8) = tap tempo, δεν παίζει ήχο
+                    if (n == tapKeyNote)      // B0 = tap tempo, δεν παίζει ήχο
                     {
                         registerTap (gs + pos, sr);
                         continue;
                     }
+                    if (n == recAudioKeyNote) // C1 = Rec Audio (σταματά ή νέο take), δεν παίζει ήχο
+                    {
+                        recorder.pressButton();
+                        continue;
+                    }
+                    if (isControlKey (n)) continue;   // A#0: σιωπηλό
                     const int cb = captureTarget();
 
                     if (cb >= 0)    // ορισμός ζώνης: το πρώτο και το δεύτερο πλήκτρο (ίδιο πλήκτρο δύο φορές = ζώνη μίας νότας)

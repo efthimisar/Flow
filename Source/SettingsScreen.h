@@ -22,8 +22,14 @@ public:
     struct FollowBlock { bool active = false; juce::String name; bool on = false; };
     struct SetInfo { juce::String name, date; juce::Image thumb; bool current = false; juce::File file; };
 
+    struct ToolItem { juce::String glyph, label, tip; juce::Colour colour; bool enabled = true, armed = false; std::function<void()> fn; };
+    struct OrbKnob { bool bound = false; juce::String name; float value = 0.0f; };
+
     struct Host
     {
+        std::function<std::vector<ToolItem>()> tools;          // εργαλεία του επιλεγμένου block
+        std::function<std::vector<OrbKnob>()> orbKnobs;        // 16 αναθέσεις του orb
+        std::function<void (int)> orbAssign, orbClear;         // θέση 0..15
         std::function<void()> openAudio;
         std::function<juce::String()> audioSummary;
         std::function<juce::String()> currentSetName;
@@ -138,7 +144,7 @@ public:
         g.setColour (hobby::kScreen);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 
-        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "IPAD ORB", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW" };
+        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "IPAD ORB", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW", "BLOCK TOOLS", "ORB KNOBS" };
         g.setColour (dim()); g.setFont (font (13.0f, true));
         g.drawText (titles[(int) page], 40, 26, 500, 20, Justification::centredLeft, false);
         {
@@ -167,6 +173,8 @@ public:
             case WindowSize: paintWindowSize (g); break;
             case Smart: paintSmart (g); break;
             case Follow: paintFollow (g); break;
+            case Tools:  paintTools (g); break;
+            case OrbKnobs: paintOrbKnobs (g); break;
         }
     }
 
@@ -205,7 +213,7 @@ public:
     }
 
 private:
-    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, Ipad, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow };
+    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, Ipad, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs };
     struct Hit { juce::Rectangle<int> r; std::function<void()> fn; };
 
     static juce::Colour dim()  { return juce::Colour (0xff968e86); }
@@ -297,6 +305,10 @@ private:
                     g.strokePath (a, st);
                 }
                 break;
+            case 12: g.setFont (font (24.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x86\x92"), Rectangle<float> (c.x - 20.0f, c.y - 16.0f, 40.0f, 32.0f), Justification::centred, false); break;   // Follow
+            case 13: g.setFont (font (22.0f, true)); g.drawText ("iPad", Rectangle<float> (c.x - 26.0f, c.y - 14.0f, 52.0f, 28.0f), Justification::centred, false); break;
+            case 14: g.setFont (font (24.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x87\x84"), Rectangle<float> (c.x - 22.0f, c.y - 16.0f, 44.0f, 32.0f), Justification::centred, false); break;
+            case 15: g.drawEllipse (c.x - 11.0f, c.y - 11.0f, 22.0f, 22.0f, 2.2f); g.fillEllipse (c.x - 3.0f, c.y - 3.0f, 6.0f, 6.0f); break;
             default: break;
         }
     }
@@ -317,30 +329,100 @@ private:
             { 5, "Master Output", false, false, [this] { showPage (Master); } },
             { 6, "Ableton Link", linkOn, ! linkAv, [this, linkAv] { if (linkAv && host.linkToggle) host.linkToggle(); } },
             { 7, "Panic", false, false, [this] { showPage (Panic); } },
-            { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
             { 9, "Loop recording", false, false, [this] { showPage (LoopRec); } },
             { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
+            { 14, "Block tools", false, false, [this] { showPage (Tools); } },
+            { 11, "Smart master", host.smartOnGet && host.smartOnGet() != 0, false, [this] { showPage (Smart); } },
+            { 12, "Follow", host.followOnGet && host.followOnGet() != 0, false, [this] { showPage (Follow); } },
+            { 15, "Orb knobs", false, false, [this] { showPage (OrbKnobs); } },
+            { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
+            { 13, "iPad", host.ipadGet && host.ipadGet(), false, [this] { showPage (Ipad); } },
             { 8, "Window size", false, false, [this] { showPage (WindowSize); } },
         };
-        const int cols = 5, gap = 16, x0 = 40, y0 = 74;
+        const int cols = 6, x0 = 40, y0 = 70;
         const int rows = ((int) tiles.size() + cols - 1) / cols;
-        const int tw = (getWidth() - 2 * x0 - (cols - 1) * gap) / cols;
-        const int th = jlimit (84, 150, (getHeight() - y0 - 30 - (rows - 1) * gap) / rows);
+        const int cw = (getWidth() - 2 * x0) / cols;
+        const int ch = (getHeight() - y0 - 16) / rows;
+        const int d = jlimit (44, 104, jmin (cw - 22, ch - 30));
         for (int i = 0; i < (int) tiles.size(); ++i)
         {
             auto& t = tiles[(size_t) i];
-            const Rectangle<int> r (x0 + (i % cols) * (tw + gap), y0 + (i / cols) * (th + gap), tw, th);
+            const int ccx = x0 + (i % cols) * cw + cw / 2, ccy = y0 + (i / cols) * ch + (ch - 22) / 2;
+            const Rectangle<int> r (ccx - d / 2, ccy - d / 2, d, d);
             const bool h = hov (r);
             g.setColour (h ? Colour (0xff36322f) : card());
-            g.fillRoundedRectangle (r.toFloat(), 16.0f);
+            g.fillEllipse (r.toFloat());
             g.setColour (t.hot ? hobby::kOn : lineC());
-            g.drawRoundedRectangle (r.toFloat().reduced (1.0f), 16.0f, t.hot ? 2.0f : 1.0f);
+            g.drawEllipse (r.toFloat().reduced (1.0f), t.hot ? 2.2f : 1.2f);
             const Colour ink = t.dimmed ? dim().withAlpha (0.5f) : t.hot ? hobby::kOn : txt();
-            drawIcon (g, t.icon, { r.getCentreX() + 0.0f, (float) r.getY() + (float) th * 0.38f }, ink);
-            g.setColour (t.dimmed ? dim().withAlpha (0.6f) : txt()); g.setFont (font (14.0f, true));
-            g.drawText (t.title, r.getX() + 6, r.getBottom() - 32, tw - 12, 20, Justification::centred, true);
-            hits.push_back ({ r, t.fn });
+            drawIcon (g, t.icon, { (float) ccx, (float) ccy }, ink);
+            g.setColour (t.dimmed ? dim().withAlpha (0.6f) : dim()); g.setFont (font (12.0f, true));
+            g.drawText (t.title, ccx - cw / 2 + 2, r.getBottom() + 4, cw - 4, 18, Justification::centred, true);
+            hits.push_back ({ r.expanded (4), t.fn });
         }
+    }
+
+    // ---------- εργαλεία του block ----------
+    void paintTools (juce::Graphics& g)
+    {
+        using namespace juce;
+        const auto items = host.tools ? host.tools() : std::vector<ToolItem>();
+        if (items.empty()) { note (g, "Select a block first.", 80); return; }
+        const int d = 78, gap = 34, x0 = 40, y0 = 90;
+        int x = x0, y = y0;
+        for (auto& it : items)
+        {
+            if (x + d > getWidth() - 40) { x = x0; y += d + 46; }
+            const Rectangle<int> r (x, y, d, d);
+            const bool hv = it.enabled && hov (r);
+            g.setColour (hv ? Colour (0xff36322f) : card()); g.fillEllipse (r.toFloat());
+            g.setColour (it.armed ? hobby::kRed : it.enabled ? it.colour : lineC()); g.drawEllipse (r.toFloat().reduced (1.0f), it.armed ? 3.0f : 1.6f);
+            g.setColour (it.enabled ? (it.armed ? hobby::kRed : it.colour) : dim().withAlpha (0.4f)); g.setFont (font (28.0f, true));
+            g.drawText (it.glyph, r, Justification::centred, false);
+            g.setColour (dim()); g.setFont (font (12.0f));
+            g.drawFittedText (it.armed ? String ("press again") : it.label, x - 14, r.getBottom() + 6, d + 28, 32, Justification::centredTop, 2);
+            if (it.enabled) hits.push_back ({ r, [this, fn = it.fn] { if (fn) fn(); repaint(); } });
+            x += d + gap;
+        }
+        note (g, "Instrument, MIDI FX and FX of the selected block. Removing needs two presses.", getHeight() - 28);
+    }
+
+    // ---------- αναθέσεις orb ----------
+    void paintOrbKnobs (juce::Graphics& g)
+    {
+        using namespace juce;
+        const auto ks = host.orbKnobs ? host.orbKnobs() : std::vector<OrbKnob>();
+        if (ks.size() < 16) return;
+        static const Colour ringC[4] { Colour (0xff9a948b), Colour (0xff9a948b), Colour (0xff9a948b), Colour (0xff9a948b) };
+        const int colW = (getWidth() - 80) / 2, rowH = 24;
+        for (int c = 0; c < 4; ++c)
+        {
+            const int bx = 40 + (c % 2) * colW, by = 76 + (c / 2) * (4 * rowH + 34);
+            g.setColour (ringC[c]); g.drawEllipse ((float) bx, (float) by + 4.0f, 14.0f, 14.0f, 2.4f);
+            g.setColour (dim()); g.setFont (font (12.0f, true));
+            g.drawText ("Ring " + String (c + 1), bx + 22, by, 120, 22, Justification::centredLeft, false);
+            for (int r = 0; r < 4; ++r)
+            {
+                const int slot = c * 4 + r;
+                const Rectangle<int> row (bx, by + 26 + r * rowH, colW - 24, rowH - 2);
+                const auto& k = ks[(size_t) slot];
+                g.setColour (hov (row) ? Colour (0xff36322f) : card()); g.fillRoundedRectangle (row.toFloat(), 8.0f);
+                g.setFont (font (13.0f));
+                if (k.bound)
+                {
+                    g.setColour (txt()); g.drawText (k.name, row.withTrimmedLeft (10).withTrimmedRight (110), Justification::centredLeft, true);
+                    g.setColour (dim()); g.drawText (String (roundToInt (jlimit (0.0f, 1.0f, k.value) * 100.0f)) + "%", row.withTrimmedRight (44), Justification::centredRight, false);
+                    g.setColour (hov (row) ? hobby::kRed : dim()); g.drawText (String::fromUTF8 ("\xe2\x9c\x95"), row.withTrimmedRight (12), Justification::centredRight, false);
+                    hits.push_back ({ row, [this, slot] { if (host.orbClear) host.orbClear (slot); repaint(); } });
+                }
+                else
+                {
+                    g.setColour (dim().withAlpha (0.7f)); g.drawText (String::fromUTF8 ("+  learn"), row.withTrimmedLeft (10), Justification::centredLeft, false);
+                    hits.push_back ({ row, [this, slot] { if (host.orbAssign) host.orbAssign (slot); close(); } });
+                }
+            }
+        }
+        note (g, "Press + learn, then touch a parameter of the plugin. The ring around the orb does the same.", getHeight() - 28);
     }
 
     // ---------- save ----------
@@ -640,7 +722,7 @@ private:
     {
         using namespace juce;
         struct Opt { const char* name; const char* dim; };
-        const Opt opts[] = { { "Compact", "822 x 650" }, { "Default", "1097 x 810" }, { "Large", "1280 x 940" }, { "Free", "drag the edges" } };
+        const Opt opts[] = { { "Compact", "880 x 690" }, { "Default", "1097 x 810" }, { "Large", "1280 x 940" }, { "Free", "drag the edges" } };
         const int cur = host.windowSizeGet ? host.windowSizeGet() : 1;
         const int gap = 16, x0 = 40, y0 = 84;
         const int tw = juce::jmin (230, (getWidth() - 2 * x0 - 3 * gap) / 4);

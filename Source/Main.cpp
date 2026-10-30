@@ -41,7 +41,8 @@ public:
           metroTile (Symbol::Tempo, typeface),
           folderTile (Symbol::Sliders, typeface),
           smartTile (Symbol::Rings, typeface),
-          followTile (Symbol::Follow, typeface)
+          followTile (Symbol::Follow, typeface),
+          motionTile (Symbol::Orb, typeface)
     {
         PropertiesFile::Options options;
         options.applicationName     = "Flow";
@@ -92,10 +93,8 @@ public:
         fxTile.onClick = [this] { onFxClick(); };
 
         holdTile.onClick = [this] { cycleHold (selected); };
-        chordTile.onClick = [this] { if (learnClick (flow::ctlHold)) return; cycleAl (selected); };
-        addAndMakeVisible (orbRecTile);
-        orbRecTile.onOrb = [this] { cycleOrb(); };
-        orbRecTile.onRec = [this] { toggleOrbRec(); };
+        motionTile.onClick = [this] { toggleOrbRec(); };
+        motionTile.setTooltip (gr ("Rec motion: press, then drag a circle in the orb. The movement is recorded over 16 bars and loops; you can record over it again."));
         orbRecTile.setTips (gr ("ORB: 1st press = the orb on the Flow screen, 2nd = the orb in its own window (second screen / iPad), 3rd = closes"),
                             gr ("Rec motion: press, then drag a circle in the orb. The movement is recorded over 16 bars and loops; you can record over it again."));
         recTile.onClick  = [this]
@@ -161,11 +160,36 @@ public:
         loopsView.onMenuOpen = [this] { buildScreenMenu(); loopsView.setMenuInfo (menuInfoRows()); };
 
         loopsView.onSelect = [this] (int b) { selectBlock (b); };
+        loopsView.onSmartCycle = [this]
+        {
+            // Off → Ask → Auto → Off
+            if (engine.smartOn.load() == 0) { engine.smartOn = 1; engine.smartAuto = 0; }
+            else if (engine.smartAuto.load() == 0) engine.smartAuto = 1;
+            else engine.smartOn = 0;
+            saveNow(); refreshSmartTile(); loopsView.repaint();
+        };
+        loopsView.onSmartType = [this] (int b)
+        {
+            engine.smartType[(size_t) b] = (engine.smartType[(size_t) b].load() + 1) % 6;
+            engine.smartAppLow[(size_t) b] = 0.0f; engine.smartAppWidth[(size_t) b] = 1.0f;
+            saveNow(); loopsView.repaint();
+        };
+        loopsView.onSmartApply = [this] (int b)
+        {
+            const bool applied = engine.smartAppLow[(size_t) b].load() > 0.2f || engine.smartAppWidth[(size_t) b].load() < 0.98f;
+            if (applied) { engine.smartAppLow[(size_t) b] = 0.0f; engine.smartAppWidth[(size_t) b] = 1.0f; return; }
+            const float acc = engine.smartAccept.load();
+            engine.smartAppLow[(size_t) b] = engine.smartNeedLow[(size_t) b].load() * acc;
+            engine.smartAppWidth[(size_t) b] = 1.0f - (1.0f - engine.smartNeedWidth[(size_t) b].load()) * acc;
+        };
+        loopsView.onFollowToggle = [this] { engine.toggleFollow(); saveNow(); refreshSmartTile(); loopsView.repaint(); };
         loopsView.getTempoBox().onChange = [this] { dirty = true; };
         keyboardView.onSelect = [this] (int b) { selectBlock (b); };
         keyboardView.onRedoZone = [this] (int b) { showZoneMenu (b); };
         keyboardView.onHold = [this] (int b) { selectBlock (b); cycleHold (b); };
         keyboardView.onRemoveBlock = [this] (int b) { removeBlock (b); };
+        keyboardView.onSwapInstrument = [this] (int b) { selectBlock (b); replaceInstrument(); };
+        keyboardView.onToggleSpecialBlock = [this] (int b) { selectBlock (b); toggleSpecial(); };
         keyboardView.onToggleSilent = [this] (int b) { engine.liveSilent[(size_t) b] = engine.liveSilent[(size_t) b].load() != 0 ? 0 : 1; saveNow(); };
         keyboardView.onChordType = [this] (int b, int dir) { selectBlock (b); stepChordType (b, dir); };
         keyboardView.onCurve = [this] (int b)
@@ -247,7 +271,7 @@ public:
         autoOrbImage();   // νέο (άδειο) set: τυχαία εικόνα από το φάκελο Music/Flow/Orb, αν υπάρχει
         webOrbToken = settings->getValue ("webOrbToken");
         if (webOrbToken.isEmpty()) webOrbToken = String::toHexString (Random::getSystemRandom().nextInt64()).paddedLeft ('0', 8).substring (0, 8);
-        orbStage = 1; loopsView.setOrbMode (true); orbRecTile.setState (orbStage, orbRecArmed);   // προεπιλογή: ανοίγει η οθόνη του orb
+        loopsView.setOrbMode (false);   // η κύρια οθόνη δείχνει πάντα: loop του block, orb, Smart + Follow
 
         const String savedFolder = settings->getValue ("tapeFolder");
         engine.recorder.setFolder (savedFolder.isNotEmpty() ? File (savedFolder)
@@ -347,7 +371,6 @@ public:
                 hobby::drawTileShadow (g, r);
             }
         }
-        hobby::drawTileShadow (g, orbRecTile.getBounds().toFloat());
     }
 
     void resized() override
@@ -370,9 +393,9 @@ public:
 
 private:
     //==========================================================================
-    std::array<ValueTile*, 13> tiles()
+    std::array<ValueTile*, 11> tiles()
     {
-        return { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile, &smartTile, &followTile };
+        return { &blockTile, &vstTile, &mfxTile, &fxTile, &motionTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
     }
 
     bool isActive (int b) const { return b >= 0 && b < flow::numBlocks && engine.active[(size_t) b].load() != 0; }
@@ -533,16 +556,6 @@ private:
         refreshAll();
     }
 
-    // κουμπί AL: Capture (ανάθεση συγχορδιών σε πλήκτρα) → AL (παίζει) → Off
-    void cycleAl (int b)
-    {
-        if (! isActive (b)) return;
-        const int h = engine.holdMode[(size_t) b].load();
-        engine.holdMode[(size_t) b] = h == 3 ? 4 : h == 4 ? 0 : 3;
-        saveNow();
-        refreshAll();
-    }
-
     //==========================================================================
     // πάνελ plugin: ποιο plugin δείχνει ο editor
     juce::AudioPluginInstance* panelPlugin()
@@ -615,24 +628,21 @@ private:
         header.setBounds (pluginBezel.getX() + 5, pluginBezel.getY(), pluginBezel.getWidth() - 10, headerH);
         hobby::kBrandY = (float) pluginBezel.getY() + (float) headerH * 0.5f - 8.0f;
 
-        // τρεις ομάδες: αριστερά VST, MIDI FX, FX, Hold, Chord. Στη μέση τα 4 στρογγυλά. Δεξιά metronome και φάκελος.
+        // τρεις ομάδες: αριστερά 5 τετράγωνα (Block, VST, MIDI FX, FX, Rec motion). Στη μέση τα 4 στρογγυλά (στο κέντρο του ελεύθερου χώρου). Δεξιά μετρονόμος και ρυθμίσεις.
         const auto strip = stripBezel.reduced (5);
         const int ty = strip.getY() + 5;
         const int leftX = strip.getX() + 14;
         const int midW = 4 * 52 + 3 * 8;
         const int rightX = strip.getRight() - 14 - 52;
-        const int leftEnd = leftX + 5 * 60 + 112 + 120, rightStart = rightX - 60;
+        const int leftEnd = leftX + 5 * 60, rightStart = rightX - 60;
         const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);
 
         int x = leftX;
-        for (auto* t : { &blockTile, &vstTile, &mfxTile, &fxTile, &chordTile })
+        for (auto* t : { &blockTile, &vstTile, &mfxTile, &fxTile, &motionTile })
         {
             t->setBounds (x, ty, 52, 52);
             x += 60;
         }
-        orbRecTile.setBounds (x, ty, 112, 52);
-        smartTile.setBounds (x + 120, ty, 52, 52);
-        followTile.setBounds (x + 180, ty, 52, 52);
         x = midX;
         for (auto* t : { &recTile, &stopTile, &undoTile, &tapeTile })
         {
@@ -2615,6 +2625,7 @@ private:
     //==========================================================================
     void refreshSmartTile()
     {
+        motionTile.setIconColour (orbRecArmed ? hobby::kRed : hobby::kIconGrey);
         smartTile.setIconColour (settingsScreen.isSmartDirect() ? hobby::kOn : hobby::kIconGrey);
         followTile.setIconColour (settingsScreen.isFollowDirect() || engine.followOn.load() != 0 ? hobby::kOn : hobby::kIconGrey);
     }
@@ -2785,6 +2796,29 @@ private:
         h.autoLoopSet = [this] (int v) { engine.autoLoop = v; saveNow(); };
         h.snapQGet = [this] { return engine.snapQ.load(); };
         h.snapQSet = [this] (int v) { engine.snapQ = v; saveNow(); };
+        h.tools = [this]
+        {
+            std::vector<SettingsScreen::ToolItem> l;
+            if (! isActive (selected)) return l;
+            const bool hasFx = engine.getMidiFx (selected) != nullptr;
+            const String swap = String::fromUTF8 ("\xe2\x87\x84"), cross = String::fromUTF8 ("\xe2\x9c\x95");
+            l.push_back ({ swap, "Instrument (VST)", {}, hobby::kOn, true, false, [this] { replaceInstrument(); } });
+            l.push_back ({ swap, "MIDI FX: load", {}, hobby::kLilac, true, false, [this] { loadMidiFxInto (selected); } });
+            l.push_back ({ cross, "MIDI FX: remove", {}, hobby::kLilac, hasFx, armedNow (1), [this] { pressDelete (1, [this] { removeMidiFx (selected); }); } });
+            l.push_back ({ "+", "FX: add", {}, hobby::kPeach, engine.numFx (selected) < maxFxPerChain, false, [this] { addFxTo (selected); } });
+            l.push_back ({ cross, "FX: clear all", {}, hobby::kPeach, engine.numFx (selected) > 0, armedNow (2), [this] { pressDelete (2, [this] { clearFx (selected); }); } });
+            l.push_back ({ "SP", "Special block", {}, Colours::white, true, false, [this] { toggleSpecial(); } });
+            l.push_back ({ cross, "Remove block", {}, hobby::kRed, true, armedNow (0), [this] { pressDelete (0, [this] { removeBlock (selected); }); } });
+            return l;
+        };
+        h.orbKnobs = [this]
+        {
+            std::vector<SettingsScreen::OrbKnob> v;
+            for (auto& k : loopsView.knobs) v.push_back ({ k.bound, k.name, k.value });
+            return v;
+        };
+        h.orbAssign = [this] (int slot) { startKnobLearn (slot); };
+        h.orbClear = [this] (int slot) { clearKnobSlot (slot); };
         h.learnStart = [this] (int mode)
         {
             learnMode = mode;
@@ -2798,7 +2832,7 @@ public:
     int getWindowSizeMode() const { return windowSizeMode; }
     static Point<int> windowSizeFor (int mode)
     {
-        return mode == 0 ? Point<int> (822, 650) : mode == 2 ? Point<int> (1280, 940) : Point<int> (1097, 810);
+        return mode == 0 ? Point<int> (880, 690) : mode == 2 ? Point<int> (1280, 940) : Point<int> (1097, 810);
     }
     static Rectangle<int> windowArea()
     {
@@ -2956,7 +2990,6 @@ private:
             e->setAttribute ("seq", engine.zoneSeq[(size_t) b].load());
             e->setAttribute ("zone", engine.zoneState[(size_t) b].load() == 0 ? 1 : 0);
             e->setAttribute ("hold", engine.holdMode[(size_t) b].load());
-            e->setAttribute ("al", engine.getAlText (b));
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
             e->setAttribute ("stype", engine.smartType[(size_t) b].load());
             e->setAttribute ("follow", engine.followBlock[(size_t) b].load());
@@ -3168,8 +3201,7 @@ private:
                 }
             }
 
-            engine.holdMode[(size_t) slot]  = jlimit (0, 4, e->getIntAttribute ("hold", 0));
-            engine.setAlText (slot, e->getStringAttribute ("al"));
+            engine.holdMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("hold", 0));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
             engine.smartType[(size_t) slot] = jlimit (0, 5, e->getIntAttribute ("stype", 0));
             engine.followBlock[(size_t) slot] = e->getIntAttribute ("follow", 0) != 0 ? 1 : 0;
@@ -3735,7 +3767,7 @@ private:
     AudioMidiPanel audioPanel { deviceManager, typeface };
     SettingsScreen settingsScreen { typeface };
     bool audioFromSettings = false;
-    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile, smartTile, followTile;
+    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile, smartTile, followTile, motionTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
@@ -3745,7 +3777,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.56.0"; }
+    const String getApplicationVersion() override { return "0.57.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
@@ -3767,7 +3799,7 @@ public:
             setUsingNativeTitleBar (true);
             setContentOwned (new MainComponent(), true);
             setResizable (true, false);
-            setResizeLimits (746, 620, 4000, 3000);
+            setResizeLimits (800, 640, 4000, 3000);
             if (auto* mc = dynamic_cast<MainComponent*> (getContentComponent()))
             {
                 // το επιλεγμένο μέγεθος (Settings > Window size), προεπιλογή 1097 x 810
@@ -3780,7 +3812,7 @@ public:
                         w = jmin (w, d->userArea.getWidth() - 20);
                         h = jmin (h, d->userArea.getHeight() - 20);
                     }
-                    centreWithSize (jmax (822, w), jmax (648, h));
+                    centreWithSize (jmax (880, w), jmax (690, h));
                 }
             }
             setVisible (true);
