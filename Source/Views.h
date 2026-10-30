@@ -1254,8 +1254,7 @@ public:
                 Colour rc = any ? Colour (0xff48443f) : Colour (0xff35312e);
                 if (c == orbDrag) rc = Colour (0xff9a948b);
                 if (learningHere) rc = hobby::kOn.withAlpha (0.35f + 0.65f * (float) hobby::pulse (tn * 0.001 * 2.0));
-                if (orbAutoOn[(size_t) c]) { g.setColour (Colour (0xfff5f1ea)); g.fillPath (ring); }   // τυχαία κίνηση: γεμάτος άσπρος δακτύλιος
-                else { g.setColour (rc); g.strokePath (ring, PathStrokeType (jmax (2.5f, 4.0f * s))); }
+                g.setColour (rc); g.strokePath (ring, PathStrokeType (jmax (2.5f, 4.0f * s)));   // ο δακτύλιος μένει ίδιος όταν τρέχει κίνηση
             }
             // ενδείξεις κάτω από τον orb: Rec Audio και Rec motion
             float ty = gmBottom();
