@@ -1861,9 +1861,16 @@ private:
         }
 
         std::vector<PluginDescription> list;
+        // 0 = VST (instrument με ήχο), 1 = FX (effect ήχου), 2 = MIDI FX (χωρίς audio έξοδο ή κατηγορία MIDI)
+        auto midiOnly = [] (const PluginDescription& d) { return d.numOutputChannels == 0 || d.category.containsIgnoreCase ("midi"); };
         for (const auto& d : knownPlugins.getTypes())
-            if (kind == 0 ? d.isInstrument : ! d.isInstrument)
+        {
+            flow::flowLog ("plugin: " + d.name + " [" + d.pluginFormatName + "] instrument=" + String ((int) d.isInstrument) + " in=" + String (d.numInputChannels)
+                           + " out=" + String (d.numOutputChannels) + " category=" + d.category);
+            const bool m = midiOnly (d);
+            if (kind == 2 ? m : kind == 0 ? (d.isInstrument && ! m) : (! d.isInstrument && ! m))
                 list.push_back (d);
+        }
         std::sort (list.begin(), list.end(), [] (const PluginDescription& a, const PluginDescription& b)
                    { return a.name.compareIgnoreCase (b.name) < 0; });
 
@@ -3777,7 +3784,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.57.1"; }
+    const String getApplicationVersion() override { return "0.57.2"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
