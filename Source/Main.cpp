@@ -39,7 +39,7 @@ public:
           stopTile (Symbol::Undo, typeface),
           tapeTile (Symbol::Tape, typeface),
           metroTile (Symbol::Tempo, typeface),
-          folderTile (Symbol::Sliders, typeface),
+          folderTile (Symbol::Menu, typeface),
           smartTile (Symbol::Rings, typeface),
           followTile (Symbol::Follow, typeface),
           motionTile (Symbol::Orb, typeface)

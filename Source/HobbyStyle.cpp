@@ -367,6 +367,13 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (p, 1.7f);
             break;
         }
+        case Symbol::Menu:   // τρεις γραμμές: ρυθμίσεις
+        {
+            juce::Path p;
+            for (float y : { -7.0f, 0.0f, 7.0f }) { p.startNewSubPath (-9.0f, y); p.lineTo (9.0f, y); }
+            stroke (p, 2.0f);
+            break;
+        }
         case Symbol::Thru:
         {
             juce::Path p;
