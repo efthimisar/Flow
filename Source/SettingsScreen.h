@@ -183,7 +183,7 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         mouse = e.getPosition();
-        dialDrag = page == Smart && dialRect.contains (mouse) && host.smartAcceptSet != nullptr;
+        dialDrag = (page == Smart || (page == Home && selTile == 11)) && dialRect.contains (mouse) && host.smartAcceptSet != nullptr;
         dialY0 = e.getPosition().y; dialV0 = host.smartAcceptGet ? host.smartAcceptGet() : 0.0f; dialMoved = false;
     }
     void mouseDrag (const juce::MouseEvent& e) override
@@ -317,7 +317,7 @@ private:
     void paintHome (juce::Graphics& g)
     {
         using namespace juce;
-        struct Tile { int icon; String title; bool hot, dimmed; std::function<void()> fn; };
+        struct Tile { int icon; String title; bool hot, dimmed; std::function<void()> fn; bool card = false; };
         const bool linkAv = host.linkAvailable && host.linkAvailable();
         const bool linkOn = host.linkGet && host.linkGet();
         std::vector<Tile> tiles {
@@ -331,34 +331,261 @@ private:
             { 7, "Panic", false, false, [this] { showPage (Panic); } },
             { 9, "Loop recording", false, false, [this] { showPage (LoopRec); } },
             { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
-            { 14, "Block tools", false, false, [this] { showPage (Tools); } },
-            { 11, "Smart master", host.smartOnGet && host.smartOnGet() != 0, false, [this] { showPage (Smart); } },
-            { 12, "Follow", host.followOnGet && host.followOnGet() != 0, false, [this] { showPage (Follow); } },
-            { 15, "Orb knobs", false, false, [this] { showPage (OrbKnobs); } },
+            { 14, "Block tools", false, false, [this] { showPage (Tools); }, true },
+            { 11, "Smart master", host.smartOnGet && host.smartOnGet() != 0, false, [this] { showPage (Smart); }, true },
+            { 12, "Follow", host.followOnGet && host.followOnGet() != 0, false, [this] { showPage (Follow); }, true },
+            { 15, "Orb knobs", false, false, [this] { showPage (OrbKnobs); }, true },
             { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
             { 13, "iPad", host.ipadGet && host.ipadGet(), false, [this] { showPage (Ipad); } },
             { 8, "Window size", false, false, [this] { showPage (WindowSize); } },
         };
-        const int cols = 6, x0 = 40, y0 = 70;
+        // κύκλοι στη μέση· το περιεχόμενο του επιλεγμένου ανοίγει αριστερά και δεξιά
+        const int W = getWidth(), H = getHeight();
+        dialRect = {};
+        const int cols = W >= 1000 ? 5 : 4;
+        const int pitch = 68;
         const int rows = ((int) tiles.size() + cols - 1) / cols;
-        const int cw = (getWidth() - 2 * x0) / cols;
-        const int ch = (getHeight() - y0 - 16) / rows;
-        const int d = jlimit (44, 104, jmin (cw - 22, ch - 30));
+        const int rp = jlimit (62, 96, (H - 90) / rows);
+        const int d = jmin (56, rp - 24);
+        const int cardW = jlimit (210, 340, (W - 80 - cols * pitch - 28) / 2);
+        const int gx0 = W / 2 - (cols * pitch) / 2;
         for (int i = 0; i < (int) tiles.size(); ++i)
         {
             auto& t = tiles[(size_t) i];
-            const int ccx = x0 + (i % cols) * cw + cw / 2, ccy = y0 + (i / cols) * ch + (ch - 22) / 2;
+            const int ccx = gx0 + (i % cols) * pitch + pitch / 2, ccy = 74 + (i / cols) * rp;
             const Rectangle<int> r (ccx - d / 2, ccy - d / 2, d, d);
+            const bool isSel = i == selTile && t.card;
             const bool h = hov (r);
-            g.setColour (h ? Colour (0xff36322f) : card());
+            g.setColour (isSel ? Colour (0xff3c5a46) : h ? Colour (0xff36322f) : card());
             g.fillEllipse (r.toFloat());
-            g.setColour (t.hot ? hobby::kOn : lineC());
-            g.drawEllipse (r.toFloat().reduced (1.0f), t.hot ? 2.2f : 1.2f);
-            const Colour ink = t.dimmed ? dim().withAlpha (0.5f) : t.hot ? hobby::kOn : txt();
+            g.setColour (isSel || t.hot ? hobby::kOn : lineC());
+            g.drawEllipse (r.toFloat().reduced (1.0f), isSel ? 2.4f : t.hot ? 2.0f : 1.2f);
+            const Colour ink = t.dimmed ? dim().withAlpha (0.5f) : (t.hot || isSel) ? hobby::kOn : txt();
             drawIcon (g, t.icon, { (float) ccx, (float) ccy }, ink);
-            g.setColour (t.dimmed ? dim().withAlpha (0.6f) : dim()); g.setFont (font (12.0f, true));
-            g.drawText (t.title, ccx - cw / 2 + 2, r.getBottom() + 4, cw - 4, 18, Justification::centred, true);
-            hits.push_back ({ r.expanded (4), t.fn });
+            g.setColour (isSel ? txt() : t.dimmed ? dim().withAlpha (0.6f) : dim()); g.setFont (font (11.0f, true));
+            g.drawText (t.title, ccx - pitch / 2, r.getBottom() + 3, pitch, 16, Justification::centred, true);
+            hits.push_back ({ r.expanded (4), t.card ? std::function<void()> ([this, i] { selTile = i; repaint(); }) : t.fn });
+        }
+        const Rectangle<int> L (40, 44, cardW, H - 44 - 24), R (W - 40 - cardW, 44, cardW, H - 44 - 24);
+        for (auto c : { L, R })
+        {
+            g.setColour (card()); g.fillRoundedRectangle (c.toFloat(), 18.0f);
+            g.setColour (lineC()); g.drawRoundedRectangle (c.toFloat().reduced (0.5f), 18.0f, 1.0f);
+        }
+        if (selTile == 11) cardsSmart (g, L, R);
+        else if (selTile == 12) cardsFollow (g, L, R);
+        else if (selTile == 10) cardsTools (g, L, R);
+        else if (selTile == 13) cardsOrb (g, L, R);
+    }
+
+    juce::Rectangle<int> cardHeader (juce::Graphics& g, juce::Rectangle<int> c, const juce::String& t)
+    {
+        g.setColour (txt()); g.setFont (font (16.0f, true));
+        g.drawText (t, c.getX() + 20, c.getY() + 14, c.getWidth() - 40, 22, juce::Justification::centredLeft, false);
+        return c.reduced (20, 0).withTrimmedTop (46).withTrimmedBottom (14);
+    }
+    void smallPill (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& t, bool sel, std::function<void()> fn)
+    {
+        using namespace juce;
+        const bool hv = hov (r);
+        g.setColour (sel ? Colour (0xff3c5a46) : hv ? Colour (0xff423d39) : Colour (0xff36322f)); g.fillRoundedRectangle (r.toFloat(), (float) r.getHeight() * 0.5f);
+        g.setColour (sel ? hobby::kOn : lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), (float) r.getHeight() * 0.5f, sel ? 1.8f : 1.0f);
+        g.setColour (sel ? txt() : dim()); g.setFont (font (13.0f, true));
+        g.drawText (t, r, Justification::centred, true);
+        hits.push_back ({ r, std::move (fn) });
+    }
+
+    void cardsSmart (juce::Graphics& g, juce::Rectangle<int> L, juce::Rectangle<int> R)
+    {
+        using namespace juce;
+        const bool on = host.smartOnGet && host.smartOnGet() != 0;
+        const int mode = host.smartModeGet ? host.smartModeGet() : 0;
+        const float acc = host.smartAcceptGet ? host.smartAcceptGet() : 0.6f;
+        auto c = cardHeader (g, L, "Smart master");
+        const int w3 = (c.getWidth() - 12) / 3;
+        g.setColour (dim()); g.setFont (font (12.0f)); g.drawText ("Mode", c.getX(), c.getY(), c.getWidth(), 16, Justification::centredLeft, false);
+        smallPill (g, { c.getX(), c.getY() + 20, w3, 34 }, "Off", ! on, [this] { if (host.smartOnSet) host.smartOnSet (0); repaint(); });
+        smallPill (g, { c.getX() + w3 + 6, c.getY() + 20, w3, 34 }, "Ask", on && mode == 0, [this] { if (host.smartOnSet) host.smartOnSet (1); if (host.smartModeSet) host.smartModeSet (0); repaint(); });
+        smallPill (g, { c.getX() + 2 * (w3 + 6), c.getY() + 20, w3, 34 }, "Auto", on && mode == 1, [this] { if (host.smartOnSet) host.smartOnSet (1); if (host.smartModeSet) host.smartModeSet (1); repaint(); });
+        g.setColour (dim()); g.drawText ("Accept corrections (drag the dial)", c.getX(), c.getY() + 76, c.getWidth(), 16, Justification::centredLeft, false);
+        const int D = jlimit (70, 120, c.getHeight() - 150);
+        dialRect = { c.getCentreX() - D / 2, c.getY() + 100, D, D };
+        {
+            Path tr, vp; const float cx = (float) dialRect.getCentreX(), cy = (float) dialRect.getCentreY(), r = (float) D * 0.5f - 6.0f;
+            const float st0 = degreesToRadians (-135.0f), full = degreesToRadians (270.0f);
+            tr.addCentredArc (cx, cy, r, r, 0.0f, st0, st0 + full, true);
+            vp.addCentredArc (cx, cy, r, r, 0.0f, st0, st0 + full * jmax (0.003f, acc), true);
+            g.setColour (Colour (0xff3c3835)); g.strokePath (tr, PathStrokeType (7.0f, PathStrokeType::curved, PathStrokeType::rounded));
+            g.setColour (hobby::kOn); g.strokePath (vp, PathStrokeType (7.0f, PathStrokeType::curved, PathStrokeType::rounded));
+            g.setColour (txt()); g.setFont (font (20.0f, true));
+            g.drawText (String ((int) std::round (acc * 100.0f)) + "%", dialRect, Justification::centred, false);
+        }
+        g.setColour (dim()); g.setFont (font (11.0f));
+        g.drawFittedText ("0 % = measure only", c.getX(), dialRect.getBottom() + 4, c.getWidth(), 16, Justification::centred, 1);
+
+        // δεξιά: ανά block
+        auto rc = cardHeader (g, R, "Per block");
+        const auto blocks = host.smartBlocks ? host.smartBlocks() : std::vector<SmartBlock>();
+        static const char* typeNames[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings" };
+        int y = rc.getY();
+        const int rowH = 40;
+        bool any = false;
+        for (int b = 0; b < (int) blocks.size(); ++b)
+        {
+            const auto& B = blocks[(size_t) b];
+            if (! B.active || y + rowH > rc.getBottom() + 6) continue;
+            any = true;
+            g.setColour (Colour (0xff3a3632)); g.fillEllipse ((float) rc.getX(), (float) y + 5.0f, 28.0f, 28.0f);
+            g.setColour (txt()); g.setFont (font (13.0f, true)); g.drawText (String (b + 1), rc.getX(), y + 5, 28, 28, Justification::centred, false);
+            smallPill (g, { rc.getX() + 36, y + 5, 86, 28 }, typeNames[jlimit (0, 5, B.type)], B.type != 0, [this, b, t = B.type] { if (host.smartTypeSet) host.smartTypeSet (b, (t + 1) % 6); repaint(); });
+            const bool needLow = on && B.type != 0 && B.needLow > 0.5f, needW = on && B.type != 0 && B.needW < 0.97f;
+            const bool applied = B.appLow > 0.2f || B.appW < 0.98f, need = needLow || needW;
+            String msg = ! on ? "off" : B.type == 0 ? "pick a type" : need ? ((needLow ? "Lows -" + String (B.needLow * acc, 1) + " dB " : String()) + (needW ? "Width " + String ((int) std::round (100.0f - (1.0f - B.needW) * acc * 100.0f)) + "%" : String())) : applied ? "correcting" : "in range";
+            const bool showCheck = on && mode == 0 && B.type != 0 && (need || applied) && acc > 0.0f;
+            g.setColour (need ? Colour (0xffebb45a) : dim()); g.setFont (font (11.5f));
+            g.drawText (msg, rc.getX() + 130, y + 5, rc.getWidth() - 130 - (showCheck ? 40 : 0), 28, Justification::centredLeft, true);
+            if (showCheck)
+            {
+                const Rectangle<int> k (rc.getRight() - 32, y + 5, 28, 28);
+                g.setColour (applied ? Colour (0xff3c5a46) : Colour (0xff35493c)); g.fillEllipse (k.toFloat());
+                g.setColour (hobby::kOn); g.drawEllipse (k.toFloat().reduced (1.0f), applied ? 2.4f : 1.6f);
+                Path ck; const auto cp = k.getCentre().toFloat();
+                ck.startNewSubPath (cp.x - 6.0f, cp.y); ck.lineTo (cp.x - 2.0f, cp.y + 5.0f); ck.lineTo (cp.x + 7.0f, cp.y - 5.0f);
+                g.setColour (txt()); g.strokePath (ck, PathStrokeType (2.4f, PathStrokeType::curved, PathStrokeType::rounded));
+                hits.push_back ({ k.expanded (3), [this, b] { if (host.smartApply) host.smartApply (b); repaint(); } });
+            }
+            y += rowH;
+        }
+        if (! any) { g.setColour (dim()); g.setFont (font (13.0f)); g.drawText ("No block has an instrument yet.", rc.getX(), rc.getY(), rc.getWidth(), 20, Justification::centredLeft, false); }
+    }
+
+    void cardsFollow (juce::Graphics& g, juce::Rectangle<int> L, juce::Rectangle<int> R)
+    {
+        using namespace juce;
+        const bool on = host.followOnGet && host.followOnGet() != 0;
+        const int root = host.followRootGet ? host.followRootGet() : 9;
+        const int type = host.followTypeGet ? host.followTypeGet() : 1;
+        static const char* notes[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        auto c = cardHeader (g, L, "Follow");
+        const int w2 = (c.getWidth() - 8) / 2;
+        smallPill (g, { c.getX(), c.getY(), w2, 34 }, "Off", ! on, [this] { if (host.followOnSet) host.followOnSet (0); repaint(); });
+        smallPill (g, { c.getX() + w2 + 8, c.getY(), w2, 34 }, "On", on, [this] { if (host.followOnSet) host.followOnSet (1); repaint(); });
+        g.setColour (dim()); g.setFont (font (12.0f)); g.drawText ("Scale of the loops you record", c.getX(), c.getY() + 46, c.getWidth(), 16, Justification::centredLeft, false);
+        const int cw = c.getWidth() / 4;
+        const int rd = jmin (36, cw - 6);
+        for (int i = 0; i < 12; ++i)
+        {
+            const Rectangle<int> r (c.getX() + (i % 4) * cw + (cw - rd) / 2, c.getY() + 68 + (i / 4) * (rd + 6), rd, rd);
+            const bool sel = i == root;
+            g.setColour (sel ? Colour (0xff3c5a46) : Colour (0xff36322f)); g.fillEllipse (r.toFloat());
+            g.setColour (sel ? hobby::kOn : lineC()); g.drawEllipse (r.toFloat().reduced (0.5f), sel ? 1.8f : 1.0f);
+            g.setColour (sel ? txt() : dim()); g.setFont (font (13.0f, sel));
+            g.drawText (notes[i], r, Justification::centred, false);
+            hits.push_back ({ r, [this, i] { if (host.followRootSet) host.followRootSet (i); repaint(); } });
+        }
+        const int ty = c.getY() + 68 + 3 * (rd + 6) + 6;
+        smallPill (g, { c.getX(), ty, w2, 34 }, "Major", type == 0, [this] { if (host.followTypeSet) host.followTypeSet (0); repaint(); });
+        smallPill (g, { c.getX() + w2 + 8, ty, w2, 34 }, "Minor", type == 1, [this] { if (host.followTypeSet) host.followTypeSet (1); repaint(); });
+
+        auto rc = cardHeader (g, R, "Blocks that follow");
+        const auto blocks = host.followBlocks ? host.followBlocks() : std::vector<FollowBlock>();
+        int y = rc.getY();
+        bool any = false;
+        for (int b = 0; b < (int) blocks.size(); ++b)
+        {
+            const auto& B = blocks[(size_t) b];
+            if (! B.active || y + 40 > rc.getBottom() + 6) continue;
+            any = true;
+            g.setColour (Colour (0xff3a3632)); g.fillEllipse ((float) rc.getX(), (float) y + 5.0f, 28.0f, 28.0f);
+            g.setColour (txt()); g.setFont (font (13.0f, true)); g.drawText (String (b + 1), rc.getX(), y + 5, 28, 28, Justification::centred, false);
+            g.setFont (font (13.0f)); g.drawText (B.name, rc.getX() + 36, y + 5, rc.getWidth() - 36 - 70, 28, Justification::centredLeft, true);
+            const Rectangle<int> sw (rc.getRight() - 58, y + 8, 54, 24);
+            g.setColour (B.on ? Colour (0xff3c5a46) : Colour (0xff242220)); g.fillRoundedRectangle (sw.toFloat(), 12.0f);
+            g.setColour (B.on ? hobby::kOn : lineC()); g.drawRoundedRectangle (sw.toFloat().reduced (0.5f), 12.0f, 1.5f);
+            g.setColour (B.on ? txt() : dim());
+            g.fillEllipse ((float) (B.on ? sw.getRight() - 22 : sw.getX() + 3), (float) sw.getY() + 3.0f, 18.0f, 18.0f);
+            hits.push_back ({ sw.expanded (4), [this, b, on2 = B.on] { if (host.followBlockSet) host.followBlockSet (b, ! on2); repaint(); } });
+            y += 40;
+        }
+        if (! any) { g.setColour (dim()); g.setFont (font (13.0f)); g.drawText ("No block has an instrument yet.", rc.getX(), rc.getY(), rc.getWidth(), 20, Justification::centredLeft, false); }
+        else
+        {
+            g.setColour (dim()); g.setFont (font (11.0f));
+            g.drawFittedText ("Hold a chord of 3+ notes. Key A0 turns Follow on and off.", rc.getX(), rc.getBottom() - 30, rc.getWidth(), 30, Justification::centredLeft, 2);
+        }
+    }
+
+    void toolCircles (juce::Graphics& g, juce::Rectangle<int> c, const std::vector<ToolItem>& items, int from, int to)
+    {
+        using namespace juce;
+        const int d = 58, cols = jmax (1, c.getWidth() / (d + 14));
+        const int gx = c.getX() + (c.getWidth() - (jmin (cols, to - from) * (d + 14) - 14)) / 2;
+        for (int i = from; i < to; ++i)
+        {
+            const auto& it = items[(size_t) i];
+            const int k = i - from;
+            const Rectangle<int> r (gx + (k % cols) * (d + 14), c.getY() + (k / cols) * (d + 40), d, d);
+            const bool hv = it.enabled && hov (r);
+            g.setColour (hv ? Colour (0xff423d39) : Colour (0xff36322f)); g.fillEllipse (r.toFloat());
+            g.setColour (it.armed ? hobby::kRed : it.enabled ? it.colour : lineC()); g.drawEllipse (r.toFloat().reduced (1.0f), it.armed ? 3.0f : 1.6f);
+            g.setColour (it.enabled ? (it.armed ? hobby::kRed : it.colour) : dim().withAlpha (0.4f)); g.setFont (font (22.0f, true));
+            g.drawText (it.glyph, r, Justification::centred, false);
+            g.setColour (dim()); g.setFont (font (11.0f));
+            g.drawFittedText (it.armed ? String ("press again") : it.label, r.getX() - 10, r.getBottom() + 3, d + 20, 30, Justification::centredTop, 2);
+            if (it.enabled) hits.push_back ({ r, [this, fn = it.fn] { if (fn) fn(); repaint(); } });
+        }
+    }
+    void cardsTools (juce::Graphics& g, juce::Rectangle<int> L, juce::Rectangle<int> R)
+    {
+        const auto items = host.tools ? host.tools() : std::vector<ToolItem>();
+        auto c = cardHeader (g, L, "Block tools");
+        auto rc = cardHeader (g, R, "Remove");
+        if (items.empty()) { g.setColour (dim()); g.setFont (font (13.0f)); g.drawText ("Select a block first.", c.getX(), c.getY(), c.getWidth(), 20, juce::Justification::centredLeft, false); return; }
+        const int n = (int) items.size();
+        toolCircles (g, c, items, 0, jmin (n, 4));        // ⇄ VST, ⇄ MIDI FX, ✕ MIDI FX, + FX
+        toolCircles (g, rc, items, jmin (n, 4), n);       // ✕ FX, SP, ✕ block
+        g.setColour (dim()); g.setFont (font (11.0f));
+        g.drawFittedText ("Removing needs two presses.", rc.getX(), rc.getBottom() - 20, rc.getWidth(), 18, juce::Justification::centredLeft, 1);
+    }
+
+    void cardsOrb (juce::Graphics& g, juce::Rectangle<int> L, juce::Rectangle<int> R)
+    {
+        using namespace juce;
+        const auto ks = host.orbKnobs ? host.orbKnobs() : std::vector<OrbKnob>();
+        if (ks.size() < 16) return;
+        for (int side = 0; side < 2; ++side)
+        {
+            auto c = cardHeader (g, side == 0 ? L : R, side == 0 ? "Orb rings 1-2" : "Orb rings 3-4");
+            const int rowH = jmax (22, jmin (28, (c.getHeight() - 40) / 8));
+            int y = c.getY();
+            for (int cc = side * 2; cc < side * 2 + 2; ++cc)
+            {
+                g.setColour (Colour (0xff9a948b)); g.drawEllipse ((float) c.getX(), (float) y + 3.0f, 12.0f, 12.0f, 2.2f);
+                g.setColour (dim()); g.setFont (font (12.0f, true)); g.drawText ("Ring " + String (cc + 1), c.getX() + 20, y, 100, 18, Justification::centredLeft, false);
+                y += 20;
+                for (int r = 0; r < 4; ++r)
+                {
+                    const int slot = cc * 4 + r;
+                    const Rectangle<int> row (c.getX(), y, c.getWidth(), rowH - 3);
+                    const auto& k = ks[(size_t) slot];
+                    g.setColour (hov (row) ? Colour (0xff423d39) : Colour (0xff36322f)); g.fillRoundedRectangle (row.toFloat(), 8.0f);
+                    g.setFont (font (12.0f));
+                    if (k.bound)
+                    {
+                        g.setColour (txt()); g.drawText (k.name, row.withTrimmedLeft (8).withTrimmedRight (74), Justification::centredLeft, true);
+                        g.setColour (dim()); g.drawText (String (roundToInt (jlimit (0.0f, 1.0f, k.value) * 100.0f)) + "%", row.withTrimmedRight (30), Justification::centredRight, false);
+                        g.setColour (hov (row) ? hobby::kRed : dim()); g.drawText (String::fromUTF8 ("\xe2\x9c\x95"), row.withTrimmedRight (8), Justification::centredRight, false);
+                        hits.push_back ({ row, [this, slot] { if (host.orbClear) host.orbClear (slot); repaint(); } });
+                    }
+                    else
+                    {
+                        g.setColour (dim().withAlpha (0.7f)); g.drawText (String::fromUTF8 ("+  learn"), row.withTrimmedLeft (8), Justification::centredLeft, false);
+                        hits.push_back ({ row, [this, slot] { if (host.orbAssign) host.orbAssign (slot); close(); } });
+                    }
+                    y += rowH;
+                }
+                y += 6;
+            }
         }
     }
 
@@ -1054,6 +1281,7 @@ private:
     float dialV0 = 0.0f;
     Page page = Home;
     int loadScroll = 0, loadMaxScroll = 0;
+    int selTile = 11;
     bool saved = false, waitPanic = false;
     juce::String ccAtAssign;
 };
