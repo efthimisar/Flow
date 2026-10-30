@@ -1256,7 +1256,7 @@ public:
         const float acc = engine.smartAccept.load();
         const int sel = selected;
         const int type = valid ? engine.smartType[(size_t) sel].load() : 0;
-        static const char* typeNames[] { "Other", "Bass", "Keys", "Pad", "Lead", "Strings" };
+        static const char* typeNames[] { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
         const Colour bc = valid ? blockLight (sel) : Colour (0xff6b625a);
         const bool active = on && type != 0;
         const Colour cols[3] { back (bc.interpolatedWith (Colours::black, 0.25f)), back (bc), back (bc.interpolatedWith (Colours::white, 0.45f)) };
@@ -1305,7 +1305,7 @@ public:
         {
             const Rectangle<float> tr (cx - 70.0f * s, cy - r - lw * 0.5f - 34.0f * s, 140.0f * s, 24.0f * s);
             g.setColour (type != 0 ? txtC : dimC); g.setFont (hobby::makeFont (typeface, 16.0f * s).boldened());
-            g.drawText (valid ? String (typeNames[jlimit (0, 5, type)]) : String ("-"), tr, Justification::centred, false);
+            g.drawText (valid ? String (typeNames[jlimit (0, 7, type)]) : String ("-"), tr, Justification::centred, false);
             if (valid) { hot.push_back ({ tr, [this, b = selected] { if (onSmartType) onSmartType (b); } }); tipZones.push_back ({ tr, String ("Sound type of the block (press = next)") }); }
         }
         // κάτω: διακόπτης Follow, πρόταση, ✓

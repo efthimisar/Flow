@@ -92,13 +92,15 @@ namespace flow
     // Είναι σύμβαση μίξης, όχι τεκμηριωμένα ευρήματα: ρυθμίζονται με το αυτί. 1.0 = χωρίς όριο.
     inline void smartLimits (int type, float* out)
     {
-        static const float t[6][4] = { { 1.0f, 1.0f, 1.0f, 1.0f },     // Other
+        static const float t[8][4] = { { 1.0f, 1.0f, 1.0f, 1.0f },     // Other
                                        { 0.85f, 0.60f, 0.35f, 0.20f }, // Bass
                                        { 0.80f, 0.85f, 0.70f, 0.60f }, // Keys
                                        { 0.60f, 0.75f, 0.60f, 1.00f }, // Pad
                                        { 0.60f, 0.85f, 0.80f, 0.70f }, // Lead
-                                       { 0.70f, 0.85f, 0.75f, 0.90f } }; // Strings
-        const int i = type < 0 || type > 5 ? 0 : type;
+                                       { 0.70f, 0.85f, 0.75f, 0.90f },  // Strings
+                                       { 0.90f, 0.80f, 0.85f, 0.80f },  // Drums
+                                       { 0.50f, 0.80f, 0.80f, 1.00f } }; // FX
+        const int i = type < 0 || type > 7 ? 0 : type;
         for (int k = 0; k < 4; ++k) out[k] = t[i][k];
     }
 
@@ -179,7 +181,7 @@ namespace flow
         // Smart master: μέτρηση ανά block (3 ζώνες + πλάτος stereo) και διόρθωση με βάση τον τύπο ήχου
         std::atomic<int> smartOn { 0 }, smartAuto { 0 };            // On/Off, 0 = Ask (✓), 1 = Auto
         std::atomic<float> smartAccept { 0.6f };                    // πόσο από την αναγκαία διόρθωση εφαρμόζεται (0..1)
-        std::array<std::atomic<int>, numBlocks> smartType;          // 0 Other, 1 Bass, 2 Keys, 3 Pad, 4 Lead, 5 Strings
+        std::array<std::atomic<int>, numBlocks> smartType;          // 0 Other, 1 Bass, 2 Keys, 3 Pad, 4 Lead, 5 Strings, 6 Drums, 7 FX
         std::array<std::atomic<float>, numBlocks> smartLow, smartMid, smartHigh, smartWidth;   // μετρήσεις 0..1 (πριν τη διόρθωση)
         std::array<std::atomic<float>, numBlocks> smartNeedLow, smartNeedWidth;                // αναγκαία διόρθωση: dB, κλίμακα πλάτους 0..1
         std::array<std::atomic<float>, numBlocks> smartAppLow, smartAppWidth;                  // εφαρμοσμένη διόρθωση: dB, κλίμακα πλάτους

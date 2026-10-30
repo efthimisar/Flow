@@ -429,7 +429,7 @@ private:
         // δεξιά: ανά block
         auto rc = cardHeader (g, R, "Per block");
         const auto blocks = host.smartBlocks ? host.smartBlocks() : std::vector<SmartBlock>();
-        static const char* typeNames[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings" };
+        static const char* typeNames[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
         int y = rc.getY();
         const int rowH = 40;
         bool any = false;
@@ -440,7 +440,7 @@ private:
             any = true;
             g.setColour (Colour (0xff3a3632)); g.fillEllipse ((float) rc.getX(), (float) y + 5.0f, 28.0f, 28.0f);
             g.setColour (txt()); g.setFont (font (13.0f, true)); g.drawText (String (b + 1), rc.getX(), y + 5, 28, 28, Justification::centred, false);
-            smallPill (g, { rc.getX() + 36, y + 5, 86, 28 }, typeNames[jlimit (0, 5, B.type)], B.type != 0, [this, b, t = B.type] { if (host.smartTypeSet) host.smartTypeSet (b, (t + 1) % 6); repaint(); });
+            smallPill (g, { rc.getX() + 36, y + 5, 86, 28 }, typeNames[jlimit (0, 7, B.type)], B.type != 0, [this, b, t = B.type] { if (host.smartTypeSet) host.smartTypeSet (b, (t + 1) % 8); repaint(); });
             const bool needLow = on && B.type != 0 && B.needLow > 0.5f, needW = on && B.type != 0 && B.needW < 0.97f;
             const bool applied = B.appLow > 0.2f || B.appW < 0.98f, need = needLow || needW;
             String msg = ! on ? "off" : B.type == 0 ? "pick a type" : need ? ((needLow ? "Lows -" + String (B.needLow * acc, 1) + " dB " : String()) + (needW ? "Width " + String ((int) std::round (100.0f - (1.0f - B.needW) * acc * 100.0f)) + "%" : String())) : applied ? "correcting" : "in range";
@@ -1165,7 +1165,7 @@ private:
         }
         const int n = (int) idx.size(), gap = 12;
         const int cw = jmin (260, (W - 80 - (n - 1) * gap) / n), ch = bottom - top;
-        static const char* typeNames[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings" };
+        static const char* typeNames[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
         const bool compact = ch < 300;
         for (int q = 0; q < n; ++q)
         {
@@ -1189,8 +1189,8 @@ private:
             g.setColour (typed ? Colour (0xff3c5a46) : Colour (0xff242220)); g.fillRoundedRectangle (tp.toFloat(), 13.0f);
             g.setColour (typed ? ok : lineC()); g.drawRoundedRectangle (tp.toFloat().reduced (0.5f), 13.0f, typed ? 1.6f : 1.0f);
             g.setColour (typed ? txt() : dim()); g.setFont (font (12.5f, true));
-            g.drawText (String (b + 1) + "  " + String (typeNames[jlimit (0, 5, B.type)]), tp, Justification::centred, false);
-            hits.push_back ({ tp, [this, b, B] { if (host.smartTypeSet) host.smartTypeSet (b, (B.type + 1) % 6); repaint(); } });
+            g.drawText (String (b + 1) + "  " + String (typeNames[jlimit (0, 7, B.type)]), tp, Justification::centred, false);
+            hits.push_back ({ tp, [this, b, B] { if (host.smartTypeSet) host.smartTypeSet (b, (B.type + 1) % 8); repaint(); } });
             y += 34;
 
             // κάτω μέρος: πλάτος stereo + πρόταση

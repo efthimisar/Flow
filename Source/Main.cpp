@@ -170,7 +170,7 @@ public:
         };
         loopsView.onSmartType = [this] (int b)
         {
-            engine.smartType[(size_t) b] = (engine.smartType[(size_t) b].load() + 1) % 6;
+            engine.smartType[(size_t) b] = (engine.smartType[(size_t) b].load() + 1) % 8;
             engine.smartAppLow[(size_t) b] = 0.0f; engine.smartAppWidth[(size_t) b] = 1.0f;
             saveNow(); loopsView.repaint();
         };
@@ -2822,7 +2822,7 @@ private:
         h.smartAcceptSet = [this] (float v) { engine.smartAccept = v; saveNow(); };
         h.smartTypeSet = [this] (int b, int t)
         {
-            engine.smartType[(size_t) b] = jlimit (0, 5, t);
+            engine.smartType[(size_t) b] = jlimit (0, 7, t);
             engine.smartAppLow[(size_t) b] = 0.0f; engine.smartAppWidth[(size_t) b] = 1.0f;   // νέος τύπος: καθαρή αρχή
             saveNow();
         };
@@ -3254,7 +3254,7 @@ private:
 
             engine.holdMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("hold", 0));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
-            engine.smartType[(size_t) slot] = jlimit (0, 5, e->getIntAttribute ("stype", 0));
+            engine.smartType[(size_t) slot] = jlimit (0, 7, e->getIntAttribute ("stype", 0));
             engine.followBlock[(size_t) slot] = e->getIntAttribute ("follow", 0) != 0 ? 1 : 0;
             engine.smartAppLow[(size_t) slot] = 0.0f; engine.smartAppWidth[(size_t) slot] = 1.0f;
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
