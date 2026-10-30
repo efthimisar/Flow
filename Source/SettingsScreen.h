@@ -37,6 +37,7 @@ public:
         std::function<void (const juce::String&)> saveSetNamed;
         std::function<void()> saveElsewhere, loadElsewhere;
         std::function<void (const juce::File&)> loadSet;
+        std::function<void (const juce::File&)> deleteSet;   // στον κάδο
         std::function<juce::Image()> orbImage;
         std::function<juce::String()> sessionInfo;   // κενό = δεν υπάρχει
         std::function<void()> restoreSession;
@@ -752,6 +753,22 @@ private:
             if (mouse.y >= top && mouse.y <= bottom) {}
             const auto f = s.file;
             hits.push_back ({ r.getIntersection (Rectangle<int> (0, top, getWidth(), bottom - top)), [this, f] { if (host.loadSet) host.loadSet (f); close(); } });
+            if (h)   // ✕ πάνω δεξιά όταν πας το ποντίκι στην κάρτα: 1ο πάτημα οπλίζει (κόκκινο), 2ο το στέλνει στον κάδο
+            {
+                const Rectangle<int> xr (r.getRight() - 34, r.getY() + 8, 26, 26);
+                const bool armed = delArmed == f.getFullPathName() && Time::getMillisecondCounter() < delArmedAt;
+                g.setColour (armed ? Colour (0xff6a2f2f) : hov (xr) ? Colour (0xff4a4440) : Colour (0xff3a3632)); g.fillEllipse (xr.toFloat());
+                g.setColour (armed ? hobby::kRed : txt());
+                g.drawLine ((float) xr.getX() + 8.0f, (float) xr.getY() + 8.0f, (float) xr.getRight() - 8.0f, (float) xr.getBottom() - 8.0f, 2.0f);
+                g.drawLine ((float) xr.getX() + 8.0f, (float) xr.getBottom() - 8.0f, (float) xr.getRight() - 8.0f, (float) xr.getY() + 8.0f, 2.0f);
+                if (armed) { g.setFont (font (11.0f, true)); g.setColour (hobby::kRed); g.drawText ("press again to delete", r.getX() + 8, r.getY() + 136, cw - 16, 14, Justification::centred, false); }
+                hits.push_back ({ xr.expanded (3), [this, f, armed]
+                {
+                    if (armed) { delArmed = {}; if (host.deleteSet) host.deleteSet (f); }
+                    else { delArmed = f.getFullPathName(); delArmedAt = juce::Time::getMillisecondCounter() + 3000; }
+                    repaint();
+                } });
+            }
         }
         g.restoreState();
         pill (g, { getWidth() - 40 - 190, getHeight() - 64, 190, 40 }, "Other file...", false, true, [this] { if (host.loadElsewhere) host.loadElsewhere(); close(); });
@@ -1285,6 +1302,7 @@ private:
     Page page = Home;
     int loadScroll = 0, loadMaxScroll = 0;
     int selTile = 12;
+    juce::String delArmed; juce::uint32 delArmedAt = 0;   // ✕ διαγραφής set: οπλισμένο για 3 δλ
     bool saved = false, waitPanic = false;
     juce::String ccAtAssign;
 };

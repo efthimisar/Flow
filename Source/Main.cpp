@@ -2725,6 +2725,16 @@ private:
         h.saveElsewhere = [this] { saveSetToFile(); };
         h.loadElsewhere = [this] { loadSetFromFile(); };
         h.loadSet = [this] (const File& f) { loadSetFile (f); saveNow(); };
+        h.deleteSet = [this] (const File& f)
+        {
+            const auto name = f.getFileNameWithoutExtension();
+            if (f.moveToTrash() || f.deleteFile())
+            {
+                if (name == currentSetName) currentSetName = {};
+                setMessage (gr ("Deleted (in the Trash): ") + name);
+            }
+            else setMessage (gr ("Could not delete the set"));
+        };
         h.orbImage = [this] { return orbImage; };
         h.sessionInfo = [this]() -> String
         {
