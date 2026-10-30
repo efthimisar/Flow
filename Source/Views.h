@@ -939,9 +939,7 @@ public:
                 }
                 if (taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error)
                 {
-                    g.setColour (hobby::kRed.withAlpha (taping ? 0.4f + 0.6f * pl : 1.0f));
-                    g.fillEllipse (x0, sy + sh * 0.5f - 4.0f, 8.0f, 8.0f);
-                    g.setColour (hobby::kRed);
+                    g.setColour (hobby::kIconGrey);
                     g.drawText (audioText, Rectangle<float> (x0 + 14.0f, sy, 170.0f, sh), Justification::centredLeft, false);
                 }
             }
