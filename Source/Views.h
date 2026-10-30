@@ -1077,9 +1077,7 @@ public:
                 Path pie; pie.addPieSegment (Rectangle<float> (cx0 - R, cy0 - R, 2.0f * R, 2.0f * R), MathConstants<float>::pi * -0.75f, MathConstants<float>::pi * -0.75f + MathConstants<float>::pi * 1.5f * load, 0.0f);
                 g.setColour (load >= 0.85f ? hobby::kRed : dimC); g.fillPath (pie);
             }
-            g.setFont (hobby::makeFont (typeface, 13.0f * s)); g.setColour (load >= 0.85f ? hobby::kRed : dimC);
-            g.drawText (String ((int) std::lround (load * 100.0f)) + "%", Rectangle<float> (cx0 + R + 6.0f * s, 8.0f * s, 50.0f * s, 28.0f * s), Justification::centredLeft, false);
-            tipZones.push_back ({ Rectangle<float> (cx0 - R, 8.0f * s, 2.0f * R + 56.0f * s, 28.0f * s), String ("Processor load (CPU)") });
+            tipZones.push_back ({ Rectangle<float> (cx0 - R, cy0 - R, 2.0f * R, 2.0f * R), String ("Processor load (CPU): the filled part of the circle") });
         }
         if (notice.isNotEmpty())
         {
