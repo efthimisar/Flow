@@ -324,11 +324,10 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
         }
         case Symbol::Vst:
         {
-            juce::Path p;
-            p.addRoundedRectangle (-7.0f, -6.0f, 14.0f, 10.0f, 2.0f);
-            p.startNewSubPath (-3.5f, 4.0f); p.lineTo (-3.5f, 9.0f);
-            p.startNewSubPath (3.5f, 4.0f);  p.lineTo (3.5f, 9.0f);
-            stroke (p, 1.7f);
+            juce::Path p;   // κουμπί synthesizer: κύκλος με μία γραμμή (δείκτης)
+            p.addEllipse (-9.0f, -9.0f, 18.0f, 18.0f);
+            p.startNewSubPath (0.0f, 0.0f); p.lineTo (4.5f, -6.5f);
+            stroke (p, 1.8f);
             break;
         }
         case Symbol::Window:
