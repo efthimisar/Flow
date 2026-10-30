@@ -183,7 +183,7 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         mouse = e.getPosition();
-        dialDrag = (page == Smart || (page == Home && selTile == 11)) && dialRect.contains (mouse) && host.smartAcceptSet != nullptr;
+        dialDrag = (page == Smart || (page == Home && selTile == 12)) && dialRect.contains (mouse) && host.smartAcceptSet != nullptr;
         dialY0 = e.getPosition().y; dialV0 = host.smartAcceptGet ? host.smartAcceptGet() : 0.0f; dialMoved = false;
     }
     void mouseDrag (const juce::MouseEvent& e) override
@@ -307,6 +307,7 @@ private:
                 break;
             case 12: g.setFont (font (24.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x86\x92"), Rectangle<float> (c.x - 20.0f, c.y - 16.0f, 40.0f, 32.0f), Justification::centred, false); break;   // Follow
             case 13: g.setFont (font (22.0f, true)); g.drawText ("iPad", Rectangle<float> (c.x - 26.0f, c.y - 14.0f, 52.0f, 28.0f), Justification::centred, false); break;
+            case 16: g.setFont (font (28.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x86\xbb"), Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 14: g.setFont (font (24.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x87\x84"), Rectangle<float> (c.x - 22.0f, c.y - 16.0f, 44.0f, 32.0f), Justification::centred, false); break;
             case 15: g.drawEllipse (c.x - 11.0f, c.y - 11.0f, 22.0f, 22.0f, 2.2f); g.fillEllipse (c.x - 3.0f, c.y - 3.0f, 6.0f, 6.0f); break;
             default: break;
@@ -323,6 +324,8 @@ private:
         std::vector<Tile> tiles {
             { 0, "Audio & MIDI", false, false, [this] { if (host.openAudio) host.openAudio(); } },
             { 1, "Save set", false, false, [this] { showPage (Save); } },
+            { 16, "Update set", false, ! (host.currentSetName && host.currentSetName().isNotEmpty() && host.currentSetName() != juce::String::fromUTF8 ("\xe2\x80\x93")),
+              [this] { const auto n = host.currentSetName ? host.currentSetName() : juce::String(); if (n.isNotEmpty() && n != juce::String::fromUTF8 ("\xe2\x80\x93") && host.saveSetNamed) { host.saveSetNamed (n); close(); } } },
             { 2, "Load set", false, false, [this] { showPage (Load); } },
             { 3, "Restore session", false, false, [this] { showPage (Restore); } },
             { 4, "Rec Audio folder", false, false, [this] { showPage (RecFolder); } },
@@ -372,10 +375,10 @@ private:
             g.setColour (card()); g.fillRoundedRectangle (c.toFloat(), 18.0f);
             g.setColour (lineC()); g.drawRoundedRectangle (c.toFloat().reduced (0.5f), 18.0f, 1.0f);
         }
-        if (selTile == 11) cardsSmart (g, L, R);
-        else if (selTile == 12) cardsFollow (g, L, R);
-        else if (selTile == 10) cardsTools (g, L, R);
-        else if (selTile == 13) cardsOrb (g, L, R);
+        if (selTile == 12) cardsSmart (g, L, R);
+        else if (selTile == 13) cardsFollow (g, L, R);
+        else if (selTile == 11) cardsTools (g, L, R);
+        else if (selTile == 14) cardsOrb (g, L, R);
     }
 
     juce::Rectangle<int> cardHeader (juce::Graphics& g, juce::Rectangle<int> c, const juce::String& t)
@@ -1281,7 +1284,7 @@ private:
     float dialV0 = 0.0f;
     Page page = Home;
     int loadScroll = 0, loadMaxScroll = 0;
-    int selTile = 11;
+    int selTile = 12;
     bool saved = false, waitPanic = false;
     juce::String ccAtAssign;
 };

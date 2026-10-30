@@ -3181,7 +3181,12 @@ private:
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 2));
         engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 500));
         engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 0));
-        engine.tempoUserSet = root.getIntAttribute ("tempoManual", engine.tempo.load() != 110.0 ? 1 : 0) != 0;
+        // το tempo του set ισχύει: δεν το αλλάζει η αυτόματη ανίχνευση και το Link παίρνει το tempo του set
+        {
+            const bool manual = root.getIntAttribute ("tempoManual", 1) != 0 || std::abs (engine.tempo.load() - 110.0) > 0.01;
+            if (manual) engine.setTempo (engine.tempo.load());
+            else engine.tempoUserSet = false;
+        }
         pendingSelect = jmax (0, mapSlot (root.getIntAttribute ("selected", 0)));
 
         for (auto& sc : scenes) sc = Scene();
