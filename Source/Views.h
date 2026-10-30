@@ -660,8 +660,8 @@ public:
         const int tw = getWidth(), ts = 22;
         tapDot.setBounds (tw - 14 - ts, 12, ts, ts);
         tempoBox.setBounds (tapDot.getX() - 8 - 100, 12, 100, 22);
-        tempoBox.setVisible (! orbMode);
-        tapDot.setVisible (! orbMode);
+        tempoBox.setVisible (false);   // το tempo βγήκε από την κύρια οθόνη (tap = πλήκτρο B0)
+        tapDot.setVisible (false);
     }
 
     void paint (Graphics& g) override
