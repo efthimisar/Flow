@@ -19,11 +19,10 @@ namespace flow
     constexpr int numBlocks   = 9;
     constexpr int lowestNote  = 21;     // A0
     constexpr int highestNote = 108;    // C8
-    constexpr int followKeyNote = 21;   // A0: ενεργοποιεί/σβήνει το Follow, δεν παίζει ήχο
-    constexpr int silentKeyNote = 22;   // A#0: σιωπηλό (ανάμεσα στα πλήκτρα ελέγχου)
-    constexpr int tapKeyNote    = 23;   // B0: tap tempo, δεν παίζει ήχο
-    constexpr int recAudioKeyNote = 25; // C#1: Rec Audio (σταματά ή νέο take), δεν παίζει ήχο (το C1 = 24 είναι σιωπηλό)
-    constexpr int firstPlayNote = 26;   // D1: το πρώτο πλήκτρο που παίζει ήχο
+    constexpr int tapKeyNote    = 21;   // A0: tap tempo, δεν παίζει ήχο
+    constexpr int recAudioKeyNote = 22; // A#0 (μαύρο): Rec Audio (σταματά ή νέο take), δεν παίζει ήχο
+    constexpr int followKeyNote = 23;   // B0: ενεργοποιεί/σβήνει το Follow, δεν παίζει ήχο
+    constexpr int firstPlayNote = 24;   // C1: το πρώτο πλήκτρο που παίζει ήχο
     inline bool isControlKey (int n) { return n >= lowestNote && n < firstPlayNote; }
     // καταγραφή βημάτων σε αρχείο (Music/Flow/Flow-log.txt) για να φαίνεται πού σταματά ένα crash
     inline void flowLog (const juce::String& s)
@@ -163,7 +162,7 @@ namespace flow
         std::atomic<int> followTRoot { 9 }, followTType { 1 };
         std::atomic<int> followHomeRoot { 9 }, followHomeType { 1 }, followHomeSet { 0 };   // τελευταία συγχορδία με σβηστό Follow (τονικότητα πηγής)           // κλίμακα-στόχος (από τη συγχορδία)
         std::array<std::atomic<int>, numBlocks> followBlock;             // 1 = το block ακολουθεί
-        // Follow on/off (πλήκτρο A0 ή οθόνη): όταν ανάβει, η τελευταία συγχορδία που κράτησες με σβηστό Follow γίνεται η τονικότητα πηγής
+        // Follow on/off (πλήκτρο B0 ή οθόνη): όταν ανάβει, η τελευταία συγχορδία που κράτησες με σβηστό Follow γίνεται η τονικότητα πηγής
         void toggleFollow()
         {
             const int nowOn = followOn.load() != 0 ? 0 : 1;
@@ -1281,17 +1280,17 @@ namespace flow
                 if (msg.isNoteOn())
                 {
                     const int n = msg.getNoteNumber();
-                    if (n == followKeyNote)   // A0 = Follow on/off, δεν παίζει ήχο
+                    if (n == followKeyNote)   // B0 = Follow on/off, δεν παίζει ήχο
                     {
                         toggleFollow();
                         continue;
                     }
-                    if (n == tapKeyNote)      // B0 = tap tempo, δεν παίζει ήχο
+                    if (n == tapKeyNote)      // A0 = tap tempo, δεν παίζει ήχο
                     {
                         registerTap (gs + pos, sr);
                         continue;
                     }
-                    if (n == recAudioKeyNote) // C1 = Rec Audio (σταματά ή νέο take), δεν παίζει ήχο
+                    if (n == recAudioKeyNote) // A#0 = Rec Audio (σταματά ή νέο take), δεν παίζει ήχο
                     {
                         recorder.pressButton();
                         continue;

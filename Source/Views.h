@@ -1840,7 +1840,7 @@ public:
             else
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                const bool ctlKey = flow::isControlKey (n);   // A0, B0, C1: σκούρα πλήκτρα ελέγχου (η τελεία κάτω)
+                const bool ctlKey = flow::isControlKey (n);   // A0 (tap), A#0 (Rec Audio), B0 (Follow): σκούρα πλήκτρα ελέγχου
                 Colour c = ctlKey ? hobby::kScreen.brighter (0.12f) : litKey ? Colours::white : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
                 const Colour cc = c.withMultipliedAlpha (alpha);
                 if (b >= 0 && ! litKey && ! switchKey && ! ctlKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
@@ -1850,7 +1850,7 @@ public:
                 g.fillRoundedRectangle (kr, 3.0f);
                 g.setColour (hobby::kScreen);
                 g.drawRoundedRectangle (kr.reduced (0.5f), 3.0f, 1.0f);
-                if (ctlKey && n != flow::silentKeyNote && n != 24)
+                if (ctlKey)
                     ctlDots.push_back ({ { kr.getCentreX(), kr.getBottom() - 11.0f }, jmin (kr.getWidth() * 0.32f, 7.0f), n });
                 ++wi;
             }
@@ -1865,10 +1865,17 @@ public:
             g.setColour (hobby::kScreen);
             g.drawRoundedRectangle (blackRects[i].reduced (0.5f), 2.0f, 1.0f);
         }
-        for (auto& cd : ctlDots)   // σβηστές από προεπιλογή, ανάβουν όσο το πλήκτρο είναι πατημένο
+        for (auto& cd : ctlDots)   // γκρι όταν δεν δουλεύουν· tap: κόκκινο όσο πατιέται και πράσινο όταν πάρει tempo· Rec Audio: κόκκινο όσο γράφει· Follow: πορτοκαλί όταν δουλεύει
         {
             const bool held = ((engine.ctlHeld.load() >> (cd.n - flow::lowestNote)) & 1u) != 0;
-            g.setColour (held ? (cd.n == flow::recAudioKeyNote ? hobby::kRed : hobby::kOn) : Colour (0xff4f4a46));
+            Colour col (0xff4f4a46);
+            if (cd.n == flow::tapKeyNote)
+                col = held ? hobby::kRed : engine.tapActiveOut.load() != 0 ? hobby::kOn : col;
+            else if (cd.n == flow::recAudioKeyNote)
+                col = engine.recorder.getState() == RecorderEngine::State::Recording ? hobby::kRed : col;
+            else if (cd.n == flow::followKeyNote)
+                col = engine.followOn.load() != 0 ? Colour (0xffe8883a) : col;
+            g.setColour (col);
             g.fillEllipse (cd.p.x - cd.r, cd.p.y - cd.r, cd.r * 2.0f, cd.r * 2.0f);
         }
 

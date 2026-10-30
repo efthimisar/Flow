@@ -513,7 +513,7 @@ private:
         else
         {
             g.setColour (dim()); g.setFont (font (11.0f));
-            g.drawFittedText ("Hold a chord of 3+ notes. Key A0 turns Follow on and off.", rc.getX(), rc.getBottom() - 30, rc.getWidth(), 30, Justification::centredLeft, 2);
+            g.drawFittedText ("Hold a chord of 3+ notes. Key B0 turns Follow on and off.", rc.getX(), rc.getBottom() - 30, rc.getWidth(), 30, Justification::centredLeft, 2);
         }
     }
 
