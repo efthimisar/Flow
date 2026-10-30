@@ -213,6 +213,8 @@ namespace flow
         std::atomic<bool> metroOn { false };
         std::atomic<double> metroCycleOut { 4.0 };   // κύκλος σε beats: ο μεγαλύτερος κύκλος λούπας ή ένα μέτρο (για το κλικ και την μπάρα)
         std::array<std::atomic<int>, numBlocks> liveSilent;   // 1 = όσο παίζει η λούπα του block, το live του block μένει σιωπηλό (default). 0 = ακούγεται και το live.
+        std::atomic<juce::uint32> lastVolMoveMs { 0 };
+        std::atomic<int> volMoveDirty { 0 };
         std::atomic<int> shiftHeld { 0 };       // sustain CC64 πατημένο: το ειδικό block παίρνει όλο το πληκτρολόγιο όσο το κρατάς
         std::atomic<int> specialBlock { -1 };   // ειδικό block: πάνω από τα άλλα, χωρίς λούπα, παίζει πάντα ζωντανά (-1 = κανένα)
         std::atomic<float> metroLevel { 0.8f };
@@ -1518,7 +1520,9 @@ namespace flow
                     }
                 if (hit)
                 {
-                    ++changeCount;
+                    // η κίνηση του πεταλιού δεν σώζεται σε κάθε μήνυμα (έγραφε αρχείο στο UI thread και κόλλαγαν τα γραφικά): το Main σώζει όταν σταματήσει
+                    lastVolMoveMs = juce::Time::getMillisecondCounter();
+                    volMoveDirty = 1;
                     return true;
                 }
             }

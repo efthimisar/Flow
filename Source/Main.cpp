@@ -3768,6 +3768,11 @@ private:
         }
 
         // αλλαγές από πετάλια (hold, ένταση, αναθέσεις, ζώνες, tempo) και από το ποντίκι σώζονται άμεσα (με όριο ρυθμού)
+        if (engine.volMoveDirty.load() != 0 && Time::getMillisecondCounter() - engine.lastVolMoveMs.load() > 1500)
+        {
+            engine.volMoveDirty = 0;
+            ++engine.changeCount;   // το πετάλι σταμάτησε: σώζεται μία φορά
+        }
         const int cc = engine.changeCount.load();
         if (cc != lastChange) { lastChange = cc; dirty = true; }
         if (dirty && Time::getMillisecondCounter() - lastSaveMs > 400)
