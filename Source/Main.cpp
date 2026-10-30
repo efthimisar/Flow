@@ -1900,14 +1900,14 @@ private:
         }
 
         std::vector<PluginDescription> list;
-        // 0 = VST (instrument με ήχο), 1 = FX (effect ήχου), 2 = MIDI FX (χωρίς audio έξοδο ή κατηγορία MIDI)
+        // 0 = VST (instrument με ήχο), 1 = FX (effect ήχου), 2 = MIDI FX (MIDI-only ή instruments: πολλά MIDI plugins δηλώνουν instrument)
         auto midiOnly = [] (const PluginDescription& d) { return d.numOutputChannels == 0 || d.category.containsIgnoreCase ("midi"); };
         for (const auto& d : knownPlugins.getTypes())
         {
             flow::flowLog ("plugin: " + d.name + " [" + d.pluginFormatName + "] instrument=" + String ((int) d.isInstrument) + " in=" + String (d.numInputChannels)
                            + " out=" + String (d.numOutputChannels) + " category=" + d.category);
             const bool m = midiOnly (d);
-            if (kind == 2 ? m : kind == 0 ? (d.isInstrument && ! m) : (! d.isInstrument && ! m))
+            if (kind == 2 ? (m || d.isInstrument) : kind == 0 ? (d.isInstrument && ! m) : (! d.isInstrument && ! m))   // MIDI FX: και τα MIDI-only και ό,τι δηλώνει instrument (π.χ. Stepic)
                 list.push_back (d);
         }
         std::sort (list.begin(), list.end(), [] (const PluginDescription& a, const PluginDescription& b)
