@@ -316,6 +316,8 @@ public:
         loadKnownPlugins();
         dockTimer.f = [this] { updateDock(); };
         dockTimer.startTimerHz (60);
+        orbTimer.f = [this] { orbPhysics(); };
+        orbTimer.startTimerHz (60);
     }
 
     ~MainComponent() override
@@ -325,6 +327,7 @@ public:
         lightsPump.stopTimer();
         stopTimer();
         dockTimer.stopTimer();
+        orbTimer.stopTimer();
         scanTimer.stopTimer();
         if (dockedTop != nullptr) dockedTop->removeComponentListener (this);
         if (pendingLoads == 0) saveSettings (true);
@@ -1499,6 +1502,10 @@ private:
     std::array<std::array<Point<float>, 4>, (size_t) flow::numBlocks> orbPos;
     std::array<std::array<OrbLane, 4>, (size_t) flow::numBlocks> orbLane;
     std::array<bool, 4> orbTouching { { false, false, false, false } };
+    // ελαστική κίνηση: η τελεία ακολουθεί το δάχτυλο σαν μάζα σε ελατήριο, αργά και ομαλά (60 φορές το δευτερόλεπτο)
+    std::array<Point<float>, 4> orbGoal, orbVel;
+    std::array<bool, 4> orbSettle { { false, false, false, false } };
+    int orbPhysBlock = -1;
     bool orbRecArmed = false;
 
     static Point<float> orbClamp (int, Point<float> p)   // ελεύθερη κίνηση σε όλον τον orb (όριο: ο κύκλος)
@@ -1557,6 +1564,13 @@ private:
     void orbTouch (int corner, bool down)
     {
         orbTouching[(size_t) corner] = down;
+        if (down && selected >= 0 && selected < flow::numBlocks)
+        {
+            orbPhysBlock = selected;
+            orbGoal[(size_t) corner] = orbPos[(size_t) selected][(size_t) corner];   // χωρίς άλμα στο πάτημα
+            orbVel[(size_t) corner] = {};
+            orbSettle[(size_t) corner] = true;
+        }
         if (! isActive (selected)) return;
         auto& l = orbLane[(size_t) selected][(size_t) corner];
         if (down && orbRecArmed)   // overdub: γράφει μόνο εκεί που αγγίζεις, τα υπόλοιπα μένουν
@@ -1570,9 +1584,34 @@ private:
     void orbMoved (int corner, Point<float> p)
     {
         if (selected < 0 || selected >= flow::numBlocks) return;   // οι κύκλοι κινούνται και σε κουμπί χωρίς όργανο
-        p = orbClamp (corner, p);
-        orbPos[(size_t) selected][(size_t) corner] = p;
-        orbApply (selected, corner, p);
+        orbGoal[(size_t) corner] = orbClamp (corner, p);   // στόχος: η θέση του δαχτύλου· η τελεία πάει εκεί ελαστικά
+        orbPhysBlock = selected;
+        orbSettle[(size_t) corner] = true;
+    }
+
+    void orbPhysics()
+    {
+        const int b = orbPhysBlock;
+        if (b < 0 || b >= flow::numBlocks || b != selected) { orbSettle.fill (false); return; }
+        const float dt = 1.0f / 60.0f, omega = 6.0f, zeta = 0.62f;   // ω: ταχύτητα, ζ < 1: λίγη ελαστικότητα
+        bool any = false;
+        std::array<Point<float>, 4> pos;
+        for (int c = 0; c < 4; ++c)
+        {
+            auto& pp = orbPos[(size_t) b][(size_t) c];
+            if (orbSettle[(size_t) c])
+            {
+                const auto acc = (orbGoal[(size_t) c] - pp) * (omega * omega) - orbVel[(size_t) c] * (2.0f * zeta * omega);
+                orbVel[(size_t) c] += acc * dt;
+                pp = orbClamp (c, pp + orbVel[(size_t) c] * dt);
+                orbApply (b, c, pp);
+                any = true;
+                if (! orbTouching[(size_t) c] && (orbGoal[(size_t) c] - pp).getDistanceFromOrigin() < 0.002f && orbVel[(size_t) c].getDistanceFromOrigin() < 0.01f)
+                    orbSettle[(size_t) c] = false;
+            }
+            pos[(size_t) c] = pp;
+        }
+        if (any) loopsView.setOrbPos (pos);
     }
 
     void orbClearMotion()
@@ -1603,7 +1642,7 @@ private:
             for (int c = 0; c < 4; ++c)
             {
                 auto& l = orbLane[(size_t) b][(size_t) c];
-                const bool touching = b == selected && orbTouching[(size_t) c];
+                const bool touching = b == selected && (orbTouching[(size_t) c] || orbSettle[(size_t) c]);
                 if (touching)
                 {
                     if (l.recording) { l.s[(size_t) i] = orbPos[(size_t) b][(size_t) c]; l.ok[(size_t) i] = 1; }
@@ -3764,7 +3803,7 @@ private:
     {
         std::function<void()> f;
         void timerCallback() override { if (f) f(); }
-    } dockTimer;
+    } dockTimer, orbTimer;
     std::unique_ptr<FileChooser> chooser;
 
     LoopsView loopsView;

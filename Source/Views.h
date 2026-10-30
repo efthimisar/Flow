@@ -415,6 +415,7 @@ public:
         repaint();
         if (orbExternal) orbExternal->repaint();
     }
+    void setOrbPos (const std::array<Point<float>, 4>& p) { orbPos = p; repaint(); }
     std::function<bool()> metroIsCustom;   // έχει φορτωθεί δικός ήχος μετρονόμου;
     std::function<void (int)> onMetroSample;   // 1 = διάλεξε ήχο, 2 = αρχικός ήχος
 
