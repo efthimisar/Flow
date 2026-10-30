@@ -1537,7 +1537,7 @@ namespace flow
                         case ctlMute:  ++pedalMute; break;
                         case ctlSpecial: { const int sb = specialBlock.load(); if (sb >= 0 && sb < numBlocks) { blockOff[(size_t) sb] = blockOff[(size_t) sb].load() != 0 ? 0 : 1; ++changeCount; } } break;
                         case ctlTape:  recorder.pressButton(); break;
-                        case ctlMetro: metroOn = ! metroOn.load(); break;
+                        case ctlMetro: break;   // ο μετρονόμος αφαιρέθηκε
                         case ctlPanic: ++panicCount; break;
                         case ctlScenePrev: sceneRequest = -2; break;
                         case ctlSceneNext: sceneRequest = -3; break;

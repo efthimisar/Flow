@@ -277,6 +277,7 @@ public:
         engine.recorder.setFolder (savedFolder.isNotEmpty() ? File (savedFolder)
                                                             : File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow"));
 
+        engine.metroOn = false;
         engine.metroLevel = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("metroLevel", 0.8));
         engine.metroChannel = jmax (0, settings->getIntValue ("metroChannel", 2));
         favPlugins.addLines (settings->getValue ("favPlugins"));
@@ -389,16 +390,15 @@ public:
     {
         if (k.getModifiers().isAnyModifierKeyDown()) return false;
         const auto c = k.getTextCharacter();
-        if (c == 'm' || c == 'M') { toggleMetronome(); return true; }
         if (k == KeyPress::escapeKey) { if (learnMode != 0) { learnMode = 0; stopKnobLearn(); setMessage (gr ("MIDI learn cancelled")); updateToolLamps(); return true; } if (settingsScreen.isVisible()) { settingsScreen.goBack(); return true; } if (audioPanel.isVisible()) { audioPanel.close(); return true; } if (orbStage != 0) { closeOrb(); return true; } doPanic(); return true; }
         return false;
     }
 
 private:
     //==========================================================================
-    std::array<ValueTile*, 11> tiles()
+    std::array<ValueTile*, 10> tiles()   // ο μετρονόμος δεν υπάρχει πια: το δαχτυλίδι του loop δείχνει τον ρυθμό
     {
-        return { &blockTile, &vstTile, &mfxTile, &fxTile, &motionTile, &recTile, &undoTile, &stopTile, &tapeTile, &metroTile, &folderTile };
+        return { &blockTile, &vstTile, &mfxTile, &fxTile, &motionTile, &recTile, &undoTile, &stopTile, &tapeTile, &folderTile };
     }
 
     bool isActive (int b) const { return b >= 0 && b < flow::numBlocks && engine.active[(size_t) b].load() != 0; }
@@ -652,7 +652,6 @@ private:
             t->setBounds (x, ty, 52, 52);
             x += 60;
         }
-        metroTile.setBounds (rightX - 60, ty, 52, 52);
         folderTile.setBounds (rightX, ty, 52, 52);
     }
 
@@ -2611,6 +2610,8 @@ private:
     // metronome
     void toggleMetronome()
     {
+        engine.metroOn = false;   // ο ήχος μετρονόμου αφαιρέθηκε
+        return;
         if (! engine.metroOn.load() && engine.numOutChannels.load() <= engine.metroChannel.load())
         {
             setMessage (gr ("Metronome: output ") + String (engine.metroChannel.load() + 1)
