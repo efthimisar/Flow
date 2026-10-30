@@ -342,7 +342,6 @@ private:
             { 12, "Follow", host.followOnGet && host.followOnGet() != 0, false, [this] { showPage (Follow); }, true },
             { 15, "Orb knobs", false, false, [this] { showPage (OrbKnobs); }, true },
             { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
-            { 13, "iPad", host.ipadGet && host.ipadGet(), false, [this] { showPage (Ipad); } },
             { 8, "Window size", false, false, [this] { showPage (WindowSize); } },
             { 17, "Help", host.helpGet && host.helpGet(), false, [this] { if (host.helpToggle) host.helpToggle(); repaint(); } },
         };
