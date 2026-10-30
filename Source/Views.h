@@ -1311,11 +1311,6 @@ public:
         // κάτω: διακόπτης Follow, πρόταση, ✓
         {
             const float yb = cy + r + lw * 0.5f + 28.0f * s, fr = 13.0f * s;
-            const bool fon = engine.followOn.load() != 0;
-            g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 10.0f * s));
-            if (fon)
-                g.drawText (chordWord (engine.followRoot.load(), engine.followType.load()) + String::fromUTF8 (" \xe2\x86\x92 ") + chordWord (engine.followTRoot.load(), engine.followTType.load()),
-                            Rectangle<float> (cx - 90.0f * s, yb + fr + 15.0f * s, 180.0f * s, 14.0f * s), Justification::centred, false);
 
             const float needLow = valid ? engine.smartNeedLow[(size_t) sel].load() : 0.0f, needW = valid ? engine.smartNeedWidth[(size_t) sel].load() : 1.0f;
             const float appLow = valid ? engine.smartAppLow[(size_t) sel].load() : 0.0f, appW = valid ? engine.smartAppWidth[(size_t) sel].load() : 1.0f;
