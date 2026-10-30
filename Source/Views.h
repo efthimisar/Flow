@@ -713,9 +713,9 @@ public:
         // ενδείξεις εγγραφής: εμφανίζονται κάτω, στη λωρίδα, μόνο όσο γράφει κάτι
         const auto tapeState = engine.recorder.getState();
         const bool taping = tapeState == RecorderEngine::State::Recording;
-        String audioText = tapeState == RecorderEngine::State::Error ? String ("REC AUDIO ERROR")
-                           : "REC AUDIO " + clockText (engine.recorder.getElapsedSeconds());
-        if (engine.recorder.isZipping()) audioText = "REC AUDIO ZIP...";
+        String audioText = tapeState == RecorderEngine::State::Error ? String ("ERROR")
+                           : clockText (engine.recorder.getElapsedSeconds());
+        if (engine.recorder.isZipping()) audioText = "...";
 
         // λωρίδες
         const auto list = activeBlocks (engine);
@@ -1272,10 +1272,9 @@ public:
             g.setFont (hobby::makeFont (typeface, 13.0f * s));
             if (taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error)
             {
-                const float pl = (float) hobby::pulse (tn * 0.001 * 1.5);
-                String t = tapeState == RecorderEngine::State::Error ? String ("REC AUDIO ERROR") : "Rec Audio " + clockText (engine.recorder.getElapsedSeconds());
-                if (engine.recorder.isZipping()) t = "Rec Audio zip...";
-                g.setColour (hobby::kRed.withAlpha (taping ? 0.5f + 0.5f * pl : 1.0f));
+                String t = tapeState == RecorderEngine::State::Error ? String ("ERROR") : clockText (engine.recorder.getElapsedSeconds());
+                if (engine.recorder.isZipping()) t = "...";
+                g.setColour (hobby::kRed);
                 g.drawText (t, Rectangle<float> (hg.ocx - 120.0f * s, ty, 240.0f * s, 18.0f * s), Justification::centred, false);
                 ty += 18.0f * s;
             }

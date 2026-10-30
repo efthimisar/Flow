@@ -3631,7 +3631,7 @@ private:
 
         switch (engine.recorder.getState())
         {
-            case RecorderEngine::State::Recording: tapeTile.setIconColour (hobby::mix (hobby::kIconGrey, hobby::kRed, 0.5f + 0.5f * hobby::pulse (t * 1.0))); break;
+            case RecorderEngine::State::Recording: tapeTile.setIconColour (hobby::kRed); break;
             case RecorderEngine::State::Stopped:   tapeTile.setIconColour (engine.recorder.isTapeFull() ? hobby::kCoral : hobby::kPeach); break;
             case RecorderEngine::State::Error:     tapeTile.setIconColour (hobby::kCoral); break;
             default:                               tapeTile.setIconColour (hobby::kIconGrey); break;
