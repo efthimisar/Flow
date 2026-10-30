@@ -435,8 +435,6 @@ public:
     {
         if (on == metroStrip) return;
         metroStrip = on;
-        tempoBox.setVisible (on);
-        tapDot.setVisible (on);
         resized();
         repaint();
     }
