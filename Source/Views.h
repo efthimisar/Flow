@@ -1026,7 +1026,7 @@ public:
         hg.ocx = w * 0.5f;
         hg.orbR = 165.0f * hg.s;
         hg.lr = 118.0f * hg.s; hg.lw = 17.0f * hg.s;
-        hg.lcx = w * 0.172f; hg.rcx = w * 0.86f;
+        hg.lcx = w * 0.172f; hg.rcx = w * (1.0f - 0.172f);   // συμμετρικοί γύρω από τον orb
         return hg;
     }
     bool homeStyle() const { return orbWo == 0; }
@@ -1070,14 +1070,14 @@ public:
         }
         {
             const float load = jlimit (0.0f, 1.0f, cpu);
-            const float R = 9.0f * s, cx0 = w * 0.5f - 22.0f * s, cy0 = 22.0f * s;
+            const float R = 9.0f * s, cx0 = w * 0.5f, cy0 = 22.0f * s;
             g.setColour (Colour (0xff3a3430)); g.fillEllipse (cx0 - R, cy0 - R, 2.0f * R, 2.0f * R);
             if (load > 0.005f)
             {
                 Path pie; pie.addPieSegment (Rectangle<float> (cx0 - R, cy0 - R, 2.0f * R, 2.0f * R), MathConstants<float>::pi * -0.75f, MathConstants<float>::pi * -0.75f + MathConstants<float>::pi * 1.5f * load, 0.0f);
                 g.setColour (load >= 0.85f ? hobby::kRed : dimC); g.fillPath (pie);
             }
-            tipZones.push_back ({ Rectangle<float> (cx0 - R, cy0 - R, 2.0f * R, 2.0f * R), String ("Processor load (CPU): the filled part of the circle") });
+            tipZones.push_back ({ Rectangle<float> (cx0 - R, cy0 - R, 2.0f * R, 2.0f * R), String ("Processor load (CPU)") });
         }
         if (notice.isNotEmpty())
         {
@@ -1723,6 +1723,8 @@ public:
         keysY = labelY + 39.0f;   // 8 px παραπάνω: χώρος για τη λωρίδα του ειδικού block
 
         for (auto& s : spans) s = Span();
+        struct CtlDot { Point<float> p; float r; int n; };
+        std::vector<CtlDot> ctlDots;
         std::vector<Rectangle<float>> blackRects;
         std::vector<Colour> blackCols;
         std::vector<float> seps;
@@ -1760,32 +1762,26 @@ public:
             if (black)
             {
                 blackRects.push_back ({ l, keysY, r - l, 34.0f });
-                Colour c = litKey ? Colours::white : switchKey ? switchOrange.darker (0.25f) : (b >= 0 ? keyDeep (b) : (isFirst ? blockDeep (cb) : freeBlack));
+                const bool ctl = flow::isControlKey (n);
+                if (ctl) ctlDots.push_back ({ { (l + r) * 0.5f, keysY + 17.0f }, jmin ((r - l) * 0.32f, 6.0f), n });
+                Colour c = ctl ? hobby::kScreen.brighter (0.12f) : litKey ? Colours::white : switchKey ? switchOrange.darker (0.25f) : (b >= 0 ? keyDeep (b) : (isFirst ? blockDeep (cb) : freeBlack));
                 blackCols.push_back (c.withMultipliedAlpha (alpha));
             }
             else
             {
                 const Rectangle<float> kr (l, keysY, r - l, 56.0f);
-                const bool tapKey = n == flow::tapKeyNote;   // A0 = Follow, B0 = tap tempo, C1 = Rec Audio: σκούρα πλήκτρα με κύκλο (πράσινος όταν είναι ενεργά, κόκκινος στο Rec Audio)
-                const bool followKey = n == flow::followKeyNote;
-                const bool recKey = n == flow::recAudioKeyNote;
-                Colour c = litKey && ! (followKey || recKey) ? Colours::white : (tapKey || followKey || recKey) ? hobby::kScreen.brighter (0.12f) : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
+                const bool ctlKey = flow::isControlKey (n);   // A0, B0, C1: σκούρα πλήκτρα ελέγχου (η τελεία κάτω)
+                Colour c = ctlKey ? hobby::kScreen.brighter (0.12f) : litKey ? Colours::white : switchKey ? switchOrange : (b >= 0 ? keyLight (b) : (isFirst ? blockLight (cb) : freeWhite));
                 const Colour cc = c.withMultipliedAlpha (alpha);
-                if (b >= 0 && ! litKey && ! switchKey && ! tapKey && ! followKey && ! recKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
+                if (b >= 0 && ! litKey && ! switchKey && ! ctlKey)   // ντεγκραντέ: 100% πάνω, 70% κάτω
                     g.setGradientFill (ColourGradient (cc, 0.0f, kr.getY(), cc.interpolatedWith (hobby::kScreen, 0.3f), 0.0f, kr.getBottom(), false));
                 else
                     g.setColour (cc);
                 g.fillRoundedRectangle (kr, 3.0f);
                 g.setColour (hobby::kScreen);
                 g.drawRoundedRectangle (kr.reduced (0.5f), 3.0f, 1.0f);
-                if (tapKey || followKey || recKey)
-                {
-                    const bool act = tapKey ? engine.tapActiveOut.load() != 0 : followKey ? engine.followOn.load() != 0
-                                   : engine.recorder.getState() == RecorderEngine::State::Recording;
-                    const float rad = jmin (kr.getWidth() * 0.32f, 7.0f);
-                    g.setColour (act ? (recKey ? hobby::kRed : hobby::kOn) : Colours::white);
-                    g.fillEllipse (kr.getCentreX() - rad, kr.getCentreY() - rad, rad * 2.0f, rad * 2.0f);
-                }
+                if (ctlKey && n != flow::silentKeyNote && n != 24)
+                    ctlDots.push_back ({ { kr.getCentreX(), kr.getBottom() - 11.0f }, jmin (kr.getWidth() * 0.32f, 7.0f), n });
                 ++wi;
             }
             prev = b;
@@ -1798,6 +1794,12 @@ public:
             g.fillRoundedRectangle (blackRects[i], 2.0f);
             g.setColour (hobby::kScreen);
             g.drawRoundedRectangle (blackRects[i].reduced (0.5f), 2.0f, 1.0f);
+        }
+        for (auto& cd : ctlDots)   // σβηστές από προεπιλογή, ανάβουν όσο το πλήκτρο είναι πατημένο
+        {
+            const bool held = ((engine.ctlHeld.load() >> (cd.n - flow::lowestNote)) & 1u) != 0;
+            g.setColour (held ? (cd.n == flow::recAudioKeyNote ? hobby::kRed : hobby::kOn) : Colour (0xff4f4a46));
+            g.fillEllipse (cd.p.x - cd.r, cd.p.y - cd.r, cd.r * 2.0f, cd.r * 2.0f);
         }
 
         g.setColour (hobby::kScreen);

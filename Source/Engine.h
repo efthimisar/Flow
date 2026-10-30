@@ -22,8 +22,8 @@ namespace flow
     constexpr int followKeyNote = 21;   // A0: ενεργοποιεί/σβήνει το Follow, δεν παίζει ήχο
     constexpr int silentKeyNote = 22;   // A#0: σιωπηλό (ανάμεσα στα πλήκτρα ελέγχου)
     constexpr int tapKeyNote    = 23;   // B0: tap tempo, δεν παίζει ήχο
-    constexpr int recAudioKeyNote = 24; // C1: Rec Audio (σταματά ή νέο take), δεν παίζει ήχο
-    constexpr int firstPlayNote = 25;   // C#1: το πρώτο πλήκτρο που παίζει ήχο
+    constexpr int recAudioKeyNote = 25; // C#1: Rec Audio (σταματά ή νέο take), δεν παίζει ήχο (το C1 = 24 είναι σιωπηλό)
+    constexpr int firstPlayNote = 26;   // D1: το πρώτο πλήκτρο που παίζει ήχο
     inline bool isControlKey (int n) { return n >= lowestNote && n < firstPlayNote; }
     // καταγραφή βημάτων σε αρχείο (Music/Flow/Flow-log.txt) για να φαίνεται πού σταματά ένα crash
     inline void flowLog (const juce::String& s)
@@ -206,6 +206,7 @@ namespace flow
         std::atomic<float> statMaxCb { 0.0f }, statMaxLock { 0.0f }, statBudget { 0.0f };
         std::atomic<int> midiCount { 0 };       // μετρά τα μηνύματα MIDI που έρχονται (για την ένδειξη στην κεφαλίδα)
         std::atomic<int> tapActiveOut { 0 };
+        std::atomic<uint32_t> ctlHeld { 0 };   // πατημένα πλήκτρα ελέγχου (bit 0 = A0)
 
         // metronome
         std::atomic<bool> metroOn { false };
@@ -1268,6 +1269,11 @@ namespace flow
                     const int pn = msg.getNoteNumber() & 127;
                     if (msg.isNoteOn()) pressBits[(size_t) (pn >> 6)].fetch_or ((uint64_t) 1 << (pn & 63));
                     else                pressBits[(size_t) (pn >> 6)].fetch_and (~((uint64_t) 1 << (pn & 63)));
+                }
+                else if ((msg.isNoteOn() || msg.isNoteOff()) && msg.getNoteNumber() >= lowestNote)   // πλήκτρα ελέγχου: ανάβει η τελεία όσο είναι πατημένα
+                {
+                    const uint32_t bit = 1u << (msg.getNoteNumber() - lowestNote);
+                    if (msg.isNoteOn()) ctlHeld.fetch_or (bit); else ctlHeld.fetch_and (~bit);
                 }
 
                 if (msg.isNoteOn())
