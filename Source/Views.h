@@ -1008,7 +1008,7 @@ public:
     Rectangle<float> orbBottomRect() const   // "✕ motion"
     {
         const auto gm = orbGeom();
-        if (orbWo == 0) return Rectangle<float> (gm.cx - 60.0f, gm.cy + gm.R + 8.0f + 40.0f * homeGeom().s, 120.0f, 16.0f);
+        if (orbWo == 0) return Rectangle<float> (gm.cx - 60.0f, gm.cy + gm.R + 8.0f + 58.0f * homeGeom().s, 120.0f, 16.0f);
         return Rectangle<float> (gm.cx + 60.0f, gm.cy + gm.R + 24.0f, 90.0f, 16.0f);
     }
     Rectangle<float> orbImageClearRect() const
@@ -1210,6 +1210,16 @@ public:
             }
             // ενδείξεις κάτω από τον orb: Rec Audio και Rec motion
             float ty = gmBottom();
+            {   // μπάρα θέσης στον κύκλο των 16 μέτρων (η εγγραφή Rec motion και η αναπαραγωγή κίνησης τρέχουν πάνω της)
+                const double cyc = 64.0;
+                const float ph = (float) (std::fmod (jmax (0.0, engine.beatPosOut.load()), cyc) / cyc);
+                const float bw = 240.0f * s, bx = hg.ocx - bw * 0.5f, by = ty + 2.0f * s, bh = jmax (3.0f, 4.0f * s);
+                g.setColour (Colour (0xff3a3430)); g.fillRoundedRectangle (bx, by, bw, bh, bh * 0.5f);
+                g.setColour (orbRec ? hobby::kCoral : Colour (0xffc9c3ba)); g.fillRoundedRectangle (bx, by, jmax (bh, bw * ph), bh, bh * 0.5f);
+                g.setFont (hobby::makeFont (typeface, 11.0f * s)); g.setColour (dimC);
+                g.drawText (String (jlimit (1, 16, (int) (ph * 16.0f) + 1)) + " / 16", Rectangle<float> (bx - 62.0f * s, by - 6.0f * s, 56.0f * s, 16.0f * s), Justification::centredRight, false);
+                ty += 14.0f * s;
+            }
             g.setFont (hobby::makeFont (typeface, 13.0f * s));
             if (taping || engine.recorder.isZipping() || tapeState == RecorderEngine::State::Error)
             {
