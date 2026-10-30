@@ -3,7 +3,6 @@
 // Το Main δίνει τις λειτουργίες μέσω του Host· εδώ υπάρχει μόνο η εμφάνιση και τα κλικ.
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "HobbyStyle.h"
-#include "QrCode.h"
 #include <functional>
 #include <vector>
 
@@ -54,11 +53,6 @@ public:
         std::function<void()> linkToggle;
         std::function<void()> panicNow, panicAssign, panicRemove;
         std::function<juce::String()> panicCodeText;   // κενό = δεν έχει ανατεθεί
-        std::function<bool()> ipadGet;
-        std::function<void()> ipadToggle;
-        std::function<juce::String()> ipadUrl;
-        std::function<int()> ipadClients;
-        std::function<juce::String()> ipadOtherIps;
         std::function<juce::String()> orbFolderText;
         std::function<void()> chooseOrbFolder;
         std::function<int()> startQGet, lengthQGet, tapMsGet, snapQGet;
@@ -169,7 +163,6 @@ public:
             case RecFolder: paintRecFolder (g); break;
             case Master: paintMaster (g); break;
             case Panic:  paintPanic (g); break;
-            case Ipad:   paintIpad (g); break;
             case OrbImages: paintOrbImages (g); break;
             case LoopRec: paintLoopRec (g); break;
             case Learn:  paintLearn (g); break;
@@ -216,7 +209,7 @@ public:
     }
 
 private:
-    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, Ipad, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs };
+    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs };
     struct Hit { juce::Rectangle<int> r; std::function<void()> fn; };
 
     static juce::Colour dim()  { return juce::Colour (0xff968e86); }
@@ -863,53 +856,6 @@ private:
         note (g, "After Assign, press the pedal or key you want to use for Panic.", getHeight() - 28);
     }
 
-    // ---------- iPad orb ----------
-    void paintIpad (juce::Graphics& g)
-    {
-        using namespace juce;
-        const bool on = host.ipadGet && host.ipadGet();
-        {
-            const Rectangle<int> r (40, 78, 360, 64);
-            g.setColour (hov (r) ? Colour (0xff36322f) : card()); g.fillRoundedRectangle (r.toFloat(), 14.0f);
-            g.setColour (on ? hobby::kOn : lineC()); g.drawRoundedRectangle (r.toFloat().reduced (1.0f), 14.0f, on ? 2.0f : 1.0f);
-            g.setColour (txt()); g.setFont (font (15.0f, true)); g.drawText ("iPad orb (Safari)", r.getX() + 22, r.getY() + 12, 220, 20, Justification::centredLeft, false);
-            g.setColour (dim()); g.setFont (font (11.0f));
-            g.drawText (on ? String (host.ipadClients ? host.ipadClients() : 0) + " connected" : String ("off"), r.getX() + 22, r.getY() + 34, 220, 16, Justification::centredLeft, false);
-            toggleSwitch (g, { (float) r.getRight() - 66.0f, (float) r.getY() + 20.0f, 44.0f, 24.0f }, on);
-            hits.push_back ({ r, [this] { if (host.ipadToggle) host.ipadToggle(); repaint(); } });
-        }
-        if (on)
-        {
-            const String url = host.ipadUrl ? host.ipadUrl() : String();
-            const auto code = qr::encode (url.toStdString());
-            if (code.size > 0)
-            {
-                const int quiet = 3, avail = getHeight() - 170;
-                const int px = jmax (2, avail / (code.size + 2 * quiet));
-                const int side = px * (code.size + 2 * quiet);
-                const int x0 = 40, y0 = 160;
-                g.setColour (Colours::white); g.fillRoundedRectangle ((float) x0, (float) y0, (float) side, (float) side, 10.0f);
-                g.setColour (Colours::black);
-                for (int y = 0; y < code.size; ++y)
-                    for (int x = 0; x < code.size; ++x)
-                        if (code.dark (x, y)) g.fillRect (x0 + (x + quiet) * px, y0 + (y + quiet) * px, px, px);
-                g.setColour (txt()); g.setFont (font (15.0f, true));
-                g.drawText ("Scan with the iPad camera", x0 + side + 28, y0 + 6, 420, 22, Justification::centredLeft, false);
-                g.setColour (dim()); g.setFont (font (12.0f));
-                g.drawFittedText (url, x0 + side + 28, y0 + 34, getWidth() - (x0 + side + 28) - 40, 40, Justification::topLeft, 2);
-                const auto others = host.ipadOtherIps ? host.ipadOtherIps() : juce::String();
-                if (others.isNotEmpty())
-                {
-                    g.setColour (dim()); g.setFont (font (11.0f));
-                    g.drawFittedText ("Other addresses of this Mac: " + others, x0 + side + 28, y0 + 160, getWidth() - (x0 + side + 28) - 40, 40, Justification::topLeft, 2);
-                }
-                g.setColour (dim()); g.setFont (font (12.0f));
-                g.drawFittedText ("Same Wi-Fi as the Mac. In Safari, tap \"Tap to start\" for full screen. macOS may ask once to allow incoming connections.",
-                                  x0 + side + 28, y0 + 84, getWidth() - (x0 + side + 28) - 40, 60, Justification::topLeft, 4);
-            }
-        }
-        else note (g, "Turn it on to get a QR code for the iPad.", getHeight() - 28);
-    }
 
     // ---------- orb images ----------
     void paintOrbImages (juce::Graphics& g)
