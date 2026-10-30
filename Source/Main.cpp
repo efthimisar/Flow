@@ -1535,10 +1535,9 @@ private:
     void orbAutoPress (int c)
     {
         if (selected < 0 || selected >= flow::numBlocks) return;
+        if (orbAutoPat[(size_t) c] >= 0) { orbAutoStop (c); syncOrbAuto(); setMessage (gr ("Random motion: off")); return; }   // δεύτερο πάτημα = σβήνει
         auto& rnd = Random::getSystemRandom();
-        int pat = rnd.nextInt (orbPatterns);
-        if (pat == orbAutoPat[(size_t) c]) pat = (pat + 1 + rnd.nextInt (orbPatterns - 1)) % orbPatterns;
-        orbAutoPat[(size_t) c] = pat;
+        orbAutoPat[(size_t) c] = rnd.nextInt (orbPatterns);
         orbAutoT0[(size_t) c] = Time::getMillisecondCounterHiRes() * 0.001;
         for (auto& v : orbAutoPh[(size_t) c]) v = rnd.nextFloat() * MathConstants<float>::twoPi;
         for (auto& t : orbAutoTg[(size_t) c]) t = { rnd.nextFloat() * 1.4f - 0.7f, rnd.nextFloat() * 1.4f - 0.7f };
@@ -1551,7 +1550,7 @@ private:
             if (l.s.empty()) { l.s.assign ((size_t) orbN, {}); l.ok.assign ((size_t) orbN, 0); }
             l.recording = true;
         }
-        setMessage (gr ("Random motion: touch the circle to stop"));
+        setMessage (gr ("Random motion: press the ring again to stop"));
     }
 
     Point<float> orbAutoGoal (int c) const
@@ -3931,7 +3930,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.57.6"; }
+    const String getApplicationVersion() override { return "0.57.7"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
