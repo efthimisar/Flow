@@ -804,7 +804,7 @@ private:
         {
             // Αν υπάρχει δεύτερη οθόνη (Sidecar / iPad), ανοίγει centered εκεί
             const auto& displays = Desktop::getInstance().getDisplays();
-            const Desktop::Displays::Display* secondary = nullptr;
+            const Displays::Display* secondary = nullptr;
             for (int i = 0; i < displays.displays.size(); ++i)
             {
                 const auto& d = displays.displays.getReference (i);
