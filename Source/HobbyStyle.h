@@ -95,8 +95,8 @@ namespace hobby
             const float lm = active ? juce::jmax (lim[k0], lim[k1]) : 2.0f;   // πιο χαλαρό όριο της ομάδας
             const bool limited = active && lm < 0.999f;
             // κανένας δακτύλιος: μόνο δύο λεπτές παύλες ανά ομάδα, με σβηστή ουρά πίσω τους· κρεμ όταν η ζώνη περνά το όριο
-            const float dl = 0.008f, tailLen = 0.13f;
-            const int nt = 14;
+            const float dl = 0.008f, tailLen = 0.40f;
+            const int nt = 36;
             for (int j = 0; j < 2; ++j)
             {
                 const int k = ring * 2 + j;
@@ -104,7 +104,7 @@ namespace hobby
                 const juce::Colour c = (limited && v > lm) ? kSmartOver : smartDashColour (k);
                 for (int i = 0; i < nt; ++i)
                 {
-                    const float al = 0.4f * std::pow (1.0f - (float) (i + 1) / (float) nt, 2.2f) * dim;
+                    const float al = 0.5f * std::pow (1.0f - (float) (i + 1) / (float) nt, 1.8f) * dim;
                     arc (juce::jmax (0.0f, v - tailLen * (float) (i + 1) / (float) nt), juce::jmax (0.0f, v - tailLen * (float) i / (float) nt), c.withAlpha (al));
                 }
                 arc (juce::jmax (0.0f, v - dl), juce::jmax (v, dl), c);
