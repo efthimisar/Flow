@@ -112,20 +112,21 @@ namespace hobby
             if (limited)
             {
                 const float a = start + full * lm;
-                const float dx = std::sin (a), dy = -std::cos (a);
+                const float dx = std::sin (a), dy = -std::cos (a), dr = juce::jmax (1.8f, outerEdge * 0.0203f);
                 g.setColour (tickC);
-                g.drawLine (cx + dx * (r - w * 0.5f - 1.5f), cy + dy * (r - w * 0.5f - 1.5f), cx + dx * (r + w * 0.5f + 1.5f), cy + dy * (r + w * 0.5f + 1.5f), juce::jmax (1.3f, w * 0.12f));
+                g.fillEllipse (cx + dx * r - dr, cy + dy * r - dr, dr * 2.0f, dr * 2.0f);   // το όριο: τελεία στο μέσο της λωρίδας
             }
             r -= step;
         }
     }
 
-    // Πλάτος stereo: 4 ομόκεντροι κύκλοι (εξωτερικός = rmax) που ανάβουν από μέσα προς τα έξω όσο ανοίγει το πλάτος. Οι ίδιοι κύκλοι
-    // είναι τα όρια των 3 ομάδων παυλών (drawSmartLanes). Γκρι με τονική διαβάθμιση (σκούρος μέσα, φωτεινός έξω), λευκοί όταν περνά το όριο,
-    // παχύτερος κύκλος = όριο. Όσοι δεν έχουν ανάψει δεν φαίνονται. lev[4] (προαιρετικό) = αποτύπωμα: σβήνουν σταδιακά.
+    // Πλάτος stereo: 6 μισοί δακτύλιοι στη δεξιά πλευρά (κορυφή → κάτω), ομόκεντροι· οι 4 εξωτερικοί (58..118) είναι τα όρια των 3 ομάδων παυλών.
+    // Ανάβουν από μέσα προς τα έξω με ομαλό άναμμα. Η κορυφή τους έχει διαφορετικό μήκος (ο εξωτερικός ξεκινά στο 12:00, κάθε επόμενος 12° πιο κάτω).
+    // Γκρι με τονική διαβάθμιση (σκούρος μέσα, φωτεινός έξω), λευκοί όταν περνά το όριο, παχύτερος = όριο. lev[6] (προαιρετικό) = αποτύπωμα.
     inline void drawSmartWidth (juce::Graphics& g, float cx, float cy, float rmax, float /*unused*/, float unit, float width, float lim, bool active, bool on,
                                 const float* lev = nullptr)
     {
+        constexpr int n = 6;
         const float wv = juce::jlimit (0.0f, 1.0f, width);
         const bool over = active && wv > lim;
         const juce::Colour offC (47, 44, 43);
@@ -134,17 +135,21 @@ namespace hobby
         if (active && lim < 0.999f)
         {
             float best = 9.0f;
-            for (int j = 0; j < 4; ++j) { const float d = std::abs ((float) (j + 1) / 5.0f - lim); if (d < best) { best = d; limIdx = j; } }
+            for (int j = 0; j < n; ++j) { const float d = std::abs ((float) (j + 1) / (float) n - lim); if (d < best) { best = d; limIdx = j; } }
         }
         (void) unit;
-        for (int j = 0; j < 4; ++j)
+        static const float rad[n] { 18.0f, 38.0f, 58.0f, 78.0f, 98.0f, 118.0f };
+        for (int j = 0; j < n; ++j)
         {
-            const float ri = rmax * (118.0f - 20.0f * (float) (3 - j)) / 118.0f;   // 58, 78, 98, 118
-            const float lv = ! on ? 1.0f : lev != nullptr ? juce::jlimit (0.0f, 1.0f, lev[j]) : (wv >= (float) (j + 1) / 5.0f ? 1.0f : 0.0f);
-            const int gr = 116 + j * 28;
+            const float ri = rmax * rad[j] / 118.0f;
+            const float sm = juce::jlimit (0.0f, 1.0f, (wv - (float) j / (float) n) * (float) n);
+            const float lv = ! on ? 1.0f : lev != nullptr ? juce::jlimit (0.0f, 1.0f, lev[j]) : sm;
+            const int gr = 88 + j * 112 / (n - 1);
             const juce::Colour tgt = ! on ? juce::Colour (74, 70, 66) : over ? juce::Colour (250, 250, 250) : juce::Colour ((juce::uint8) gr, (juce::uint8) (gr - 2), (juce::uint8) (gr - 4));
+            juce::Path p;
+            p.addCentredArc (cx, cy, ri, ri, 0.0f, juce::degreesToRadians (12.0f * (float) (n - 1 - j)), juce::MathConstants<float>::pi, true);
             g.setColour (offC.interpolatedWith (tgt, lv));
-            g.drawEllipse (cx - ri, cy - ri, ri * 2.0f, ri * 2.0f, j == limIdx ? thick : thin);
+            g.strokePath (p, juce::PathStrokeType (j == limIdx ? thick : thin));
         }
     }
 

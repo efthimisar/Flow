@@ -1295,7 +1295,7 @@ public:
 
     float gmBottom() const { const auto gm = orbGeom(); return gm.cy + gm.R + 8.0f * homeGeom().s; }
 
-    float smartLev[4] { 0, 0, 0, 0 }; double smartLevT = 0.0;
+    float smartLev[6] { 0, 0, 0, 0, 0, 0 }; double smartLevT = 0.0;
     void paintSmartCircle (Graphics& g, const HomeGeom& hg, bool valid)
     {
         const float s = hg.s, cx = hg.rcx, cy = hg.cy, r = hg.lr, lw = hg.lw;
@@ -1325,10 +1325,10 @@ public:
                 // αποτύπωμα: ο κύκλος ανάβει αμέσως, σβήνει σταδιακά (~0.2 s)
                 const double nowMs = Time::getMillisecondCounterHiRes();
                 const float dt = jlimit (0.0f, 0.25f, (float) ((nowMs - smartLevT) * 0.001)); smartLevT = nowMs;
-                for (int j = 0; j < 4; ++j)
+                for (int j = 0; j < 6; ++j)
                 {
-                    if (width >= (float) (j + 1) / 5.0f) smartLev[j] = 1.0f;
-                    else smartLev[j] *= std::exp (-dt / 0.085f);
+                    const float sm = jlimit (0.0f, 1.0f, (width - (float) j / 6.0f) * 6.0f);
+                    smartLev[j] = jmax (sm, smartLev[j] * std::exp (-dt / 0.085f));
                 }
                 hobby::drawSmartWidth (g, cx, cy, r + lw * 0.5f, 0.0f, 6.0f * s, width, lim[6], active, on, smartLev);
             }
