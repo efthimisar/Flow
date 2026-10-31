@@ -1370,9 +1370,9 @@ public:
         }
 
         // ο orb: δική σου εικόνα (σώζεται με το set), αλλιώς ουδέτερη κουκκιδωτή επιφάνεια
-        if (home)
+        if (orbWo == 0)   // και στην πλήρη οθόνη του Orb: ο δίσκος (εικόνα + κουκκίδες) ζωγραφίζεται μία φορά σε cache, όχι σε κάθε καρέ της κίνησης
         {
-            // στην κύρια οθόνη ο δίσκος φτιάχνεται μία φορά σε εικόνα (cache) και μετά απλώς αντιγράφεται: χωρίς ανακλίμακα εικόνας σε κάθε καρέ
+            // ο δίσκος φτιάχνεται μία φορά σε εικόνα (cache) και μετά απλώς αντιγράφεται: χωρίς ανακλίμακα εικόνας σε κάθε καρέ
             const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
             const int side = jmax (8, roundToInt (2.0f * R * scale));
             const void* key = orbImage.isValid() ? (const void*) orbImage.getPixelData().get() : nullptr;
