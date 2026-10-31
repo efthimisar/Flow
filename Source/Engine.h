@@ -134,7 +134,7 @@ namespace flow
                 transpose[b] = 0;
                 volPos[b] = 1.0f; gainOut[b] = 1.0f;
                 volMap[b] = 0;
-                followBlock[b] = 1; followPrevHold[b] = 0;
+                followBlock[b] = 1;
                 smartType[b] = 0; smartWidth[b] = 0.0f; smartNeedWidth[b] = 1.0f;
                 for (int k = 0; k < smartBands; ++k) { smartBand[b][(size_t) k] = 0.0f; smartNeed[b][(size_t) k] = 0.0f; }
                 smartResetApp ((int) b);
@@ -178,34 +178,15 @@ namespace flow
         std::atomic<int> followHomeRoot { 9 }, followHomeType { 1 }, followHomeSet { 0 };   // τελευταία συγχορδία με σβηστό Follow (τονικότητα πηγής)           // κλίμακα-στόχος (από τη συγχορδία)
         std::array<std::atomic<int>, numBlocks> followBlock;             // 1 = το block ακολουθεί
         // Follow on/off (πλήκτρο B0 ή οθόνη): όταν ανάβει, η τελευταία συγχορδία που κράτησες με σβηστό Follow γίνεται η τονικότητα πηγής
-        std::array<std::atomic<int>, numBlocks> followPrevHold;          // κράτημα (Hold) κάθε block πριν ανάψει το Follow
         void toggleFollow() { setFollow (followOn.load() != 0 ? 0 : 1); }
-        // Με ανοιχτό Follow το κράτημα σβήνει σε όλα τα block (θα κρατούσε νότες στην παλιά κλίμακα) και επανέρχεται όταν κλείσει
+        // Το κράτημα (Hold) μένει ενεργό: οι κρατημένες νότες μεταφέρονται στη νέα κλίμακα όταν αλλάζει η συγχορδία (βλ. followRetune)
         void setFollow (int nowOn)
         {
             if (nowOn == (followOn.load() != 0 ? 1 : 0)) return;
-            if (nowOn != 0)
-            {
-                if (followHomeSet.load() != 0)
-                    followSetScale (followHomeRoot.load(), followHomeType.load());
-                for (int b = 0; b < numBlocks; ++b)
-                {
-                    followPrevHold[(size_t) b] = holdMode[(size_t) b].load();
-                    holdMode[(size_t) b] = 0;
-                }
-                ++changeCount;
-            }
-            else
-            {
-                for (int b = 0; b < numBlocks; ++b)
-                {
-                    if (holdMode[(size_t) b].load() == 0 && followPrevHold[(size_t) b].load() > 0)
-                        holdMode[(size_t) b] = followPrevHold[(size_t) b].load();
-                    followPrevHold[(size_t) b] = 0;
-                }
-                ++changeCount;
-            }
+            if (nowOn != 0 && followHomeSet.load() != 0)
+                followSetScale (followHomeRoot.load(), followHomeType.load());
             followOn = nowOn;
+            ++changeCount;
         }
         // μόνο Major (0) και Minor (1): οι παλιές κλίμακες γίνονται η πιο κοντινή (Dorian, Phrygian → Minor, Mixolydian, Lydian → Major)
         static int followTypeNorm (int t) { return (t == 1 || t == 2 || t == 4) ? 1 : 0; }
@@ -880,6 +861,7 @@ namespace flow
             std::vector<PluginPtr> fx;
             juce::AudioBuffer<float> scratch, mfxScratch;
             juce::MidiBuffer out;
+            int followKey = -1;   // κατάσταση Follow που ισχύει για τις νότες που ηχούν (αλλάζει → οι κρατημένες νότες ξαναπαίζονται)
             std::bitset<128> pressed, latched, sounding, loopSounding, recOpen;
             std::bitset<128> lpGroup, lpSingle;   // LP: νότες που μαζεύονται στο παράθυρο συγχορδίας / μονές νότες που παίζουν όσο πατιούνται
             bool lpOpen = false;
@@ -1841,6 +1823,25 @@ namespace flow
                     emitNote (B, b, pos, false, n, 0);
         }
 
+        // Follow + Hold: όταν αλλάζει η κλίμακα-στόχος (ή ανάβει/σβήνει το Follow), οι κρατημένες νότες χωρίς arpeggiator ξαναπαίζονται στη νέα κλίμακα
+        void followRetune (Block& B, int b, int hold, int arp)
+        {
+            const bool fol = followOn.load() != 0 && followBlock[(size_t) b].load() != 0 && ! (B.loopState == loopPlay && B.nLayers > 0);
+            const int key = fol ? (followTRoot.load() | (followTType.load() << 4) | (followRoot.load() << 8) | (followType.load() << 12)) : -2;
+            if (key == B.followKey) return;
+            B.followKey = key;
+            if (hold == 0 || arp != 0) return;      // με arpeggiator κάθε βήμα περνά ήδη από τη μεταφορά
+            for (int n = 0; n < 128; ++n)
+            {
+                if (! B.sounding[(size_t) n] || ! B.latched[(size_t) n]) continue;
+                const int want = juce::jlimit (0, 127, followMapNote (b, n) + transpose[(size_t) b].load());
+                if (want == B.outNote[(size_t) n]) continue;
+                const int vel = B.vel[(size_t) n] > 0 ? (int) B.vel[(size_t) n] : 100;
+                emitNote (B, b, 0, false, n, 0);
+                emitNote (B, b, 0, true, n, vel);
+            }
+        }
+
         // brings the sounding notes in line with what should sound now
         static std::bitset<128> targetSet (const Block& B, int hold)
         {
@@ -2620,6 +2621,7 @@ namespace flow
 
             B.prevHold = hold;
             B.prevArp = arp;
+            followRetune (B, b, hold, arp);
             if (changed) updateOutput (B, b, 0, hold, arp);
 
             // ---- loop: εντολές (κουμπιά ή πετάλια)

@@ -62,8 +62,9 @@ namespace hobby
         return c[juce::jlimit (0, 5, k)];
     }
 
-    // 3 δακτύλιοι (270°, ανοιχτοί κάτω), ο καθένας χωρισμένος σε δύο μισά: αριστερά η χαμηλότερη ζώνη του ζεύγους, δεξιά η υψηλότερη.
-    // Και τα δύο μισά ανεβαίνουν από τη βάση προς την κορυφή. Ανοιχτό γκρι γέμισμα, έγχρωμη παύλα στο τέλος της στάθμης, λευκή γραμμή = όριο.
+    // Smart master: 3 δακτύλιοι (μπάσο έξω, μεσαία, πρίμα μέσα), 270° ανοιχτοί κάτω. Γεμίζουν από αριστερά προς τα δεξιά (φορά ρολογιού).
+    // Κάθε δακτύλιος δείχνει μια γενική εικόνα δύο ζωνών: γέμισμα ως τη μεγαλύτερη στάθμη, δύο λεπτές έγχρωμες παύλες (μία ανά ζώνη), ένα λευκό όριο.
+    // Το γέμισμα είναι γκρι με διαβάθμιση (σκούρο χαμηλά, φωτεινό ψηλά) και διαφορά τόνου από τον εξωτερικό προς τον εσωτερικό δακτύλιο.
     // outerEdge = εξωτερική άκρη του πρώτου δακτυλίου, total = συνολικό πάχος προς τα μέσα. vals/lim = 0..1 ανά ζώνη (lim μόνο όταν active).
     inline juce::Colour smartDashColour (int k)   // μπορντώ, πορτοκάλι, κίτρινο: χαμηλή ζώνη φωτεινότερη, υψηλή πιο σκούρα
     {
@@ -73,43 +74,46 @@ namespace hobby
     inline void drawSmartLanes (juce::Graphics& g, float cx, float cy, float outerEdge, float total, const float* vals, const float* lim,
                                 bool active, juce::Colour trackC, juce::Colour tickC)
     {
-        const float w = total / 3.6f, gap = 0.3f * w;
-        const float half = juce::degreesToRadians (133.5f), edge = juce::degreesToRadians (135.0f), top = juce::degreesToRadians (1.5f);
-        const juce::Colour fillC = active ? juce::Colour (205, 202, 198) : juce::Colour (118, 115, 112);
+        const float w = total / 3.5f, gap = 0.25f * w;
+        const float full = juce::degreesToRadians (270.0f), start = juce::degreesToRadians (-135.0f);
+        static const int baseGrey[3][3] { { 244, 241, 236 }, { 160, 157, 152 }, { 88, 85, 82 } };
+        const float dim = active ? 1.0f : 0.55f;
         float r = outerEdge - w * 0.5f;
         for (int ring = 0; ring < 3; ++ring)
         {
-            for (int side = 0; side < 2; ++side)          // 0 = αριστερά (χαμηλότερη ζώνη), 1 = δεξιά (υψηλότερη)
+            auto arc = [&] (float f0, float f1, juce::Colour c)
             {
-                const int k = ring * 2 + side;
-                const float dir = side == 0 ? -1.0f : 1.0f;
-                auto angAt = [&] (float f) { return dir * (edge - f * half); };   // f = 0 βάση, 1 κορυφή
-                auto arc = [&] (float f0, float f1, juce::Colour c)
-                {
-                    if (f1 <= f0 + 0.0005f) return;
-                    const float a0 = angAt (f0), a1 = angAt (f1);
-                    juce::Path p; p.addCentredArc (cx, cy, r, r, 0.0f, juce::jmin (a0, a1), juce::jmax (a0, a1), true);
-                    g.setColour (c); g.strokePath (p, juce::PathStrokeType (w));
-                };
-                (void) top;
-                arc (0.0f, 1.0f, trackC);
-                const float v = juce::jlimit (0.0f, 1.0f, vals[k]);
-                const bool lm = active && lim[k] < 0.999f;
-                const float base = lm ? juce::jmin (v, lim[k]) : v;
-                arc (0.0f, base, fillC);
-                if (lm && v > lim[k]) arc (lim[k], v, kSmartOver);
-                // παύλα στο τέλος της στάθμης
-                {
-                    const float fa = juce::jmax (v, 0.02f), dl = juce::jmin (0.5f * w / (r * half), 0.2f);
-                    arc (juce::jmax (0.0f, fa - dl), fa, smartDashColour (k));
-                }
-                if (lm)
-                {
-                    const float a = angAt (lim[k]);
-                    const float dx = std::sin (a), dy = -std::cos (a);
-                    g.setColour (tickC);
-                    g.drawLine (cx + dx * (r - w * 0.5f - 1.5f), cy + dy * (r - w * 0.5f - 1.5f), cx + dx * (r + w * 0.5f + 1.5f), cy + dy * (r + w * 0.5f + 1.5f), juce::jmax (1.3f, w * 0.14f));
-                }
+                if (f1 <= f0 + 0.0003f) return;
+                juce::Path p; p.addCentredArc (cx, cy, r, r, 0.0f, start + full * f0, start + full * f1, true);
+                g.setColour (c); g.strokePath (p, juce::PathStrokeType (w));
+            };
+            arc (0.0f, 1.0f, trackC);
+            const int k0 = ring * 2, k1 = ring * 2 + 1;
+            const float v0 = juce::jlimit (0.0f, 1.0f, vals[k0]), v1 = juce::jlimit (0.0f, 1.0f, vals[k1]);
+            const float top = juce::jmax (v0, v1);
+            const float lm = active ? juce::jmax (lim[k0], lim[k1]) : 2.0f;   // πιο χαλαρό όριο της ομάδας
+            const bool limited = active && lm < 0.999f;
+            const float base = limited ? juce::jmin (top, lm) : top;
+            // γέμισμα με διαβάθμιση: σκούρο στην αρχή, φωτεινό ψηλά
+            const int nseg = juce::jmax (1, (int) std::ceil (base * 48.0f));
+            for (int i = 0; i < nseg; ++i)
+            {
+                const float f0 = base * (float) i / (float) nseg, f1 = juce::jmin (base, base * (float) (i + 1) / (float) nseg + 0.004f);
+                const float m = 0.3f + 0.7f * (f0 + f1) * 0.5f;
+                auto ch = [&] (int c) { return (juce::uint8) juce::jlimit (0, 255, juce::jmax (76, (int) ((float) baseGrey[ring][c] * m * dim))); };
+                arc (f0, f1, juce::Colour (ch (0), ch (1), ch (2)));
+            }
+            if (limited && top > lm) arc (lm, top, kSmartOver);
+            // δύο λεπτές παύλες, μία ανά ζώνη
+            const float dl = 0.012f;
+            arc (juce::jmax (0.0f, v0 - dl), juce::jmax (v0, dl), smartDashColour (k0));
+            arc (juce::jmax (0.0f, v1 - dl), juce::jmax (v1, dl), smartDashColour (k1));
+            if (limited)
+            {
+                const float a = start + full * lm;
+                const float dx = std::sin (a), dy = -std::cos (a);
+                g.setColour (tickC);
+                g.drawLine (cx + dx * (r - w * 0.5f - 1.5f), cy + dy * (r - w * 0.5f - 1.5f), cx + dx * (r + w * 0.5f + 1.5f), cy + dy * (r + w * 0.5f + 1.5f), juce::jmax (1.3f, w * 0.12f));
             }
             r -= w + gap;
         }

@@ -1200,7 +1200,7 @@ public:
             }
             if (valid && (playing || recLoop))   // playhead
             {
-                const double headBeats = playing ? axisBeats : axisBeats;
+                const double headBeats = (playing && L > 0.0) ? jmin (axisBeats, jmax (0.25, L)) : axisBeats;   // η λούπα ξαναρχίζει στο μήκος της, όχι στο τέλος του άξονα
                 const float a = MathConstants<float>::twoPi * (float) (std::fmod (jmax (0.0, now), headBeats) / axisBeats);
                 const float dx = std::sin (a), dy = -std::cos (a);
                 g.setColour (Colours::white);
