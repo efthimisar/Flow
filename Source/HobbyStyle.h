@@ -74,11 +74,13 @@ namespace hobby
     inline void drawSmartLanes (juce::Graphics& g, float cx, float cy, float outerEdge, float total, const float* vals, const float* lim,
                                 bool active, juce::Colour trackC, juce::Colour tickC)
     {
-        const float w = total / 3.5f, gap = 0.25f * w;
+        (void) total;
+        // οι παύλες κάθονται στα κενά ανάμεσα στους κύκλους του drawSmartWidth: ίδιο βήμα (20/118 της εξωτερικής ακτίνας)
+        const float step = outerEdge * (20.0f / 118.0f), w = step * 0.65f;
         const float full = juce::degreesToRadians (270.0f), start = juce::degreesToRadians (-135.0f);
         static const int baseGrey[3][3] { { 244, 241, 236 }, { 160, 157, 152 }, { 88, 85, 82 } };
         const float dim = active ? 1.0f : 0.55f;
-        float r = outerEdge - w * 0.5f;
+        float r = outerEdge - step * 0.5f;
         for (int ring = 0; ring < 3; ++ring)
         {
             auto arc = [&] (float f0, float f1, juce::Colour c)
@@ -114,31 +116,35 @@ namespace hobby
                 g.setColour (tickC);
                 g.drawLine (cx + dx * (r - w * 0.5f - 1.5f), cy + dy * (r - w * 0.5f - 1.5f), cx + dx * (r + w * 0.5f + 1.5f), cy + dy * (r + w * 0.5f + 1.5f), juce::jmax (1.3f, w * 0.12f));
             }
-            r -= w + gap;
+            r -= step;
         }
     }
 
-    // Πλάτος stereo: γεμάτος κύκλος που μεγαλώνει με το πλάτος (mono = μικρή τελεία) και αφήνει γύρω του ομόκεντρα κύματα που σβήνουν.
-    // Λεπτός κύκλος = όριο (όταν active). Γκρι· λευκός όταν περνά το όριο. rmax = ακτίνα στο 100% πλάτος, unit = μέγεθος των κυμάτων.
-    inline void drawSmartWidth (juce::Graphics& g, float cx, float cy, float rmax, float /*unused*/, float unit, float width, float lim, bool active, bool on)
+    // Πλάτος stereo: 4 ομόκεντροι κύκλοι (εξωτερικός = rmax) που ανάβουν από μέσα προς τα έξω όσο ανοίγει το πλάτος. Οι ίδιοι κύκλοι
+    // είναι τα όρια των 3 ομάδων παυλών (drawSmartLanes). Γκρι με τονική διαβάθμιση (σκούρος μέσα, φωτεινός έξω), λευκοί όταν περνά το όριο,
+    // παχύτερος κύκλος = όριο. Όσοι δεν έχουν ανάψει δεν φαίνονται. lev[4] (προαιρετικό) = αποτύπωμα: σβήνουν σταδιακά.
+    inline void drawSmartWidth (juce::Graphics& g, float cx, float cy, float rmax, float /*unused*/, float unit, float width, float lim, bool active, bool on,
+                                const float* lev = nullptr)
     {
         const float wv = juce::jlimit (0.0f, 1.0f, width);
         const bool over = active && wv > lim;
-        const juce::Colour c = ! on ? juce::Colour (74, 70, 66) : over ? juce::Colour (250, 250, 250) : juce::Colour (150, 148, 146);
-        const float rad = juce::jmax (unit * 0.4f, wv * rmax);
-        g.setColour (c);
-        g.fillEllipse (cx - rad, cy - rad, rad * 2.0f, rad * 2.0f);
-        for (int i = 1; i <= 3; ++i)
-        {
-            const float ri = rad + (float) i * unit * 1.15f;
-            g.setColour (c.withAlpha (0.5f / std::pow ((float) i, 1.2f)));
-            g.drawEllipse (cx - ri, cy - ri, ri * 2.0f, ri * 2.0f, juce::jmax (1.0f, unit * 0.23f));
-        }
+        const juce::Colour offC (47, 44, 43);
+        const float thin = juce::jmax (1.0f, rmax * 0.0102f), thick = juce::jmax (1.5f, rmax * 0.0203f);
+        int limIdx = -1;
         if (active && lim < 0.999f)
         {
-            const float lr = lim * rmax;
-            g.setColour (juce::Colour (200, 198, 194));
-            g.drawEllipse (cx - lr, cy - lr, lr * 2.0f, lr * 2.0f, juce::jmax (1.0f, unit * 0.17f));
+            float best = 9.0f;
+            for (int j = 0; j < 4; ++j) { const float d = std::abs ((float) (j + 1) / 5.0f - lim); if (d < best) { best = d; limIdx = j; } }
+        }
+        (void) unit;
+        for (int j = 0; j < 4; ++j)
+        {
+            const float ri = rmax * (118.0f - 20.0f * (float) (3 - j)) / 118.0f;   // 58, 78, 98, 118
+            const float lv = ! on ? 1.0f : lev != nullptr ? juce::jlimit (0.0f, 1.0f, lev[j]) : (wv >= (float) (j + 1) / 5.0f ? 1.0f : 0.0f);
+            const int gr = 116 + j * 28;
+            const juce::Colour tgt = ! on ? juce::Colour (74, 70, 66) : over ? juce::Colour (250, 250, 250) : juce::Colour ((juce::uint8) gr, (juce::uint8) (gr - 2), (juce::uint8) (gr - 4));
+            g.setColour (offC.interpolatedWith (tgt, lv));
+            g.drawEllipse (cx - ri, cy - ri, ri * 2.0f, ri * 2.0f, j == limIdx ? thick : thin);
         }
     }
 

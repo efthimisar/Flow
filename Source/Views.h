@@ -1295,6 +1295,7 @@ public:
 
     float gmBottom() const { const auto gm = orbGeom(); return gm.cy + gm.R + 8.0f * homeGeom().s; }
 
+    float smartLev[4] { 0, 0, 0, 0 }; double smartLevT = 0.0;
     void paintSmartCircle (Graphics& g, const HomeGeom& hg, bool valid)
     {
         const float s = hg.s, cx = hg.rcx, cy = hg.cy, r = hg.lr, lw = hg.lw;
@@ -1320,14 +1321,24 @@ public:
         // κέντρο: κύκλος του πλάτους stereo. Πάτημα = Off ↔ On (Auto)
         {
             const float sr = 26.0f * s;
-            hobby::drawSmartWidth (g, cx, cy, 32.0f * s, 0.0f, 6.0f * s, width, lim[6], active, on);
+            {
+                // αποτύπωμα: ο κύκλος ανάβει αμέσως, σβήνει σταδιακά (~0.2 s)
+                const double nowMs = Time::getMillisecondCounterHiRes();
+                const float dt = jlimit (0.0f, 0.25f, (float) ((nowMs - smartLevT) * 0.001)); smartLevT = nowMs;
+                for (int j = 0; j < 4; ++j)
+                {
+                    if (width >= (float) (j + 1) / 5.0f) smartLev[j] = 1.0f;
+                    else smartLev[j] *= std::exp (-dt / 0.085f);
+                }
+                hobby::drawSmartWidth (g, cx, cy, r + lw * 0.5f, 0.0f, 6.0f * s, width, lim[6], active, on, smartLev);
+            }
             if (on)
             {
                 g.setColour (dimC);
                 g.setFont (hobby::makeFont (typeface, 10.0f * s).boldened());
-                g.drawText ("Auto", Rectangle<float> (cx - 30.0f * s, cy + 64.0f * s, 60.0f * s, 14.0f * s), Justification::centred, false);
+                g.drawText ("Auto", Rectangle<float> (cx - 30.0f * s, cy + r + lw * 0.5f + 6.0f * s, 60.0f * s, 14.0f * s), Justification::centred, false);
             }
-            const Rectangle<float> hit (cx - 56.0f * s, cy - 56.0f * s, 112.0f * s, 112.0f * s);
+            const float hr = r + lw * 0.5f; const Rectangle<float> hit (cx - hr, cy - hr, hr * 2.0f, hr * 2.0f);
             hot.push_back ({ hit, [this] { if (onSmartCycle) onSmartCycle(); } });
             tipZones.push_back ({ hit, String (on ? "Smart master: On (press = Off)" : "Smart master: Off (press = On)") });
         }

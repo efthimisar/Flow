@@ -1017,7 +1017,7 @@ private:
             const int b = engine.blockForNote (n);
             if (b < 0) continue;
             if (engine.blockOff[(size_t) b].load() != 0) continue;
-            buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? 3 : 1);
+            buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? (blockHue (b) == 3 ? 2 : 3) : 1);   // κίτρινο (3) στη φωτεινότητα 3 φαίνεται λευκό στο MK2
         }
 
         // ό,τι κρατιέται με Hold (και οι νότες συγχορδίας του) είναι λευκό και στο hardware, ακόμα κι αν είναι έξω από τη ζώνη
@@ -4092,7 +4092,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.64.0"; }
+    const String getApplicationVersion() override { return "0.65.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
