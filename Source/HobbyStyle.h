@@ -51,7 +51,8 @@ namespace hobby
 // Σύμβολα που ζωγραφίζονται με διανύσματα. Πρόσθεσε νέα στο τέλος του enum και στο switch του drawSymbol.
 enum class Symbol { PadRecord, PadOverdub, Play, Stop, Cancel, Undo,
                     StartQ, LengthQ, Snap, Loop, Sync, Tempo, Thru,
-                    Block, Learn, Vst, Window, Hold, Arp, Folder, Fx, Chord, Mute, Tape, Orb, Speaker, Sliders, Rings, Follow, Menu };
+                    Block, Learn, Vst, Window, Hold, Arp, Folder, Fx, Chord, Mute, Tape, Orb, Speaker, Sliders, Rings, Follow, Menu,
+                    Dice, Camera };
 
 void drawSymbol (juce::Graphics&, Symbol, juce::Point<float> centre, float size, juce::Colour);
 
@@ -74,6 +75,37 @@ public:
         r.setPosition (area.getCentreX() - r.getWidth() / 2, area.getBottom() - r.getHeight() - 14);
         return r.constrainedWithin (parentArea);
     }
+};
+
+// Κουμπί Sound Palette: ένα ορθογώνιο με δύο μισά. Αριστερά το ζάρι (Palette), δεξιά η κάμερα (κράτα τον ήχο του επιλεγμένου block).
+// Η κάμερα ανάβει πράσινη για λίγο όταν αποθηκευτεί ήχος.
+class PaletteTile : public juce::Component, public juce::TooltipClient, private juce::Timer
+{
+public:
+    std::function<void()> onDice, onCamera;
+    juce::String diceTip, cameraTip;
+    void setDiceOn (bool b)   { if (b != diceOn) { diceOn = b; repaint(); } }
+    void setCameraOn (bool b) { if (b != camOn) { camOn = b; repaint(); } }
+    void flashCamera()        { flash = true; repaint(); startTimer (400); }
+    juce::String getTooltip() override { return hoverRight ? cameraTip : diceTip; }
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent& e) override { hoverRight = e.x >= getWidth() / 2; }
+    void mouseMove (const juce::MouseEvent& e) override  { hoverRight = e.x >= getWidth() / 2; }
+    void mouseDown (const juce::MouseEvent& e) override  { downHalf = e.x >= getWidth() / 2 ? 2 : 1; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const int half = downHalf;
+        downHalf = 0;
+        repaint();
+        if (half == 0 || ! contains (e.getPosition())) return;
+        if ((e.x >= getWidth() / 2 ? 2 : 1) != half) return;
+        if (half == 1) { if (onDice) onDice(); }
+        else if (onCamera) onCamera();
+    }
+private:
+    void timerCallback() override { flash = false; stopTimer(); repaint(); }
+    bool diceOn = false, camOn = true, flash = false, hoverRight = false;
+    int downHalf = 0;
 };
 
 // Τετράγωνο κουμπί 52x52 χωρίς μενού: κάθε πάτημα → επόμενη τιμή, μετά την τελευταία ξανά η πρώτη.

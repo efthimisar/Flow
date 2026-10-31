@@ -8,6 +8,7 @@
 #include <algorithm>
 #include "AudioPanel.h"
 #include "SettingsScreen.h"
+#include "RoleCard.h"
 #include <map>
 
 namespace
@@ -91,6 +92,16 @@ public:
         };
         addChildComponent (settingsScreen);
         setupSettingsScreen();
+
+        // Sound Palette: ζάρι (Palette, έρχεται αργότερα) και κάμερα (κράτα τον ήχο του επιλεγμένου block)
+        addAndMakeVisible (paletteTile);
+        addChildComponent (roleCard);
+        paletteTile.diceTip = gr ("Sound Palette: random sounds from the ones you kept (press shows how many you have kept)");
+        paletteTile.cameraTip = gr ("Keep sound: saves the sound of the selected block (instrument and MIDI FX, without audio FX) with a label");
+        paletteTile.onDice = [this] { onPaletteDice(); };
+        paletteTile.onCamera = [this] { onPaletteCamera(); };
+        roleCard.onPick = [this] (int role) { roleCard.close(); saveSnapshot (snapshotBlock, role); grabKeyboardFocus(); };
+        roleCard.onCancel = [this] { roleCard.close(); grabKeyboardFocus(); };
 
         blockTile.onClick = [this] { if (learnClick (flow::ctlSpecial)) return; chooseAndLoadPlugin(); };
         vstTile.onClick = [this] { onVstClick(); };
@@ -381,6 +392,7 @@ public:
                 hobby::drawTileShadow (g, r);
             }
         }
+        hobby::drawTileShadow (g, paletteTile.getBounds().toFloat());
     }
 
     void resized() override
@@ -643,7 +655,8 @@ private:
         const int leftX = strip.getX() + 14;
         const int midW = 4 * 52 + 3 * 8;
         const int rightX = strip.getRight() - 14 - 52;
-        const int leftEnd = leftX + 5 * 60, rightStart = rightX - 60;
+        const int palW = 2 * 52 + 8;   // κουμπί Sound Palette: δύο μισά
+        const int leftEnd = leftX + 5 * 60, rightStart = rightX - 8 - palW;
         const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);
 
         int x = leftX;
@@ -659,6 +672,8 @@ private:
             x += 60;
         }
         folderTile.setBounds (rightX, ty, 52, 52);
+        paletteTile.setBounds (rightX - 8 - palW, ty, palW, 52);
+        roleCard.setBounds (loopsBezel.reduced (5));
     }
 
     void refreshSize()
@@ -2120,16 +2135,37 @@ private:
         });
     }
 
+    // σημάδι ασφαλείας (crash): μικρό ξεχωριστό αρχείο, ώστε να μη ξαναγράφεται το μεγάλο αρχείο ρυθμίσεων σε κάθε φόρτωση plugin
+    File loadingFile() { return properties.getUserSettings()->getFile().getSiblingFile ("Flow-loading.txt"); }
+
     void setLoading (const String& token, bool loading)
     {
-        auto* settings = properties.getUserSettings();
-        StringArray list;
-        list.addTokens (settings->getValue ("loadingTokens"), ",", "");
-        list.removeEmptyStrings();
-        list.removeString (token);
-        if (loading) list.add (token);
-        settings->setValue ("loadingTokens", list.joinIntoString (","));
-        properties.saveIfNeeded();
+        loadingTokens.removeString (token);
+        if (loading) loadingTokens.add (token);
+        loadingFile().replaceWithText (loadingTokens.joinIntoString (","));
+    }
+
+    // μία αποθήκευση όταν τελειώσουν όλες οι φορτώσεις (όχι μία ανά plugin)
+    void saveAfterLoad()
+    {
+        if (pendingLoads > 0) return;
+        if (setLoadT0 != 0)
+        {
+            flow::flowLog ("set loaded in " + String ((int) (Time::getMillisecondCounter() - setLoadT0)) + " ms");
+            setLoadT0 = 0;
+        }
+        saveNow (true);
+    }
+
+    // χρόνος δημιουργίας plugin: τα plugins δημιουργούνται ένα-ένα στο message thread, άρα ο δικός του χρόνος είναι από την προηγούμενη ολοκλήρωση
+    void logLoadTime (const String& token, const String& name)
+    {
+        const auto now = Time::getMillisecondCounter();
+        const auto start = loadStartMs.count (token) ? loadStartMs[token] : now;
+        const auto own = now - jmax (start, lastLoadDoneMs);
+        lastLoadDoneMs = now;
+        loadStartMs.erase (token);
+        flow::flowLog ("load " + token + " " + name + ": " + String ((int) own) + " ms (waited " + String ((int) (now - start)) + " ms)");
     }
 
     // userLoad: το plugin φορτώθηκε τώρα από τον χρήστη -> νέο block, επιλέγεται και περιμένει ζώνη
@@ -2137,6 +2173,8 @@ private:
                      std::function<void()> after)
     {
         const String token = "b" + String (block);
+        loadStartMs[token] = Time::getMillisecondCounter();
+        if (! userLoad) setMessage (gr ("Loading: ") + description.name);
         setLoading (token, true);   // σημάδι ασφαλείας: αν κρασάρει, δεν ξαναφορτώνεται μόνο του
         loadingSlots.addIfNotAlreadyThere (block);
         ++pendingLoads;
@@ -2157,11 +2195,13 @@ private:
         setLoading (token, false);
         loadingSlots.removeFirstMatchingValue (block);
         --pendingLoads;
+        logLoadTime (token, instance != nullptr ? instance->getName() : String ("(failed)"));
 
         if (instance == nullptr)
         {
             loadFailed = true;
             setMessage (gr ("Load failed: ") + error);
+            saveAfterLoad();
             return;
         }
 
@@ -2203,13 +2243,14 @@ private:
         updateEditor();
         if (userLoad) toggleWindowForPanel (false);
         refreshAll();
-        saveNow (true);
+        saveAfterLoad();
     }
 
     // aux plugin (MIDI FX / FX): φορτώνεται και παραδίδεται στο done
     void loadAux (const PluginDescription& d, const MemoryBlock& state, const String& token, std::function<void (PluginPtr)> done)
     {
         flow::flowLog ("loadAux: " + d.name + " (" + d.pluginFormatName + ") token=" + token);
+        loadStartMs[token] = Time::getMillisecondCounter();
         setLoading (token, true);
         ++pendingLoads;
         SafePointer<MainComponent> safe (this);
@@ -2220,10 +2261,12 @@ private:
                 if (safe == nullptr) return;
                 safe->setLoading (token, false);
                 --safe->pendingLoads;
+                safe->logLoadTime (token, inst != nullptr ? inst->getName() : String ("(failed)"));
                 if (inst == nullptr)
                 {
                     safe->loadFailed = true;
                     safe->setMessage (gr ("Load failed: ") + error);
+                    safe->saveAfterLoad();
                     return;
                 }
                 flow::flowLog ("loadAux: instance created: " + inst->getName());
@@ -2255,7 +2298,7 @@ private:
                 updateEditor();
                 toggleWindowForPanel (false);
                 refreshAll();
-                saveNow (true);
+                saveAfterLoad();
             });
         });
     }
@@ -2291,7 +2334,7 @@ private:
                 updateEditor();
                 toggleWindowForPanel (false);
                 refreshAll();
-                saveNow (true);
+                saveAfterLoad();
             });
         });
     }
@@ -3261,7 +3304,10 @@ private:
 
     void applySet (const XmlElement& root, const StringArray& crashed)
     {
+        setLoadT0 = Time::getMillisecondCounter();
+        lastLoadDoneMs = setLoadT0;
         clearEverything();
+        flow::flowLog ("set: cleared in " + String ((int) (Time::getMillisecondCounter() - setLoadT0)) + " ms");
         {
             Image img;
             if (auto* oe = root.getChildByName ("OrbImage"))
@@ -3420,6 +3466,7 @@ private:
             }
             loadFxSequence (-1, items, 0);
         }
+        if (pendingLoads == 0) setLoadT0 = 0;   // set χωρίς plugins: δεν υπάρχει φόρτωση να μετρηθεί
     }
 
     void loadExtras (int slot, const XmlElement& e, const StringArray& crashed)
@@ -3436,7 +3483,7 @@ private:
                 engine.setMidiFx (slot, std::move (p)).reset();
                 updateEditor();
                 refreshAll();
-                saveNow (true);
+                saveAfterLoad();
             });
         }
 
@@ -3479,8 +3526,8 @@ private:
             engine.addFx (target, std::move (p));
             updateEditor();
             refreshAll();
-            saveNow (true);
-            loadFxSequence (target, items, i + 1);
+            loadFxSequence (target, items, i + 1);   // πρώτα η επόμενη φόρτωση, ώστε να αποθηκεύεται μόνο μετά την τελευταία
+            saveAfterLoad();
         });
     }
 
@@ -3499,6 +3546,78 @@ private:
             if (xml->writeTo (f)) { currentSetName = f.getFileNameWithoutExtension(); setMessage (gr ("Saved: ") + f.getFileName()); }
             else                  setMessage (gr ("Could not write the file"));
         });
+    }
+
+    //==========================================================================
+    // Sound Palette: κάμερα = κράτα τον ήχο του επιλεγμένου block (instrument + MIDI FX + ρυθμίσεις του block, χωρίς audio FX)
+    File soundsDir() const
+    {
+        return File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Sounds");
+    }
+
+    int countSounds() const
+    {
+        return soundsDir().findChildFiles (File::findFiles, false, "*.flowsound").size();
+    }
+
+    void onPaletteDice()
+    {
+        const int n = countSounds();
+        setMessage (gr ("Sound Palette: ") + String (n) + (n == 1 ? gr (" sound kept") : gr (" sounds kept")));
+    }
+
+    void onPaletteCamera()
+    {
+        if (roleCard.isVisible() || settingsScreen.isVisible() || audioPanel.isVisible()) return;
+        if (! isActive (selected) || engine.getPlugin (selected) == nullptr) { setMessage (gr ("No sound to keep")); return; }
+        if (pendingLoads > 0) { setMessage (gr ("Wait until the plugins have loaded")); return; }
+        const int type = engine.smartType[(size_t) selected].load();
+        if (type == 6) { setMessage (gr ("Drums are not kept in the Palette")); return; }
+
+        static const char* const typeNames[] { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
+        const String dot = String::fromUTF8 (" \xc2\xb7 ");
+        snapshotBlock = selected;
+        roleCard.open (gr ("What is this sound?"),
+                       engine.getPlugin (selected)->getName() + dot + gr ("block ") + String (selected + 1) + dot + gr ("Smart master: ") + typeNames[jlimit (0, 7, type)],
+                       RoleCard::roleFromSmartType (type));
+    }
+
+    void saveSnapshot (int b, int role)
+    {
+        auto* inst = isActive (b) ? engine.getPlugin (b) : nullptr;
+        if (inst == nullptr) { setMessage (gr ("No sound to keep")); return; }
+
+        auto xml = std::make_unique<XmlElement> ("FlowSound");
+        xml->setAttribute ("version", 1);
+        xml->setAttribute ("role", String (RoleCard::name (role)));
+        xml->setAttribute ("name", inst->getName());
+        xml->setAttribute ("created", Time::getCurrentTime().toISO8601 (true));
+        xml->setAttribute ("stype", engine.smartType[(size_t) b].load());
+        xml->setAttribute ("hold", engine.holdMode[(size_t) b].load());
+        xml->setAttribute ("curve", engine.curveMode[(size_t) b].load());
+        xml->setAttribute ("vol", (double) engine.volPos[(size_t) b].load());
+        xml->setAttribute ("vmap", engine.volMap[(size_t) b].load());
+        xml->setAttribute ("tr", engine.transpose[(size_t) b].load());
+        writeKnobs (*xml->createNewChildElement ("Orb"), blockKnobs[(size_t) b]);
+        pluginElement (*xml, "Instrument", inst, true);
+        if (auto* m = engine.getMidiFx (b)) pluginElement (*xml, "MidiFx", m, true);
+        // τα audio FX δεν μπαίνουν στο snapshot: ο ήχος κρατά τα FX που έχει ήδη το block
+
+        auto dir = soundsDir();
+        if (! dir.createDirectory().wasOk()) { setMessage (gr ("Could not write the file")); return; }
+        const String base = File::createLegalFileName (inst->getName()) + " " + Time::getCurrentTime().formatted ("%Y-%m-%d %H%M%S");
+        auto f = dir.getChildFile (base).withFileExtension ("flowsound");
+        for (int i = 2; f.exists() && i < 100; ++i)
+            f = dir.getChildFile (base + " " + String (i)).withFileExtension ("flowsound");
+
+        if (xml->writeTo (f))
+        {
+            paletteTile.flashCamera();
+            setMessage (gr ("Sound kept: ") + inst->getName() + String::fromUTF8 (" \xc2\xb7 ") + RoleCard::name (role));
+            flow::flowLog ("snapshot saved: " + f.getFullPathName() + " (" + RoleCard::name (role) + ")");
+        }
+        else
+            setMessage (gr ("Could not write the file"));
     }
 
     File setsDir() const
@@ -3540,6 +3659,7 @@ private:
 
     void saveSettings (bool withStates)
     {
+        const auto saveT0 = Time::getMillisecondCounter();
         auto* settings = properties.getUserSettings();
 
         std::unique_ptr<XmlElement> audioState (deviceManager.createStateXml());
@@ -3588,6 +3708,9 @@ private:
         properties.saveIfNeeded();
         dirty = false;
         lastSaveMs = Time::getMillisecondCounter();
+        const auto saveMs = (int) (lastSaveMs - saveT0);
+        if (saveMs >= 25)   // μέτρηση: πόσο κοστίζει μία αποθήκευση και πόσο μεγάλο είναι το αρχείο ρυθμίσεων
+            flow::flowLog ("saveSettings: " + String (saveMs) + " ms (states " + String (withStates ? 1 : 0) + ", file " + String ((int) (settings->getFile().getSize() / 1024)) + " KB)");
     }
 
     void restoreSession()
@@ -3595,8 +3718,11 @@ private:
         auto* settings = properties.getUserSettings();
 
         StringArray crashed;
-        crashed.addTokens (settings->getValue ("loadingTokens"), ",", "");
+        crashed.addTokens (loadingFile().loadFileAsString() + "," + settings->getValue ("loadingTokens"), ",", "");   // το δεύτερο: παλιές εκδόσεις
         crashed.removeEmptyStrings();
+        crashed.removeDuplicates (false);
+        loadingTokens.clear();
+        loadingFile().replaceWithText ("");
         settings->setValue ("loadingTokens", "");
         properties.saveIfNeeded();
 
@@ -3699,6 +3825,7 @@ private:
         const Colour tileWhite (0xfff3f4f6);
         blockTile.setIconColour (hobby::kOn);   // πάντα ένα απλό πράσινο τετράγωνο
         vstTile.setIconColour (valid ? hobby::kOn : tileWhite);
+        paletteTile.setCameraOn (valid && engine.getPlugin (sel) != nullptr && engine.smartType[(size_t) sel].load() != 6);
         mfxTile.setIconColour (hasMfx ? hobby::kOn : tileWhite);
         mfxTile.setDots (hasMfx ? 1 : 0);
         fxTile.setIconColour (nfx > 0 ? hobby::kOn : tileWhite);
@@ -3919,6 +4046,9 @@ private:
     uint32 lastSaveMs = 0;
     Array<int> loadingSlots;
     int pendingLoads = 0;
+    StringArray loadingTokens;
+    std::map<String, uint32> loadStartMs;
+    uint32 lastLoadDoneMs = 0, setLoadT0 = 0;
     bool loadFailed = false;
     int pendingSelect = -1;
     float cpuSmooth = 0.0f;
@@ -3952,6 +4082,9 @@ private:
     OrbRecTile orbRecTile;
     AudioMidiPanel audioPanel { deviceManager, typeface };
     SettingsScreen settingsScreen { typeface };
+    RoleCard roleCard { typeface };
+    PaletteTile paletteTile;
+    int snapshotBlock = -1;
     bool audioFromSettings = false;
     ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile, smartTile, followTile, motionTile;
 
@@ -3963,7 +4096,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.57.8"; }
+    const String getApplicationVersion() override { return "0.58.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
