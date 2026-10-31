@@ -260,7 +260,7 @@ public:
             engine.knobIn[(size_t) k] = -1.0f;
         }
         for (int b = 0; b < flow::numBlocks; ++b)
-            for (int c = 0; c < 4; ++c) orbPos[(size_t) b][(size_t) c] = orbDefault (c);
+            for (int c = 0; c < 4; ++c) { orbPos[(size_t) b][(size_t) c] = orbDefault (c); orbAutoPat[(size_t) b][(size_t) c] = -1; }
         loopsView.onOrbAssign = [this] (int slot) { startKnobLearn (slot); };
         loopsView.onOrbRing = [this] (int c) { orbAutoPress (c); };
         loopsView.onOrbClear = [this] (int slot) { clearKnobSlot (slot); };
@@ -1362,26 +1362,26 @@ private:
     std::array<std::array<OrbLane, 4>, (size_t) flow::numBlocks> orbLane;
     std::array<bool, 4> orbTouching { { false, false, false, false } };
     // ελαστική κίνηση: η τελεία ακολουθεί το δάχτυλο σαν μάζα σε ελατήριο, αργά και ομαλά (60 φορές το δευτερόλεπτο)
-    std::array<Point<float>, 4> orbGoal, orbVel;
-    std::array<bool, 4> orbSettle { { false, false, false, false } };
-    int orbPhysBlock = -1;
+    // κίνηση ανά block: κάθε block συνεχίζει τα σχέδιά του (Motion 1..7) και όταν επιλέγεις άλλο block
+    std::array<std::array<Point<float>, 4>, (size_t) flow::numBlocks> orbGoal, orbVel;   // [block][γωνία]
+    std::array<std::array<bool, 4>, (size_t) flow::numBlocks> orbSettle {};
     bool orbRecArmed = false;
 
     // κινήσεις: κάθε πάτημα στον δακτύλιο της γωνίας δίνει την επόμενη (1..7), το όγδοο σβήνει· ο στόχος κινείται σε μοτίβο και η τελεία τον ακολουθεί ελαστικά
     static constexpr int orbPatterns = 7;   // κύκλος, οκτώ, σάρωση, σπείρα, παλμός, περιπλάνηση, άλμα και επιστροφή
     static constexpr double orbAutoPeriod = 8.0;   // δευτερόλεπτα ανά κύκλο
-    std::array<int, 4> orbAutoPat { { -1, -1, -1, -1 } };
-    std::array<double, 4> orbAutoT0 {};
-    std::array<std::array<float, 4>, 4> orbAutoPh {};
-    std::array<std::array<Point<float>, 4>, 4> orbAutoTg {};
+    std::array<std::array<int, 4>, (size_t) flow::numBlocks> orbAutoPat;          // [block][γωνία], -1 = καμία κίνηση
+    std::array<std::array<double, 4>, (size_t) flow::numBlocks> orbAutoT0 {};
+    std::array<std::array<std::array<float, 4>, 4>, (size_t) flow::numBlocks> orbAutoPh {};
+    std::array<std::array<std::array<Point<float>, 4>, 4>, (size_t) flow::numBlocks> orbAutoTg {};
 
-    void orbAutoStop (int c)
+    void orbAutoStop (int b, int c)
     {
-        if (orbAutoPat[(size_t) c] < 0) return;
-        orbAutoPat[(size_t) c] = -1;
-        if (isActive (selected))
+        if (b < 0 || b >= flow::numBlocks || orbAutoPat[(size_t) b][(size_t) c] < 0) return;
+        orbAutoPat[(size_t) b][(size_t) c] = -1;
+        if (isActive (b))
         {
-            auto& l = orbLane[(size_t) selected][(size_t) c];
+            auto& l = orbLane[(size_t) b][(size_t) c];
             if (l.recording) orbFinishLane (l);
         }
     }
@@ -1389,34 +1389,34 @@ private:
     void orbAutoPress (int c)
     {
         if (selected < 0 || selected >= flow::numBlocks) return;
+        const size_t b = (size_t) selected;
         auto& rnd = Random::getSystemRandom();
-        const int next = orbAutoPat[(size_t) c] + 1;   // κάθε πάτημα: επόμενη κίνηση· μετά την τελευταία σβήνει
-        if (next >= orbPatterns) { orbAutoStop (c); syncOrbAuto(); setMessage (gr ("Motion: off")); return; }
-        orbAutoPat[(size_t) c] = next;
-        orbAutoT0[(size_t) c] = Time::getMillisecondCounterHiRes() * 0.001;
-        for (auto& v : orbAutoPh[(size_t) c]) v = rnd.nextFloat() * MathConstants<float>::twoPi;
-        for (auto& t : orbAutoTg[(size_t) c]) t = { rnd.nextFloat() * 1.4f - 0.7f, rnd.nextFloat() * 1.4f - 0.7f };
-        orbPhysBlock = selected;
-        orbGoal[(size_t) c] = orbPos[(size_t) selected][(size_t) c];
-        orbSettle[(size_t) c] = true;
+        const int next = orbAutoPat[b][(size_t) c] + 1;   // κάθε πάτημα: επόμενη κίνηση· μετά την τελευταία σβήνει
+        if (next >= orbPatterns) { orbAutoStop (selected, c); syncOrbAuto(); setMessage (gr ("Motion: off")); return; }
+        orbAutoPat[b][(size_t) c] = next;
+        orbAutoT0[b][(size_t) c] = Time::getMillisecondCounterHiRes() * 0.001;
+        for (auto& v : orbAutoPh[b][(size_t) c]) v = rnd.nextFloat() * MathConstants<float>::twoPi;
+        for (auto& t : orbAutoTg[b][(size_t) c]) t = { rnd.nextFloat() * 1.4f - 0.7f, rnd.nextFloat() * 1.4f - 0.7f };
+        orbGoal[b][(size_t) c] = orbPos[b][(size_t) c];
+        orbSettle[b][(size_t) c] = true;
         if (orbRecArmed && isActive (selected))   // Rec motion: γράφεται και η αυτόματη κίνηση
         {
-            auto& l = orbLane[(size_t) selected][(size_t) c];
+            auto& l = orbLane[b][(size_t) c];
             if (l.s.empty()) { l.s.assign ((size_t) orbN, {}); l.ok.assign ((size_t) orbN, 0); }
             l.recording = true;
         }
-        setMessage ("Motion " + String (orbAutoPat[(size_t) c] + 1) + " / " + String (orbPatterns));
+        setMessage ("Motion " + String (orbAutoPat[b][(size_t) c] + 1) + " / " + String (orbPatterns));
     }
 
-    Point<float> orbAutoGoal (int c) const
+    Point<float> orbAutoGoal (int b, int c) const
     {
         const double now = Time::getMillisecondCounterHiRes() * 0.001;
-        const float u = (float) std::fmod ((now - orbAutoT0[(size_t) c]) / orbAutoPeriod, 1.0);
+        const float u = (float) std::fmod ((now - orbAutoT0[(size_t) b][(size_t) c]) / orbAutoPeriod, 1.0);
         const float T = MathConstants<float>::twoPi * u;
         static const float baseA[4] { -MathConstants<float>::halfPi, 0.0f, MathConstants<float>::halfPi, MathConstants<float>::pi };
         const float a = baseA[c];
-        const auto& ph = orbAutoPh[(size_t) c];
-        switch (orbAutoPat[(size_t) c])
+        const auto& ph = orbAutoPh[(size_t) b][(size_t) c];
+        switch (orbAutoPat[(size_t) b][(size_t) c])
         {
             case 0: return { 0.55f * std::cos (T + a), 0.55f * std::sin (T + a) };
             case 1: { const float x = 0.65f * std::sin (T), y = 0.4f * std::sin (2.0f * T);
@@ -1427,13 +1427,15 @@ private:
             case 5: return { 0.6f * std::sin (T + ph[0]) + 0.2f * std::sin (3.0f * T + ph[1]),
                              0.6f * std::sin (T + ph[2] + 1.3f) + 0.2f * std::sin (2.0f * T + ph[3]) };
             default: { const int st = (int) (u * 4.0f) % 4;
-                       return st % 2 ? orbDefault (c) : orbAutoTg[(size_t) c][(size_t) st]; }
+                       return st % 2 ? orbDefault (c) : orbAutoTg[(size_t) b][(size_t) c][(size_t) st]; }
         }
     }
 
     void syncOrbAuto()
     {
-        loopsView.setOrbAuto ({ { orbAutoPat[0] >= 0, orbAutoPat[1] >= 0, orbAutoPat[2] >= 0, orbAutoPat[3] >= 0 } });
+        const bool ok = selected >= 0 && selected < flow::numBlocks;
+        const auto& pt = orbAutoPat[(size_t) (ok ? selected : 0)];
+        loopsView.setOrbAuto ({ { ok && pt[0] >= 0, ok && pt[1] >= 0, ok && pt[2] >= 0, ok && pt[3] >= 0 } });
     }
 
     static Point<float> orbClamp (int, Point<float> p)   // ελεύθερη κίνηση σε όλον τον orb (όριο: ο κύκλος)
@@ -1491,14 +1493,13 @@ private:
 
     void orbTouch (int corner, bool down)
     {
-        if (down) orbAutoStop (corner);   // πιάνεις την τελεία: σταματά η τυχαία κίνηση
+        if (down) orbAutoStop (selected, corner);   // πιάνεις την τελεία: σταματά η τυχαία κίνηση
         orbTouching[(size_t) corner] = down;
         if (down && selected >= 0 && selected < flow::numBlocks)
         {
-            orbPhysBlock = selected;
-            orbGoal[(size_t) corner] = orbPos[(size_t) selected][(size_t) corner];   // χωρίς άλμα στο πάτημα
-            orbVel[(size_t) corner] = {};
-            orbSettle[(size_t) corner] = true;
+            orbGoal[(size_t) selected][(size_t) corner] = orbPos[(size_t) selected][(size_t) corner];   // χωρίς άλμα στο πάτημα
+            orbVel[(size_t) selected][(size_t) corner] = {};
+            orbSettle[(size_t) selected][(size_t) corner] = true;
         }
         if (! isActive (selected)) return;
         auto& l = orbLane[(size_t) selected][(size_t) corner];
@@ -1513,35 +1514,38 @@ private:
     void orbMoved (int corner, Point<float> p)
     {
         if (selected < 0 || selected >= flow::numBlocks) return;   // οι κύκλοι κινούνται και σε κουμπί χωρίς όργανο
-        orbGoal[(size_t) corner] = orbClamp (corner, p);   // στόχος: η θέση του δαχτύλου· η τελεία πάει εκεί ελαστικά
-        orbPhysBlock = selected;
-        orbSettle[(size_t) corner] = true;
+        orbGoal[(size_t) selected][(size_t) corner] = orbClamp (corner, p);   // στόχος: η θέση του δαχτύλου· η τελεία πάει εκεί ελαστικά
+        orbSettle[(size_t) selected][(size_t) corner] = true;
     }
 
     void orbPhysics()
     {
-        const int b = orbPhysBlock;
-        if (b < 0 || b >= flow::numBlocks || b != selected) { for (int c = 0; c < 4; ++c) orbAutoStop (c); orbSettle.fill (false); syncOrbAuto(); return; }
         const float dt = 1.0f / 60.0f, omega = 6.0f, zeta = 0.62f;   // ω: ταχύτητα, ζ < 1: λίγη ελαστικότητα
-        bool any = false;
-        std::array<Point<float>, 4> pos;
-        for (int c = 0; c < 4; ++c)
+        std::array<Point<float>, 4> selPos;
+        bool anySel = false;
+        for (int b = 0; b < flow::numBlocks; ++b)      // όλα τα block κινούνται, όχι μόνο το επιλεγμένο
         {
-            auto& pp = orbPos[(size_t) b][(size_t) c];
-            if (orbAutoPat[(size_t) c] >= 0 && ! orbTouching[(size_t) c]) { orbGoal[(size_t) c] = orbClamp (c, orbAutoGoal (c)); orbSettle[(size_t) c] = true; }
-            if (orbSettle[(size_t) c])
+            const size_t bb = (size_t) b;
+            for (int c = 0; c < 4; ++c)
             {
-                const auto acc = (orbGoal[(size_t) c] - pp) * (omega * omega) - orbVel[(size_t) c] * (2.0f * zeta * omega);
-                orbVel[(size_t) c] += acc * dt;
-                pp = orbClamp (c, pp + orbVel[(size_t) c] * dt);
-                orbApply (b, c, pp);
-                any = true;
-                if (! orbTouching[(size_t) c] && orbAutoPat[(size_t) c] < 0 && (orbGoal[(size_t) c] - pp).getDistanceFromOrigin() < 0.002f && orbVel[(size_t) c].getDistanceFromOrigin() < 0.01f)
-                    orbSettle[(size_t) c] = false;
+                const size_t cc = (size_t) c;
+                auto& pp = orbPos[bb][cc];
+                const bool touching = b == selected && orbTouching[cc];
+                if (orbAutoPat[bb][cc] >= 0 && ! touching && isActive (b)) { orbGoal[bb][cc] = orbClamp (c, orbAutoGoal (b, c)); orbSettle[bb][cc] = true; }
+                if (orbSettle[bb][cc])
+                {
+                    const auto acc = (orbGoal[bb][cc] - pp) * (omega * omega) - orbVel[bb][cc] * (2.0f * zeta * omega);
+                    orbVel[bb][cc] += acc * dt;
+                    pp = orbClamp (c, pp + orbVel[bb][cc] * dt);
+                    if (isActive (b)) orbApply (b, c, pp);
+                    if (b == selected) anySel = true;
+                    if (! touching && orbAutoPat[bb][cc] < 0 && (orbGoal[bb][cc] - pp).getDistanceFromOrigin() < 0.002f && orbVel[bb][cc].getDistanceFromOrigin() < 0.01f)
+                        orbSettle[bb][cc] = false;
+                }
+                if (b == selected) selPos[cc] = pp;
             }
-            pos[(size_t) c] = pp;
         }
-        if (any) loopsView.setOrbPos (pos);
+        if (anySel) loopsView.setOrbPos (selPos);
         syncOrbAuto();
     }
 
@@ -1572,7 +1576,7 @@ private:
             for (int c = 0; c < 4; ++c)
             {
                 auto& l = orbLane[(size_t) b][(size_t) c];
-                const bool touching = b == selected && (orbTouching[(size_t) c] || orbSettle[(size_t) c]);
+                const bool touching = (b == selected && orbTouching[(size_t) c]) || orbSettle[(size_t) b][(size_t) c];
                 if (touching)
                 {
                     if (l.recording) { l.s[(size_t) i] = orbPos[(size_t) b][(size_t) c]; l.ok[(size_t) i] = 1; }
@@ -2040,7 +2044,7 @@ private:
             engine.holdMode[(size_t) block] = 0;
             engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
             engine.curveMode[(size_t) block] = 0;
-            engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block);
+            engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block); for (int oc = 0; oc < 4; ++oc) { orbAutoPat[(size_t) block][(size_t) oc] = -1; orbSettle[(size_t) block][(size_t) oc] = false; }
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
             engine.transpose[(size_t) block] = 0;
@@ -2222,7 +2226,7 @@ private:
         engine.holdMode[(size_t) block] = 0;
         engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
         engine.curveMode[(size_t) block] = 0;
-        engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block);
+        engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block); for (int oc = 0; oc < 4; ++oc) { orbAutoPat[(size_t) block][(size_t) oc] = -1; orbSettle[(size_t) block][(size_t) oc] = false; }
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
         engine.transpose[(size_t) block] = 0;
