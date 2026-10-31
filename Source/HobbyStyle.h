@@ -48,6 +48,71 @@ namespace hobby
     void drawTileShadow (juce::Graphics&, juce::Rectangle<float> tile);                  // σκιά κάτω από τετράγωνο κουμπί
 }
 
+
+// ---- Smart master: 6 ζώνες σε 3 ζεύγη λωρίδων (μπορντώ, πορτοκάλι, θερμό κίτρινο), φωτεινό -> σκοτεινό προς το κέντρο ----
+namespace hobby
+{
+    inline const char* const smartBandNames[6] = { "Sub", "Low", "Low-Mid", "Mid", "High-Mid", "High" };
+    inline const juce::Colour kSmartOver { 0xfffaf4e4 };   // κρεμ: το κομμάτι πάνω από το όριο
+    inline juce::Colour smartLaneColour (int k)
+    {
+        static const juce::Colour c[6] { juce::Colour (0xffc44054), juce::Colour (0xff842438),    // μπορντώ
+                                         juce::Colour (0xffffa040), juce::Colour (0xffcc6e1c),    // πορτοκάλι
+                                         juce::Colour (0xffffd65c), juce::Colour (0xffd6a428) };  // θερμό κίτρινο
+        return c[juce::jlimit (0, 5, k)];
+    }
+
+    // 6 λωρίδες τόξου 270° (από -135° ως +135°). outerEdge = εξωτερική άκρη της πρώτης λωρίδας, total = συνολικό πάχος προς τα μέσα.
+    // vals = στάθμη 0..1 ανά ζώνη, lim = όρια 0..1 (μόνο όταν active), το κομμάτι πάνω από το όριο γίνεται κρεμ.
+    inline void drawSmartLanes (juce::Graphics& g, float cx, float cy, float outerEdge, float total, const float* vals, const float* lim,
+                                bool active, juce::Colour trackC, juce::Colour tickC)
+    {
+        const float w = total / 7.6f, gin = 0.2f * w, gout = 0.5f * w;
+        const float full = juce::degreesToRadians (270.0f), start = juce::degreesToRadians (-135.0f);
+        float r = outerEdge - w * 0.5f;
+        for (int k = 0; k < 6; ++k)
+        {
+            juce::Path tp; tp.addCentredArc (cx, cy, r, r, 0.0f, start, start + full, true);
+            g.setColour (trackC); g.strokePath (tp, juce::PathStrokeType (w));
+            const float v = juce::jlimit (0.0f, 1.0f, vals[k]);
+            const bool lm = active && lim[k] < 0.999f;
+            const float base = lm ? juce::jmin (v, lim[k]) : v;
+            if (base > 0.003f)
+            {
+                juce::Path vp; vp.addCentredArc (cx, cy, r, r, 0.0f, start, start + full * base, true);
+                g.setColour (smartLaneColour (k)); g.strokePath (vp, juce::PathStrokeType (w));
+            }
+            if (lm && v > lim[k])
+            {
+                juce::Path op; op.addCentredArc (cx, cy, r, r, 0.0f, start + full * lim[k], start + full * v, true);
+                g.setColour (kSmartOver); g.strokePath (op, juce::PathStrokeType (w));
+            }
+            if (lm)
+            {
+                const float a = start + full * lim[k];
+                const float dx = std::sin (a), dy = -std::cos (a);
+                g.setColour (tickC);
+                g.drawLine (cx + dx * (r - w * 0.5f - 1.5f), cy + dy * (r - w * 0.5f - 1.5f), cx + dx * (r + w * 0.5f + 1.5f), cy + dy * (r + w * 0.5f + 1.5f), juce::jmax (1.3f, w * 0.14f));
+            }
+            r -= w + ((k % 2 == 0) ? gin : gout);
+        }
+    }
+
+    // κείμενο διόρθωσης: μέχρι 3 ζώνες με τη μεγαλύτερη μείωση (μετά την αποδοχή acc) και το πλάτος. Κενό αν δεν χρειάζεται διόρθωση.
+    inline juce::String smartCorrectionText (const float* need, float needW, float acc)
+    {
+        int order[6] { 0, 1, 2, 3, 4, 5 };
+        std::sort (order, order + 6, [&] (int a, int b) { return need[a] > need[b]; });
+        juce::String out;
+        for (int i = 0; i < 3; ++i)
+            if (need[order[i]] > 0.5f)
+                out += juce::String (out.isEmpty() ? "" : "  ") + smartBandNames[order[i]] + " -" + juce::String (need[order[i]] * acc, 1) + " dB";
+        if (needW < 0.97f)
+            out += juce::String (out.isEmpty() ? "" : "  ") + "Width " + juce::String ((int) std::round (100.0f - (1.0f - needW) * acc * 100.0f)) + " %";
+        return out;
+    }
+}
+
 // Σύμβολα που ζωγραφίζονται με διανύσματα. Πρόσθεσε νέα στο τέλος του enum και στο switch του drawSymbol.
 enum class Symbol { PadRecord, PadOverdub, Play, Stop, Cancel, Undo,
                     StartQ, LengthQ, Snap, Loop, Sync, Tempo, Thru,

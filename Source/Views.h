@@ -1048,12 +1048,15 @@ public:
         const int sel = selected;
         const bool valid = sel >= 0 && sel < flow::numBlocks && engine.active[(size_t) sel].load() != 0;
         auto q = [] (float v) { return (int64) std::lround (v * 200.0f); };
-        int64 h = (int64) engine.smartOn.load() * 7 + engine.smartAuto.load() * 13 + q (engine.smartAccept.load()) + (valid ? 1 : 0) + sel * 31;
+        int64 h = (int64) engine.smartOn.load() * 7 + q (engine.smartAccept.load()) + (valid ? 1 : 0) + sel * 31;
         if (valid)
         {
             const auto b = (size_t) sel;
-            for (int64 v : { (int64) engine.smartType[b].load(), q (engine.smartLow[b].load()), q (engine.smartMid[b].load()), q (engine.smartHigh[b].load()), q (engine.smartWidth[b].load()),
-                             q (engine.smartNeedLow[b].load()), q (engine.smartNeedWidth[b].load()), q (engine.smartAppLow[b].load()), q (engine.smartAppWidth[b].load()) })
+            h = h * 1000003 + (int64) engine.smartType[b].load();
+            for (int k = 0; k < 6; ++k)
+                for (int64 v : { q (engine.smartBand[b][(size_t) k].load()), q (engine.smartNeed[b][(size_t) k].load()), q (engine.smartApp[b][(size_t) k].load()) })
+                    h = h * 1000003 + v;
+            for (int64 v : { q (engine.smartWidth[b].load()), q (engine.smartNeedWidth[b].load()), q (engine.smartAppWidth[b].load()) })
                 h = h * 1000003 + v;
         }
         if (h != rightSig) { rightSig = h; repaint (rightRect()); }
@@ -1086,8 +1089,8 @@ public:
         return { gm.cx + sx[c & 3] * k, gm.cy + sy[c & 3] * k };
     }
 
-    std::function<void()> onSmartCycle, onFollowToggle;     // Off → Ask → Auto, Follow on/off
-    std::function<void (int)> onSmartType, onSmartApply;    // block
+    std::function<void()> onSmartCycle, onFollowToggle;     // Smart Off ↔ On, Follow on/off
+    std::function<void (int)> onSmartType;                  // block
     float orbSpin = 0.0f, orbSpinV = 0.0f;
     double lastSpinMs = 0.0;
 
@@ -1296,56 +1299,41 @@ public:
     {
         const float s = hg.s, cx = hg.rcx, cy = hg.cy, r = hg.lr, lw = hg.lw;
         const Colour txtC (0xffe6e0d8), dimC (0xff968e86), trackC (0xff343130), okC = hobby::kOn, amber (0xffebb45a);
-        auto back = [] (Colour c) { return c.interpolatedWith (hobby::kScreen, 0.45f); };
         const bool on = engine.smartOn.load() != 0;
-        const int mode = engine.smartAuto.load();
         const float acc = engine.smartAccept.load();
         const int sel = selected;
         const int type = valid ? engine.smartType[(size_t) sel].load() : 0;
         static const char* typeNames[] { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
-        const Colour bc = valid ? blockLight (sel) : Colour (0xff6b625a);
         const bool active = on && type != 0;
-        const Colour cols[3] { back (bc.interpolatedWith (Colours::black, 0.25f)), back (bc), back (bc.interpolatedWith (Colours::white, 0.45f)) };
-        float lim[4]; flow::smartLimits (type, lim);
-        const float vals[3] { valid ? engine.smartLow[(size_t) sel].load() : 0.0f, valid ? engine.smartMid[(size_t) sel].load() : 0.0f, valid ? engine.smartHigh[(size_t) sel].load() : 0.0f };
-        const float width = valid ? engine.smartWidth[(size_t) sel].load() : 0.0f;
-        const float full = degreesToRadians (270.0f), start = degreesToRadians (-135.0f);
-        for (int k = 0; k < 3; ++k)
+        float lim[7]; flow::smartLimits (type, lim);
+        float vals[6], need[6];
+        for (int k = 0; k < 6; ++k)
         {
-            const float rad = r - (float) k * (lw + 4.0f * s) + 0.0f;
-            const bool isOver = active && vals[k] > lim[k];
-            Path tp; tp.addCentredArc (cx, cy, rad, rad, 0.0f, start, start + full, true);
-            g.setColour (trackC); g.strokePath (tp, PathStrokeType (lw));
-            if (vals[k] > 0.003f)
-            {
-                Path vp; vp.addCentredArc (cx, cy, rad, rad, 0.0f, start, start + full * jlimit (0.0f, 1.0f, vals[k]), true);
-                g.setColour (isOver ? back (hobby::kRed) : cols[k]); g.strokePath (vp, PathStrokeType (lw));
-            }
-            if (active && lim[k] < 0.999f)
-            {
-                const float a = start + full * lim[k];
-                const float dx = std::sin (a), dy = -std::cos (a);
-                g.setColour (txtC.withAlpha (0.8f));
-                g.drawLine (cx + dx * (rad - lw * 0.5f - 2.0f), cy + dy * (rad - lw * 0.5f - 2.0f), cx + dx * (rad + lw * 0.5f + 2.0f), cy + dy * (rad + lw * 0.5f + 2.0f), jmax (1.4f, 1.6f * s));
-            }
+            vals[k] = valid ? engine.smartBand[(size_t) sel][(size_t) k].load() : 0.0f;
+            need[k] = valid ? engine.smartNeed[(size_t) sel][(size_t) k].load() : 0.0f;
         }
-        // κέντρο: κύκλος του πλάτους stereo. Πάτημα = Off → Ask → Auto
+        const float width = valid ? engine.smartWidth[(size_t) sel].load() : 0.0f;
+
+        // 6 ζώνες: 3 ζεύγη λωρίδων (μπορντώ, πορτοκάλι, κίτρινο). Ίδιο συνολικό πάχος με τους 3 παλιούς δακτυλίους.
+        hobby::drawSmartLanes (g, cx, cy, r + lw * 0.5f, 3.0f * lw + 8.0f * s, vals, lim, active, trackC, txtC.withAlpha (0.85f));
+
+        // κέντρο: κύκλος του πλάτους stereo. Πάτημα = Off ↔ On (Auto)
         {
             const float sr = 26.0f * s;
             g.setColour (Colour (0xff4a4642)); g.drawEllipse (cx - sr, cy - sr, 2.0f * sr, 2.0f * sr, 2.0f);
             const float ew = jmax (1.5f, width * sr);
-            const bool wOver = active && width > lim[3];
-            g.setColour (! on ? Colour (0xff4a4642) : wOver ? back (hobby::kRed) : cols[1]);
+            const bool wOver = active && width > lim[6];
+            g.setColour (! on ? Colour (0xff4a4642) : wOver ? hobby::kSmartOver : hobby::kOn.interpolatedWith (hobby::kScreen, 0.3f));
             g.fillEllipse (cx - ew, cy - sr + 3.0f, 2.0f * ew, 2.0f * sr - 6.0f);
             if (on)
             {
-                g.setColour (mode == 1 ? okC : dimC);
+                g.setColour (okC);
                 g.setFont (hobby::makeFont (typeface, 10.0f * s).boldened());
-                g.drawText (mode == 1 ? "Auto" : "Ask", Rectangle<float> (cx - 30.0f * s, cy + sr + 3.0f * s, 60.0f * s, 14.0f * s), Justification::centred, false);
+                g.drawText ("Auto", Rectangle<float> (cx - 30.0f * s, cy + sr + 3.0f * s, 60.0f * s, 14.0f * s), Justification::centred, false);
             }
             const Rectangle<float> hit (cx - sr - 8.0f, cy - sr - 8.0f, 2.0f * sr + 16.0f, 2.0f * sr + 16.0f);
             hot.push_back ({ hit, [this] { if (onSmartCycle) onSmartCycle(); } });
-            tipZones.push_back ({ hit, String (on ? (mode == 1 ? "Smart master: Auto (press = Off)" : "Smart master: Ask (press = Auto)") : "Smart master: Off (press = Ask)") });
+            tipZones.push_back ({ hit, String (on ? "Smart master: On (press = Off)" : "Smart master: Off (press = On)") });
         }
         // τύπος ήχου: πάτημα = επόμενος τύπος
         {
@@ -1354,35 +1342,22 @@ public:
             g.drawText (valid ? String (typeNames[jlimit (0, 7, type)]) : String ("-"), tr, Justification::centred, false);
             if (valid) { hot.push_back ({ tr, [this, b = selected] { if (onSmartType) onSmartType (b); } }); tipZones.push_back ({ tr, String ("Sound type of the block (press = next)") }); }
         }
-        // κάτω: διακόπτης Follow, πρόταση, ✓
+        // κάτω: πρόταση / κατάσταση
         {
-            const float yb = cy + r + lw * 0.5f + 28.0f * s, fr = 13.0f * s;
-
-            const float needLow = valid ? engine.smartNeedLow[(size_t) sel].load() : 0.0f, needW = valid ? engine.smartNeedWidth[(size_t) sel].load() : 1.0f;
-            const float appLow = valid ? engine.smartAppLow[(size_t) sel].load() : 0.0f, appW = valid ? engine.smartAppWidth[(size_t) sel].load() : 1.0f;
-            const bool nL = active && needLow > 0.5f, nW = active && needW < 0.97f, applied = appLow > 0.2f || appW < 0.98f, need = nL || nW;
+            const float yb = cy + r + lw * 0.5f + 28.0f * s;
+            const float needW = valid ? engine.smartNeedWidth[(size_t) sel].load() : 1.0f;
+            bool applied = valid && engine.smartAppWidth[(size_t) sel].load() < 0.98f;
+            for (int k = 0; k < 6; ++k) if (valid && engine.smartApp[(size_t) sel][(size_t) k].load() > 0.2f) applied = true;
+            float needAcc[6]; for (int k = 0; k < 6; ++k) needAcc[k] = active ? need[k] : 0.0f;
+            const String corr = valid && active ? hobby::smartCorrectionText (needAcc, needW, acc) : String();
             String msg;
             if (! valid) msg = "";
             else if (! on) msg = "Smart off";
             else if (type == 0) msg = "Pick a sound type";
-            else if (need)
-            {
-                if (nL) msg = "Lows -" + String (needLow * acc, 1) + " dB";
-                if (nW) msg += String (msg.isEmpty() ? "" : "  ") + "Width " + String ((int) std::round (100.0f - (1.0f - needW) * acc * 100.0f)) + " %";
-            }
+            else if (corr.isNotEmpty()) msg = corr;
             else msg = applied ? "Correcting" : "In range";
-            g.setColour (need ? amber : dimC); g.setFont (hobby::makeFont (typeface, 12.0f * s).boldened());
-            g.drawText (msg, Rectangle<float> (cx - 60.0f * s, yb - 9.0f * s, 150.0f * s, 18.0f * s), Justification::centred, true);
-            if (valid && on && mode == 0 && type != 0 && (need || applied) && acc > 0.0f)
-            {
-                const Point<float> kc (cx + 96.0f * s, yb);
-                const float kr = 15.0f * s;
-                g.setColour (applied ? Colour (0xff3c5a46) : Colour (0xff35493c)); g.fillEllipse (kc.x - kr, kc.y - kr, 2.0f * kr, 2.0f * kr);
-                g.setColour (okC); g.drawEllipse (kc.x - kr, kc.y - kr, 2.0f * kr, 2.0f * kr, applied ? 2.4f : 1.6f);
-                Path ck; ck.startNewSubPath (kc.x - 6.0f * s, kc.y); ck.lineTo (kc.x - 2.0f * s, kc.y + 5.0f * s); ck.lineTo (kc.x + 7.0f * s, kc.y - 5.0f * s);
-                g.setColour (txtC); g.strokePath (ck, PathStrokeType (2.6f, PathStrokeType::curved, PathStrokeType::rounded));
-                hot.push_back ({ Rectangle<float> (kc.x - kr - 4.0f, kc.y - kr - 4.0f, 2.0f * kr + 8.0f, 2.0f * kr + 8.0f), [this, b = selected] { if (onSmartApply) onSmartApply (b); } });
-            }
+            g.setColour (corr.isNotEmpty() ? amber : dimC); g.setFont (hobby::makeFont (typeface, 12.0f * s).boldened());
+            g.drawText (msg, Rectangle<float> (cx - 130.0f * s, yb - 9.0f * s, 260.0f * s, 18.0f * s), Justification::centred, true);
         }
     }
 

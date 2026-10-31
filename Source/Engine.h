@@ -89,6 +89,13 @@ namespace flow
 
     // Smart master: αρχικά όρια ανά τύπο ήχου {Low, Mid, High, πλάτος}, κλίμακα 0..1 (στάθμη: -60..0 dB RMS).
     // Είναι σύμβαση μίξης, όχι τεκμηριωμένα ευρήματα: ρυθμίζονται με το αυτί. 1.0 = χωρίς όριο.
+    // 6 ζώνες: Sub <60, Low 60-200, Low-Mid 200-500, Mid 500-2k, High-Mid 2k-6k, High >6k (Hz)
+    constexpr int smartBands = 6;
+    constexpr float smartCross[5] = { 60.0f, 200.0f, 500.0f, 2000.0f, 6000.0f };
+    inline float smartMaxDb (int band) { return band < 2 ? 12.0f : 6.0f; }   // μέγιστη μείωση ανά ζώνη
+
+    // όρια ανά τύπο ήχου: out[0..5] ζώνες, out[6] πλάτος. Αρχικές τιμές από τα παλιά 3 όρια (Low, Mid, High):
+    // σύμβαση μίξης, όχι τεκμηριωμένα ευρήματα. Ρυθμίζονται με το αυτί. 1.0 = χωρίς όριο.
     inline void smartLimits (int type, float* out)
     {
         static const float t[8][4] = { { 1.0f, 1.0f, 1.0f, 1.0f },     // Other
@@ -100,7 +107,14 @@ namespace flow
                                        { 0.90f, 0.80f, 0.85f, 0.80f },  // Drums
                                        { 0.50f, 0.80f, 0.80f, 1.00f } }; // FX
         const int i = type < 0 || type > 7 ? 0 : type;
-        for (int k = 0; k < 4; ++k) out[k] = t[i][k];
+        const float lo = t[i][0], mi = t[i][1], hi = t[i][2];
+        out[0] = lo < 0.999f ? lo * 0.85f : 1.0f;
+        out[1] = lo;
+        out[2] = mi;
+        out[3] = mi;
+        out[4] = hi;
+        out[5] = hi < 0.999f ? hi * 0.9f : 1.0f;
+        out[6] = t[i][3];
     }
 
     class Engine : public juce::AudioIODeviceCallback
@@ -121,8 +135,9 @@ namespace flow
                 volPos[b] = 1.0f; gainOut[b] = 1.0f;
                 volMap[b] = 0;
                 followBlock[b] = 0;
-                smartType[b] = 0; smartLow[b] = 0.0f; smartMid[b] = 0.0f; smartHigh[b] = 0.0f; smartWidth[b] = 0.0f;
-                smartNeedLow[b] = 0.0f; smartNeedWidth[b] = 1.0f; smartAppLow[b] = 0.0f; smartAppWidth[b] = 1.0f;
+                smartType[b] = 0; smartWidth[b] = 0.0f; smartNeedWidth[b] = 1.0f;
+                for (int k = 0; k < smartBands; ++k) { smartBand[b][(size_t) k] = 0.0f; smartNeed[b][(size_t) k] = 0.0f; }
+                smartResetApp ((int) b);
                 loopStateOut[b] = loopOff;
                 loopBeatsOut[b] = 0.0;
                 recStartBeatOut[b] = 0.0;
@@ -178,12 +193,16 @@ namespace flow
             followTRoot = followRoot.load(); followTType = followType.load();
         }
         // Smart master: μέτρηση ανά block (3 ζώνες + πλάτος stereo) και διόρθωση με βάση τον τύπο ήχου
-        std::atomic<int> smartOn { 0 }, smartAuto { 0 };            // On/Off, 0 = Ask (✓), 1 = Auto
+        std::atomic<int> smartOn { 0 }, smartAuto { 1 };            // On/Off. Η διόρθωση είναι πάντα Auto (το smartAuto δεν χρησιμοποιείται πια)
         std::atomic<float> smartAccept { 0.6f };                    // πόσο από την αναγκαία διόρθωση εφαρμόζεται (0..1)
         std::array<std::atomic<int>, numBlocks> smartType;          // 0 Other, 1 Bass, 2 Keys, 3 Pad, 4 Lead, 5 Strings, 6 Drums, 7 FX
-        std::array<std::atomic<float>, numBlocks> smartLow, smartMid, smartHigh, smartWidth;   // μετρήσεις 0..1 (πριν τη διόρθωση)
-        std::array<std::atomic<float>, numBlocks> smartNeedLow, smartNeedWidth;                // αναγκαία διόρθωση: dB, κλίμακα πλάτους 0..1
-        std::array<std::atomic<float>, numBlocks> smartAppLow, smartAppWidth;                  // εφαρμοσμένη διόρθωση: dB, κλίμακα πλάτους
+        std::array<std::array<std::atomic<float>, smartBands>, numBlocks> smartBand, smartNeed, smartApp;   // ανά ζώνη: μέτρηση 0..1 (πριν τη διόρθωση), αναγκαία και εφαρμοσμένη μείωση (dB)
+        std::array<std::atomic<float>, numBlocks> smartWidth, smartNeedWidth, smartAppWidth;                // πλάτος 0..1, αναγκαία και εφαρμοσμένη κλίμακα πλάτους
+        void smartResetApp (int b)
+        {
+            for (int k = 0; k < smartBands; ++k) smartApp[(size_t) b][(size_t) k] = 0.0f;
+            smartAppWidth[(size_t) b] = 1.0f;
+        }
         std::atomic<int> sceneRequest { -1 };   // από πετάλι: -2 = προηγούμενη, -3 = επόμενη (το διαβάζει το UI)
         std::atomic<int> selectedBlock { 0 };   // το block στο οποίο δρουν Hold και looper
         std::atomic<int> lastPlayed { -1 };     // το block που έπαιξες τελευταίο: εκεί γράφει το Rec MIDI loop από πετάλι
@@ -708,7 +727,7 @@ namespace flow
                     processFx (*fx, B.scratch.getWritePointer (0), B.scratch.getWritePointer (1), numSamples);
 
                 if (smartOn.load() != 0) smartProcess (B, b, numSamples, sr);
-                else if (smartLow[(size_t) b].load() != 0.0f) { smartLow[(size_t) b] = 0.0f; smartMid[(size_t) b] = 0.0f; smartHigh[(size_t) b] = 0.0f; }
+                else if (smartBand[(size_t) b][1].load() != 0.0f) for (int k = 0; k < smartBands; ++k) smartBand[(size_t) b][(size_t) k] = 0.0f;
 
                 const float shown = curveGain (curveMode[(size_t) b].load(), volPos[(size_t) b].load());
                 gainOut[(size_t) b] = shown;
@@ -868,10 +887,11 @@ namespace flow
             std::array<uint8_t, 128> chordCount {};
             float prevGain = -1.0f;
             // Smart master: φίλτρα μέτρησης και διόρθωσης, εξομαλυμένες ενέργειες
-            float smLpLow = 0.0f, smLpHigh = 0.0f;               // μέτρηση: μονοφωνικό άθροισμα
-            float smCorrL = 0.0f, smCorrR = 0.0f;                // διόρθωση Low: φίλτρο ανά κανάλι
-            float smEnLow = 0.0f, smEnMid = 0.0f, smEnHigh = 0.0f, smEnM = 0.0f, smEnS = 0.0f;
-            float smPrevG = 1.0f, smPrevW = 1.0f;
+            float smLp[5] {};                                    // μέτρηση: μονοφωνικό άθροισμα, 5 φίλτρα (όρια των 6 ζωνών)
+            float smCorrL[5] {}, smCorrR[5] {};                  // διόρθωση: τα ίδια φίλτρα ανά κανάλι
+            float smEn[6] {}, smEnM = 0.0f, smEnS = 0.0f;
+            float smPrevG[6] { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+            float smPrevW = 1.0f;
             int lastLatched = -1;
             int prevHold = 0, prevArp = 0;
             int arpIndex = 0;
@@ -977,32 +997,34 @@ namespace flow
             return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
         }
 
-        // μετράει το block (πριν τη διόρθωση) και εφαρμόζει τη διόρθωση Low / πλάτους που έχει εγκριθεί
+        // μετράει το block (πριν τη διόρθωση) σε 6 ζώνες και εφαρμόζει τη διόρθωση (πάντα Auto, στο ποσοστό αποδοχής)
         void smartProcess (Block& B, int b, int n, double sr)
         {
             float* L = B.scratch.getWritePointer (0);
             float* R = B.scratch.getWritePointer (1);
-            const float aLow  = 1.0f - std::exp (-6.2831853f * 200.0f / (float) sr);
-            const float aHigh = 1.0f - std::exp (-6.2831853f * 2500.0f / (float) sr);
-            double sLow = 0, sMid = 0, sHigh = 0, sM = 0, sS = 0;
+            float a[5];
+            for (int k = 0; k < 5; ++k) a[k] = 1.0f - std::exp (-6.2831853f * smartCross[k] / (float) sr);
+            double sE[6] = {}, sM = 0, sS = 0;
             for (int i = 0; i < n; ++i)
             {
                 const float m = 0.5f * (L[i] + R[i]), s = 0.5f * (L[i] - R[i]);
-                B.smLpLow += aLow * (m - B.smLpLow);
-                B.smLpHigh += aHigh * (m - B.smLpHigh);
-                const float lo = B.smLpLow, mid = B.smLpHigh - B.smLpLow, hi = m - B.smLpHigh;
-                sLow += (double) lo * lo; sMid += (double) mid * mid; sHigh += (double) hi * hi;
+                for (int k = 0; k < 5; ++k) B.smLp[k] += a[k] * (m - B.smLp[k]);
+                float band[6];
+                band[0] = B.smLp[0];
+                for (int k = 1; k < 5; ++k) band[k] = B.smLp[k] - B.smLp[k - 1];
+                band[5] = m - B.smLp[4];
+                for (int k = 0; k < 6; ++k) sE[k] += (double) band[k] * band[k];
                 sM += (double) m * m; sS += (double) s * s;
             }
             const float inv = 1.0f / (float) juce::jmax (1, n);
-            const float k = 1.0f - std::exp (-(float) n / (0.3f * (float) sr));
-            B.smEnLow  += k * ((float) sLow  * inv - B.smEnLow);
-            B.smEnMid  += k * ((float) sMid  * inv - B.smEnMid);
-            B.smEnHigh += k * ((float) sHigh * inv - B.smEnHigh);
-            B.smEnM    += k * ((float) sM    * inv - B.smEnM);
-            B.smEnS    += k * ((float) sS    * inv - B.smEnS);
-            const float lowV = smartLevel (B.smEnLow), midV = smartLevel (B.smEnMid), highV = smartLevel (B.smEnHigh);
-            smartLow[(size_t) b] = lowV; smartMid[(size_t) b] = midV; smartHigh[(size_t) b] = highV;
+            const float kk0 = 1.0f - std::exp (-(float) n / (0.3f * (float) sr));
+            for (int k = 0; k < 6; ++k)
+            {
+                B.smEn[k] += kk0 * ((float) sE[k] * inv - B.smEn[k]);
+                smartBand[(size_t) b][(size_t) k] = smartLevel (B.smEn[k]);
+            }
+            B.smEnM += kk0 * ((float) sM * inv - B.smEnM);
+            B.smEnS += kk0 * ((float) sS * inv - B.smEnS);
             float width = smartWidth[(size_t) b].load();
             if (B.smEnM + B.smEnS > 1.0e-9f)   // σε σιωπή κρατιέται η τελευταία τιμή
             {
@@ -1013,40 +1035,57 @@ namespace flow
 
             // αναγκαία διόρθωση ως προς τα όρια του τύπου
             const int type = smartType[(size_t) b].load();
-            float lim[4]; smartLimits (type, lim);
-            const float needLow = type == 0 ? 0.0f : juce::jlimit (0.0f, 12.0f, (lowV - lim[0]) * 60.0f);
-            const float needW = type == 0 || width <= lim[3] ? 1.0f : juce::jmax (0.3f, lim[3] / width);
-            smartNeedLow[(size_t) b] = needLow; smartNeedWidth[(size_t) b] = needW;
-
+            float lim[7]; smartLimits (type, lim);
             const float accept = smartAccept.load();
-            float appLow = smartAppLow[(size_t) b].load(), appW = smartAppWidth[(size_t) b].load();
-            if (type == 0) { appLow = 0.0f; appW = 1.0f; }
-            else if (smartAuto.load() != 0)
+            const float kk = 1.0f - std::exp (-(float) n / (0.5f * (float) sr));
+            float g[6];
+            for (int k = 0; k < 6; ++k)
             {
-                const float kk = 1.0f - std::exp (-(float) n / (0.5f * (float) sr));
-                appLow += kk * (needLow * accept - appLow);
-                appW   += kk * ((1.0f - (1.0f - needW) * accept) - appW);
+                const float need = type == 0 ? 0.0f : juce::jlimit (0.0f, smartMaxDb (k), (smartBand[(size_t) b][(size_t) k].load() - lim[k]) * 60.0f);
+                smartNeed[(size_t) b][(size_t) k] = need;
+                float app = smartApp[(size_t) b][(size_t) k].load();
+                if (type == 0) app = 0.0f;
+                else app += kk * (need * accept - app);
+                smartApp[(size_t) b][(size_t) k] = app;
+                g[k] = std::pow (10.0f, -app / 20.0f);
             }
-            smartAppLow[(size_t) b] = appLow; smartAppWidth[(size_t) b] = appW;
+            const float needW = type == 0 || width <= lim[6] ? 1.0f : juce::jmax (0.3f, lim[6] / width);
+            smartNeedWidth[(size_t) b] = needW;
+            float appW = smartAppWidth[(size_t) b].load();
+            if (type == 0) appW = 1.0f;
+            else appW += kk * ((1.0f - (1.0f - needW) * accept) - appW);
+            smartAppWidth[(size_t) b] = appW;
 
-            // εφαρμογή: Low (μείωση της ζώνης κάτω από ~200 Hz) και πλάτος (κλίμακα του side)
-            const float gLow = std::pow (10.0f, -appLow / 20.0f);
-            if (gLow < 0.999f || B.smPrevG < 0.999f || appW < 0.999f || B.smPrevW < 0.999f)
+            // εφαρμογή: κάθε ζώνη παίρνει το κέρδος της (οι ζώνες είναι διαφορές φίλτρων, άθροισμα = αρχικό σήμα) και το πλάτος (κλίμακα του side)
+            bool act = appW < 0.999f || B.smPrevW < 0.999f;
+            for (int k = 0; k < 6; ++k) if (g[k] < 0.999f || B.smPrevG[k] < 0.999f) act = true;
+            if (act)
             {
                 for (int i = 0; i < n; ++i)
                 {
                     const float t = (float) (i + 1) / (float) n;
-                    const float g = B.smPrevG + (gLow - B.smPrevG) * t;
+                    float gk[6];
+                    for (int k = 0; k < 6; ++k) gk[k] = B.smPrevG[k] + (g[k] - B.smPrevG[k]) * t;
                     const float w = B.smPrevW + (appW - B.smPrevW) * t;
-                    B.smCorrL += aLow * (L[i] - B.smCorrL);
-                    B.smCorrR += aLow * (R[i] - B.smCorrR);
-                    float l = L[i] - (1.0f - g) * B.smCorrL;
-                    float r = R[i] - (1.0f - g) * B.smCorrR;
+                    for (int k = 0; k < 5; ++k)
+                    {
+                        B.smCorrL[k] += a[k] * (L[i] - B.smCorrL[k]);
+                        B.smCorrR[k] += a[k] * (R[i] - B.smCorrR[k]);
+                    }
+                    float l = gk[0] * B.smCorrL[0], r = gk[0] * B.smCorrR[0];
+                    for (int k = 1; k < 5; ++k)
+                    {
+                        l += gk[k] * (B.smCorrL[k] - B.smCorrL[k - 1]);
+                        r += gk[k] * (B.smCorrR[k] - B.smCorrR[k - 1]);
+                    }
+                    l += gk[5] * (L[i] - B.smCorrL[4]);
+                    r += gk[5] * (R[i] - B.smCorrR[4]);
                     const float m = 0.5f * (l + r), s = 0.5f * (l - r) * w;
                     L[i] = m + s; R[i] = m - s;
                 }
             }
-            B.smPrevG = gLow; B.smPrevW = appW;
+            for (int k = 0; k < 6; ++k) B.smPrevG[k] = g[k];
+            B.smPrevW = appW;
         }
 
         juce::CriticalSection lock;

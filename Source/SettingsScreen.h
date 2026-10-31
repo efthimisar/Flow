@@ -14,9 +14,9 @@ public:
         bool active = false;
         juce::String name;
         int type = 0;                                   // 0 Other, 1 Bass, 2 Keys, 3 Pad, 4 Lead, 5 Strings
-        float low = 0, mid = 0, high = 0, width = 0;    // μετρήσεις 0..1
-        float lim[4] = { 1, 1, 1, 1 };                  // όρια του τύπου {Low, Mid, High, πλάτος}
-        float needLow = 0, needW = 1, appLow = 0, appW = 1;
+        float band[6] = {}, need[6] = {}, app[6] = {};  // ανά ζώνη: μέτρηση 0..1, αναγκαία και εφαρμοσμένη μείωση (dB)
+        float lim[7] = { 1, 1, 1, 1, 1, 1, 1 };        // όρια του τύπου {6 ζώνες, πλάτος}
+        float width = 0, needW = 1, appW = 1;
     };
     struct FollowBlock { bool active = false; juce::String name; bool on = false; };
     struct SetInfo { juce::String name, date; juce::Image thumb; bool current = false; juce::File file; };
@@ -64,12 +64,11 @@ public:
         std::function<void (int)> followOnSet, followRootSet, followTypeSet;
         std::function<void (int, bool)> followBlockSet;
         std::function<std::vector<SmartBlock>()> smartBlocks;
-        std::function<int()> smartOnGet, smartModeGet;
+        std::function<int()> smartOnGet;
         std::function<float()> smartAcceptGet;
-        std::function<void (int)> smartOnSet, smartModeSet;
+        std::function<void (int)> smartOnSet;
         std::function<void (float)> smartAcceptSet;
         std::function<void (int, int)> smartTypeSet;    // block, τύπος
-        std::function<void (int)> smartApply;           // ✓ (Ask): εφαρμογή / αναίρεση της πρότασης
         std::function<int()> windowSizeGet;      // 0 Compact, 1 Default, 2 Large, 3 Free
         std::function<void (int)> windowSizeSet;
         std::function<bool (int)> windowSizeFits;
@@ -397,14 +396,12 @@ private:
     {
         using namespace juce;
         const bool on = host.smartOnGet && host.smartOnGet() != 0;
-        const int mode = host.smartModeGet ? host.smartModeGet() : 0;
         const float acc = host.smartAcceptGet ? host.smartAcceptGet() : 0.6f;
         auto c = cardHeader (g, L, "Smart master");
-        const int w3 = (c.getWidth() - 12) / 3;
+        const int w2 = (c.getWidth() - 8) / 2;
         g.setColour (dim()); g.setFont (font (12.0f)); g.drawText ("Mode", c.getX(), c.getY(), c.getWidth(), 16, Justification::centredLeft, false);
-        smallPill (g, { c.getX(), c.getY() + 20, w3, 34 }, "Off", ! on, [this] { if (host.smartOnSet) host.smartOnSet (0); repaint(); });
-        smallPill (g, { c.getX() + w3 + 6, c.getY() + 20, w3, 34 }, "Ask", on && mode == 0, [this] { if (host.smartOnSet) host.smartOnSet (1); if (host.smartModeSet) host.smartModeSet (0); repaint(); });
-        smallPill (g, { c.getX() + 2 * (w3 + 6), c.getY() + 20, w3, 34 }, "Auto", on && mode == 1, [this] { if (host.smartOnSet) host.smartOnSet (1); if (host.smartModeSet) host.smartModeSet (1); repaint(); });
+        smallPill (g, { c.getX(), c.getY() + 20, w2, 34 }, "Off", ! on, [this] { if (host.smartOnSet) host.smartOnSet (0); repaint(); });
+        smallPill (g, { c.getX() + w2 + 8, c.getY() + 20, w2, 34 }, "On (Auto)", on, [this] { if (host.smartOnSet) host.smartOnSet (1); repaint(); });
         g.setColour (dim()); g.drawText ("Accept corrections (drag the dial)", c.getX(), c.getY() + 76, c.getWidth(), 16, Justification::centredLeft, false);
         const int D = jlimit (70, 120, c.getHeight() - 150);
         dialRect = { c.getCentreX() - D / 2, c.getY() + 100, D, D };
@@ -436,22 +433,12 @@ private:
             g.setColour (Colour (0xff3a3632)); g.fillEllipse ((float) rc.getX(), (float) y + 5.0f, 28.0f, 28.0f);
             g.setColour (txt()); g.setFont (font (13.0f, true)); g.drawText (String (b + 1), rc.getX(), y + 5, 28, 28, Justification::centred, false);
             smallPill (g, { rc.getX() + 36, y + 5, 86, 28 }, typeNames[jlimit (0, 7, B.type)], B.type != 0, [this, b, t = B.type] { if (host.smartTypeSet) host.smartTypeSet (b, (t + 1) % 8); repaint(); });
-            const bool needLow = on && B.type != 0 && B.needLow > 0.5f, needW = on && B.type != 0 && B.needW < 0.97f;
-            const bool applied = B.appLow > 0.2f || B.appW < 0.98f, need = needLow || needW;
-            String msg = ! on ? "off" : B.type == 0 ? "pick a type" : need ? ((needLow ? "Lows -" + String (B.needLow * acc, 1) + " dB " : String()) + (needW ? "Width " + String ((int) std::round (100.0f - (1.0f - B.needW) * acc * 100.0f)) + "%" : String())) : applied ? "correcting" : "in range";
-            const bool showCheck = on && mode == 0 && B.type != 0 && (need || applied) && acc > 0.0f;
-            g.setColour (need ? Colour (0xffebb45a) : dim()); g.setFont (font (11.5f));
-            g.drawText (msg, rc.getX() + 130, y + 5, rc.getWidth() - 130 - (showCheck ? 40 : 0), 28, Justification::centredLeft, true);
-            if (showCheck)
-            {
-                const Rectangle<int> k (rc.getRight() - 32, y + 5, 28, 28);
-                g.setColour (applied ? Colour (0xff3c5a46) : Colour (0xff35493c)); g.fillEllipse (k.toFloat());
-                g.setColour (hobby::kOn); g.drawEllipse (k.toFloat().reduced (1.0f), applied ? 2.4f : 1.6f);
-                Path ck; const auto cp = k.getCentre().toFloat();
-                ck.startNewSubPath (cp.x - 6.0f, cp.y); ck.lineTo (cp.x - 2.0f, cp.y + 5.0f); ck.lineTo (cp.x + 7.0f, cp.y - 5.0f);
-                g.setColour (txt()); g.strokePath (ck, PathStrokeType (2.4f, PathStrokeType::curved, PathStrokeType::rounded));
-                hits.push_back ({ k.expanded (3), [this, b] { if (host.smartApply) host.smartApply (b); repaint(); } });
-            }
+            float na[6]; for (int k = 0; k < 6; ++k) na[k] = on && B.type != 0 ? B.need[k] : 0.0f;
+            const String corr = on && B.type != 0 ? hobby::smartCorrectionText (na, B.needW, acc) : String();
+            bool applied = B.appW < 0.98f; for (int k = 0; k < 6; ++k) if (B.app[k] > 0.2f) applied = true;
+            String msg = ! on ? "off" : B.type == 0 ? "pick a type" : corr.isNotEmpty() ? corr : applied ? "correcting" : "in range";
+            g.setColour (corr.isNotEmpty() ? Colour (0xffebb45a) : dim()); g.setFont (font (11.5f));
+            g.drawText (msg, rc.getX() + 130, y + 5, rc.getWidth() - 130, 28, Justification::centredLeft, true);
             y += rowH;
         }
         if (! any) { g.setColour (dim()); g.setFont (font (13.0f)); g.drawText ("No block has an instrument yet.", rc.getX(), rc.getY(), rc.getWidth(), 20, Justification::centredLeft, false); }
@@ -1071,12 +1058,11 @@ private:
     void paintSmart (juce::Graphics& g)
     {
         using namespace juce;
-        const Colour lowC (0xff6ea0eb), midC (0xff78c88c), highC (0xffdc96cd), amber (0xffebb45a), ok = hobby::kOn;
+        const Colour amber (0xffebb45a), ok = hobby::kOn;
         const int W = getWidth(), H = getHeight();
         const bool on = host.smartOnGet && host.smartOnGet() != 0;
-        const int mode = host.smartModeGet ? host.smartModeGet() : 0;
         const float acc = host.smartAcceptGet ? host.smartAcceptGet() : 0.6f;
-        // πάνω λωρίδα: δείκτης ποσοστού, Ask / Auto, On
+        // πάνω λωρίδα: δείκτης ποσοστού, On / Off
         const int sh = H < 420 ? 54 : 70;
         const Rectangle<int> strip (40, 56, W - 80, sh);
         g.setColour (card()); g.fillRoundedRectangle (strip.toFloat(), 16.0f);
@@ -1096,18 +1082,7 @@ private:
         g.drawText ("Drag the dial. 0 % = measure only", strip.getX() + sh + 14, strip.getY() + 28, 300, 16, Justification::centredLeft, false);
         g.setColour (ok); g.setFont (font (22.0f, true));
         g.drawText (String ((int) std::round (acc * 100.0f)) + " %", strip.getX() + sh + 330, strip.getY(), 100, sh, Justification::centredLeft, false);
-        {   // Ask / Auto
-            const Rectangle<int> r (strip.getRight() - 330, strip.getY() + (sh - 40) / 2, 150, 40);
-            g.setColour (Colour (0xff242220)); g.fillRoundedRectangle (r.toFloat(), 20.0f);
-            g.setColour (lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 20.0f, 1.0f);
-            for (int k = 0; k < 2; ++k)
-            {
-                const Rectangle<int> h (r.getX() + 2 + k * 73, r.getY() + 2, 73, 36);
-                if (mode == k) { g.setColour (Colour (0xff3c5a46)); g.fillRoundedRectangle (h.toFloat(), 18.0f); }
-                g.setColour (mode == k ? txt() : dim()); g.setFont (font (13.0f, true));
-                g.drawText (k == 0 ? "Ask" : "Auto", h, Justification::centred, false);
-                hits.push_back ({ h, [this, k] { if (host.smartModeSet) host.smartModeSet (k); repaint(); } });
-            }
+        {
             const Rectangle<int> o (strip.getRight() - 160, strip.getY() + (sh - 40) / 2, 150, 40);
             g.setColour (on ? Colour (0xff3c5a46) : Colour (0xff2a2725)); g.fillRoundedRectangle (o.toFloat(), 20.0f);
             g.setColour (on ? ok : lineC()); g.drawRoundedRectangle (o.toFloat().reduced (1.0f), 20.0f, on ? 2.0f : 1.0f);
@@ -1165,22 +1140,23 @@ private:
             const float R0 = (float) D * 0.5f, th = jmax (3.5f, R0 * 0.16f);
             const bool dim0 = ! on || B.type == 0;
             auto over = [&] (float v, float lm) { return on && B.type != 0 && v > lm; };
-            ringArc (g, rcx, rcy, R0 - th * 0.5f,              th, B.low,  lowC,  dim0 ? 1.0f : B.lim[0], over (B.low,  B.lim[0]));
-            ringArc (g, rcx, rcy, R0 - th * 1.7f,              th, B.mid,  midC,  dim0 ? 1.0f : B.lim[1], over (B.mid,  B.lim[1]));
-            ringArc (g, rcx, rcy, R0 - th * 2.9f,              th, B.high, highC, dim0 ? 1.0f : B.lim[2], over (B.high, B.lim[2]));
+            {
+                float lm6[6]; for (int k = 0; k < 6; ++k) lm6[k] = B.lim[k];
+                hobby::drawSmartLanes (g, rcx, rcy, R0, th * 3.4f, B.band, lm6, ! dim0, Colour (0xff343130), txt().withAlpha (0.85f));
+            }
 
             // πλάτος: κύκλος με γεμάτο σχήμα
             const float sr = (float) (stH - 12) * 0.5f + 2.0f;
             const float scx = (float) c.getX() + 12.0f + sr, scy = (float) (ringBottom + 6 + stH / 2);
-            const bool wOver = over (B.width, B.lim[3]);
+            const bool wOver = over (B.width, B.lim[6]);
             g.setColour (Colour (0xff4a4642)); g.drawEllipse (scx - sr, scy - sr, sr * 2.0f, sr * 2.0f, 1.6f);
             {
                 const float ew = jmax (1.5f, B.width * sr);
-                g.setColour (wOver ? amber : midC);
+                g.setColour (wOver ? hobby::kSmartOver : ok.interpolatedWith (hobby::kScreen, 0.3f));
                 g.fillEllipse (scx - ew, scy - sr + 2.0f, ew * 2.0f, sr * 2.0f - 4.0f);
-                if (on && B.type != 0 && B.lim[3] < 0.999f)
+                if (on && B.type != 0 && B.lim[6] < 0.999f)
                 {
-                    const float lw = B.lim[3] * sr;
+                    const float lw = B.lim[6] * sr;
                     g.setColour (txt());
                     g.drawLine (scx - lw, scy - sr - 2.0f, scx - lw, scy + sr + 2.0f, 1.4f);
                     g.drawLine (scx + lw, scy - sr - 2.0f, scx + lw, scy + sr + 2.0f, 1.4f);
@@ -1191,47 +1167,27 @@ private:
 
             // πρόταση / κατάσταση
             const Rectangle<int> sg (c.getX() + 8, c.getBottom() - sugH - 8, cw - 16, sugH);
-            const bool needLow = on && B.type != 0 && B.needLow > 0.5f, needW = on && B.type != 0 && B.needW < 0.97f;
-            const bool applied = B.appLow > 0.2f || B.appW < 0.98f;
-            const bool need = needLow || needW;
+            float na[6]; for (int k = 0; k < 6; ++k) na[k] = on && B.type != 0 ? B.need[k] : 0.0f;
+            const String corr = on && B.type != 0 ? hobby::smartCorrectionText (na, B.needW, acc) : String();
+            bool applied = B.appW < 0.98f; for (int k = 0; k < 6; ++k) if (B.app[k] > 0.2f) applied = true;
+            const bool need = corr.isNotEmpty();
             g.setColour (Colour (0xff242220)); g.fillRoundedRectangle (sg.toFloat(), 12.0f);
             g.setColour (need ? amber : lineC()); g.drawRoundedRectangle (sg.toFloat().reduced (0.5f), 12.0f, need ? 1.5f : 1.0f);
             g.setFont (font (11.5f, true));
-            String l1, l2;
-            if (! on || B.type == 0) { l1 = B.type == 0 ? "Pick a sound type" : "Smart master is off"; }
-            else if (need)
-            {
-                if (needLow) l2 = "Lows -" + String (B.needLow * acc, 1) + " dB";
-                if (needW) l2 += String (l2.isEmpty() ? "" : "   ") + "Width " + String ((int) std::round (100.0f - (1.0f - B.needW) * acc * 100.0f)) + " %";
-                l1 = String (typeNames[B.type]) + ": over the limit";
-            }
+            String l1;
+            if (! on || B.type == 0) l1 = B.type == 0 ? "Pick a sound type" : "Smart master is off";
+            else if (need) l1 = String (typeNames[B.type]) + ": over the limit";
             else l1 = applied ? "Correcting" : "In range";
             g.setColour (need ? amber : dim());
-            g.drawText (l1, sg.getX() + 10, sg.getY() + 5, sg.getWidth() - 56, 16, Justification::centredLeft, true);
-            if (l2.isNotEmpty()) { g.setColour (txt()); g.setFont (font (11.5f)); g.drawText (l2, sg.getX() + 10, sg.getY() + 22, sg.getWidth() - 56, 16, Justification::centredLeft, true); }
-            if (on && mode == 0 && B.type != 0 && (need || applied) && acc > 0.0f)
-            {
-                const Point<float> bc ((float) sg.getRight() - 24.0f, (float) sg.getCentreY());
-                g.setColour (applied ? Colour (0xff3c5a46) : Colour (0xff35493c)); g.fillEllipse (bc.x - 15.0f, bc.y - 15.0f, 30.0f, 30.0f);
-                g.setColour (ok); g.drawEllipse (bc.x - 15.0f, bc.y - 15.0f, 30.0f, 30.0f, applied ? 2.4f : 1.6f);
-                Path ck; ck.startNewSubPath (bc.x - 6.0f, bc.y); ck.lineTo (bc.x - 2.0f, bc.y + 5.0f); ck.lineTo (bc.x + 7.0f, bc.y - 5.0f);
-                g.setColour (txt()); g.strokePath (ck, PathStrokeType (2.6f, PathStrokeType::curved, PathStrokeType::rounded));
-                hits.push_back ({ Rectangle<int> ((int) bc.x - 18, (int) bc.y - 18, 36, 36), [this, b] { if (host.smartApply) host.smartApply (b); repaint(); } });
-            }
+            g.drawText (l1, sg.getX() + 10, sg.getY() + 5, sg.getWidth() - 20, 16, Justification::centredLeft, true);
+            if (need) { g.setColour (txt()); g.setFont (font (11.0f)); g.drawFittedText (corr, sg.getX() + 10, sg.getY() + 22, sg.getWidth() - 20, 26, Justification::centredLeft, 2); }
         }
         // υπόμνημα
         {
             int x = 40; const int y = H - 20;
-            const char* nm[] = { "Low", "Mid", "High" }; const Colour cc[] = { lowC, midC, highC };
             g.setFont (font (11.0f));
-            for (int k = 0; k < 3; ++k)
-            {
-                g.setColour (cc[k]); g.fillEllipse ((float) x, (float) y + 3.0f, 9.0f, 9.0f);
-                g.setColour (dim()); g.drawText (nm[k], x + 14, y, 40, 15, Justification::centredLeft, false);
-                x += 62;
-            }
             g.setColour (dim());
-            g.drawText ("Ring = level. White tick = limit of the sound type. Amber = over the limit. Circle = stereo width.", x + 10, y, W - x - 50, 15, Justification::centredLeft, true);
+            g.drawText ("Lanes from outside to inside: Sub, Low, Low-Mid, Mid, High-Mid, High. White tick = limit of the sound type. Cream = over the limit. Circle = stereo width.", x + 10, y, W - x - 50, 15, Justification::centredLeft, true);
         }
     }
 
