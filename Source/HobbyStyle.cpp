@@ -456,6 +456,31 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (p, 1.9f);
             break;
         }
+        case Symbol::Dice:   // Sound Palette: ζάρι, τετράγωνο με πέντε τελείες
+        {
+            juce::Path p;
+            p.addRoundedRectangle (-9.0f, -9.0f, 18.0f, 18.0f, 4.0f);
+            stroke (p, 1.9f);
+            const juce::Point<float> pips[5] { { -4.2f, -4.2f }, { 4.2f, -4.2f }, { 0.0f, 0.0f }, { -4.2f, 4.2f }, { 4.2f, 4.2f } };
+            for (auto& q : pips)
+            {
+                juce::Path dp;
+                dp.addEllipse (q.x - 1.5f, q.y - 1.5f, 3.0f, 3.0f);
+                fill (dp, col);
+            }
+            break;
+        }
+        case Symbol::Camera:   // κράτα τον ήχο: φωτογραφική μηχανή
+        {
+            juce::Path body, top, lens;
+            body.addRoundedRectangle (-10.0f, -5.0f, 20.0f, 15.0f, 3.0f);
+            top.startNewSubPath (-5.0f, -5.0f); top.lineTo (-3.5f, -8.5f); top.lineTo (3.5f, -8.5f); top.lineTo (5.0f, -5.0f);
+            lens.addEllipse (-4.2f, -1.7f, 8.4f, 8.4f);
+            stroke (body, 1.9f);
+            stroke (top, 1.9f);
+            stroke (lens, 1.9f);
+            break;
+        }
     }
 }
 
@@ -500,6 +525,36 @@ void HobbyLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& butt
 }
 
 // ---------------------------------------------------------- κουμπί ORB + REC
+
+// ---------------------------------------------------------- κουμπί Sound Palette (ζάρι + κάμερα)
+void PaletteTile::paint (juce::Graphics& g)
+{
+    const auto r = getLocalBounds().toFloat().reduced (0.5f);
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff46403b), 0.0f, r.getY(), juce::Colour (0xff2a2623), 0.0f, r.getBottom(), false));
+    g.fillRoundedRectangle (r, 9.0f);
+
+    if (downHalf != 0)   // το πατημένο μισό σκουραίνει
+    {
+        juce::Graphics::ScopedSaveState ss (g);
+        const float half = r.getWidth() * 0.5f;
+        g.reduceClipRegion (downHalf == 1 ? juce::Rectangle<int> (0, 0, (int) (r.getX() + half), getHeight())
+                                          : juce::Rectangle<int> ((int) (r.getX() + half), 0, getWidth(), getHeight()));
+        g.setColour (juce::Colours::black.withAlpha (0.22f));
+        g.fillRoundedRectangle (r, 9.0f);
+    }
+
+    g.setColour (juce::Colours::white.withAlpha (0.18f));
+    g.drawLine (r.getX() + 7.0f, r.getY() + 1.5f, r.getRight() - 7.0f, r.getY() + 1.5f, 1.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.45f));
+    g.drawLine (r.getCentreX(), r.getY() + 9.0f, r.getCentreX(), r.getBottom() - 9.0f, 1.5f);
+
+    const juce::Colour tileWhite (0xfff3f4f6);
+    const juce::Colour dim = hobby::kIconGrey.withAlpha (0.4f);
+    const float cy = 25.5f;
+    drawSymbol (g, Symbol::Dice,   { r.getX() + r.getWidth() * 0.25f, cy + (downHalf == 1 ? 1.0f : 0.0f) }, 22.0f, diceOn ? hobby::kOn : dim);
+    drawSymbol (g, Symbol::Camera, { r.getX() + r.getWidth() * 0.75f, cy + (downHalf == 2 ? 1.0f : 0.0f) }, 22.0f,
+                flash ? hobby::kOn : (camOn ? tileWhite : dim));
+}
 
 // ---------------------------------------------------------- τετράγωνο κουμπί τιμής
 void ValueTile::paintButton (juce::Graphics& g, bool, bool isDown)
