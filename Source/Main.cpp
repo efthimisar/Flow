@@ -3,8 +3,6 @@
 
 #include "Views.h"
 #include "KeyLights.h"
-#include "WebOrb.h"
-#include "QrCode.h"
 #include <algorithm>
 #include "AudioPanel.h"
 #include "SettingsScreen.h"
@@ -113,8 +111,6 @@ public:
         holdTile.onClick = [this] { cycleHold (selected); };
         motionTile.onClick = [this] { toggleOrbRec(); };
         motionTile.setTooltip (gr ("Rec motion: press, then drag a circle in the orb. The movement is recorded over 16 bars and loops; you can record over it again."));
-        orbRecTile.setTips (gr ("ORB: 1st press = the orb on the Flow screen, 2nd = the orb in its own window (second screen / iPad), 3rd = closes"),
-                            gr ("Rec motion: press, then drag a circle in the orb. The movement is recorded over 16 bars and loops; you can record over it again."));
         recTile.onClick  = [this]
         {
             if (learnClick (flow::ctlRec)) return;
@@ -288,8 +284,6 @@ public:
         orbFolderPath = settings->getValue ("orbFolder");
         windowSizeMode = jlimit (0, 3, settings->getIntValue ("windowSize", 1));
         autoOrbImage();   // νέο (άδειο) set: τυχαία εικόνα από το φάκελο Music/Flow/Orb, αν υπάρχει
-        webOrbToken = settings->getValue ("webOrbToken");
-        if (webOrbToken.isEmpty()) webOrbToken = String::toHexString (Random::getSystemRandom().nextInt64()).paddedLeft ('0', 8).substring (0, 8);
         loopsView.setOrbMode (false);   // η κύρια οθόνη δείχνει πάντα: loop του block, orb, Smart + Follow
 
         const String savedFolder = settings->getValue ("tapeFolder");
@@ -342,7 +336,6 @@ public:
 
     ~MainComponent() override
     {
-        webServer.stop();
         stopKnobLearn();
         lightsPump.stopTimer();
         stopTimer();
@@ -410,7 +403,7 @@ public:
     {
         if (k.getModifiers().isAnyModifierKeyDown()) return false;
         const auto c = k.getTextCharacter();
-        if (k == KeyPress::escapeKey) { if (learnMode != 0) { learnMode = 0; stopKnobLearn(); setMessage (gr ("MIDI learn cancelled")); updateToolLamps(); return true; } if (settingsScreen.isVisible()) { settingsScreen.goBack(); return true; } if (audioPanel.isVisible()) { audioPanel.close(); return true; } if (orbStage != 0) { closeOrb(); return true; } doPanic(); return true; }
+        if (k == KeyPress::escapeKey) { if (learnMode != 0) { learnMode = 0; stopKnobLearn(); setMessage (gr ("MIDI learn cancelled")); updateToolLamps(); return true; } if (settingsScreen.isVisible()) { settingsScreen.goBack(); return true; } if (audioPanel.isVisible()) { audioPanel.close(); return true; } doPanic(); return true; }
         return false;
     }
 
@@ -1249,194 +1242,6 @@ private:
         saveNow();
     }
 
-    // ---- Orb: οθόνη (κουμπί ORB): 1ο πάτημα = στην οθόνη του Flow, 2ο = σε δικό του παράθυρο (π.χ. iPad), 3ο = κλείνει ----
-    int orbStage = 0;   // 0 κλειστός, 1 στην οθόνη του Flow, 2 σε ξεχωριστό παράθυρο
-
-    void cycleOrb()   // 1ο πάτημα: orb στην οθόνη του Flow, 2ο: QR για το iPad (ξεκινά ο server), 3ο: γυρνά στις λούπες (το iPad μένει συνδεδεμένο)
-    {
-        if (orbStage == 0) { orbStage = 1; loopsView.setOrbMode (true); loopsView.setQr (false, {}); }
-        else if (orbStage == 1)
-        {
-            orbStage = 2;
-            startWebOrb();
-            loopsView.setQr (true, webOrbUrl());
-        }
-        else closeOrb();
-        orbRecTile.setState (orbStage, orbRecArmed);
-        repaint();
-    }
-
-    void closeOrb()
-    {
-        orbStage = 0;
-        loopsView.setQr (false, {});
-        loopsView.setOrbMode (false);   // ο server του iPad μένει ανοιχτός μέχρι να κλείσει το Flow
-        orbRecTile.setState (orbStage, orbRecArmed);
-        repaint();
-    }
-
-    // ---- Orb στο Safari του iPad (web server μέσα στο Flow) ----
-    webOrb::Server webServer;
-    bool webOrbOn = false;
-    String webOrbToken;
-    CriticalSection webImgLock;
-    MemoryBlock webImgJpeg;
-    int webImgVer = 0;
-    String lastWebState;
-
-    void updateWebImage()
-    {
-        MemoryBlock mb;
-        if (orbImage.isValid())
-        {
-            MemoryOutputStream mo (mb, false);
-            JPEGImageFormat jf; jf.setQuality (0.82f);
-            jf.writeImageToStream (orbImage, mo);
-        }
-        const ScopedLock sl (webImgLock);
-        webImgJpeg = mb;
-        ++webImgVer;
-    }
-
-    void startWebOrb()
-    {
-        if (webServer.port != 0) return;
-        webServer.token = webOrbToken;
-        webServer.getImage = [this] { const ScopedLock sl (webImgLock); return webImgJpeg; };
-        webServer.onMessage = [safe = SafePointer<MainComponent> (this)] (const String& msg)
-        {
-            MessageManager::callAsync ([safe, msg] { if (safe != nullptr) safe->webOrbMessage (msg); });
-        };
-        webOrbOn = webServer.start (8765);
-        if (! webOrbOn) setMessage (gr ("iPad orb: could not start the server"));
-        lastWebState = {};
-    }
-
-    void stopWebOrb()
-    {
-        webServer.stop();
-        webServer.port = 0;
-        webOrbOn = false;
-    }
-
-    void webOrbMessage (const String& msg)
-    {
-        const var v = JSON::parse (msg);
-        const String t = v.getProperty ("t", {}).toString();
-        const int c = (int) v.getProperty ("c", -1);
-        if (t == "rec") { toggleOrbRec(); return; }
-        if (t == "clear") { orbClearMotion(); return; }
-        if (c < 0 || c > 3) return;
-        if (t == "touch") orbTouch (c, (int) v.getProperty ("d", 0) != 0);
-        else if (t == "move")
-        {
-            const float x = (float) (double) v.getProperty ("x", 0.0), y = (float) (double) v.getProperty ("y", 0.0);
-            orbMoved (c, { x, y });
-        }
-    }
-
-    void pushWebState (const std::array<LoopsView::KnobState, kSlots>& st, const std::array<Point<float>, 4>& pos)
-    {
-        if (orbStage == 2 && loopsView.qrClients != webServer.getNumClients()) { loopsView.qrClients = webServer.getNumClients(); loopsView.repaint(); }
-        if (! webOrbOn) return;
-        auto* o = new DynamicObject();
-        Array<var> p, k;
-        for (int c = 0; c < 4; ++c) p.add (var (Array<var> { var ((double) pos[(size_t) c].x), var ((double) pos[(size_t) c].y) }));
-        for (int i = 0; i < kSlots; ++i)
-            k.add (var (Array<var> { var (st[(size_t) i].bound ? 1 : 0), var (std::round (st[(size_t) i].value * 100.0)), var (st[(size_t) i].name) }));
-        o->setProperty ("p", p);
-        o->setProperty ("k", k);
-        o->setProperty ("r", orbRecArmed ? 1 : 0);
-        o->setProperty ("m", anyOrbMotion() ? 1 : 0);
-        o->setProperty ("ph", std::round (orbPhase() * 1000.0) / 1000.0);
-        o->setProperty ("t", loopsView.title);
-        { const ScopedLock sl (webImgLock); o->setProperty ("iv", webImgVer); }
-        const String js = JSON::toString (var (o), true);
-        if (js != lastWebState) { lastWebState = js; webServer.setState (js); }
-    }
-
-    // Παράθυρο με QR code για το link του iPad (σκανάρεται με την κάμερα του iPad)
-    struct WebQrPanel : public Component
-    {
-        explicit WebQrPanel (const String& u) : url (u), code (qr::encode (u.toStdString())) { setSize (380, 440); }
-        void paint (Graphics& g) override
-        {
-            g.fillAll (Colours::white);
-            if (code.size > 0)
-            {
-                const int quiet = 4;
-                const int px = jmax (2, (getWidth() - 40) / (code.size + 2 * quiet));
-                const int side = px * (code.size + 2 * quiet);
-                const int x0 = (getWidth() - side) / 2, y0 = 14;
-                g.setColour (Colours::black);
-                for (int y = 0; y < code.size; ++y)
-                    for (int x = 0; x < code.size; ++x)
-                        if (code.dark (x, y)) g.fillRect (x0 + (x + quiet) * px, y0 + (y + quiet) * px, px, px);
-                g.setColour (Colour (0xff3a3430));
-                g.setFont (Font (FontOptions (15.0f, Font::bold)));
-                g.drawText (gr ("Scan with the iPad camera"), 10, y0 + side + 6, getWidth() - 20, 22, Justification::centred, false);
-                g.setFont (Font (FontOptions (12.0f)));
-                g.setColour (Colour (0xff8a8077));
-                g.drawFittedText (url, 14, y0 + side + 30, getWidth() - 28, 36, Justification::centred, 2);
-            }
-            else
-            {
-                g.setColour (Colours::black);
-                g.drawFittedText (url, 14, 14, getWidth() - 28, getHeight() - 28, Justification::centred, 6);
-            }
-        }
-        String url;
-        qr::Code code;
-    };
-
-    void showWebOrbQr()
-    {
-        if (! webOrbOn) return;
-        DialogWindow::LaunchOptions o;
-        o.content.setOwned (new WebQrPanel (webOrbUrl()));
-        o.dialogTitle = "iPad orb";
-        o.dialogBackgroundColour = Colours::white;
-        o.escapeKeyTriggersCloseButton = true;
-        o.useNativeTitleBar = true;
-        o.resizable = false;
-        o.launchAsync();
-    }
-
-    // όλες οι διευθύνσεις IPv4 του Mac· πρώτη η πιο πιθανή του τοπικού δικτύου (192.168.x, μετά 10.x, μετά 172.16-31.x)
-    StringArray webOrbIps() const
-    {
-        auto rank = [] (const String& ip)
-        {
-            if (ip.startsWith ("192.168.64.") || ip.startsWith ("192.168.65.")) return 4;   // συνήθως εικονικά μηχανήματα
-            if (ip.startsWith ("192.168.")) return 0;
-            if (ip.startsWith ("10."))      return 1;
-            if (ip.startsWith ("172."))     { const int b = ip.fromFirstOccurrenceOf (".", false, false).getIntValue(); return (b >= 16 && b <= 31) ? 2 : 5; }
-            return 5;
-        };
-        StringArray ips;
-        for (auto& a : IPAddress::getAllAddresses (false))
-        {
-            const auto t = a.toString();
-            if (! a.isIPv6 && t != "127.0.0.1" && ! t.startsWith ("169.254")) ips.add (t);
-        }
-        std::stable_sort (ips.strings.begin(), ips.strings.end(), [&] (const String& x, const String& y) { return rank (x) < rank (y); });
-        return ips;
-    }
-
-    String webOrbUrl() const
-    {
-        const auto ips = webOrbIps();
-        const String ip = ips.isEmpty() ? String ("<ip>") : ips[0];
-        return "http://" + ip + ":" + String (webServer.port) + "/?k=" + webOrbToken;
-    }
-
-    String webOrbOtherIps() const
-    {
-        auto ips = webOrbIps();
-        ips.remove (0);
-        return ips.joinIntoString ("   ");
-    }
-
     // ---- Orb: εικόνα (σώζεται με το set) ----
     Image orbImage;
     std::unique_ptr<FileChooser> orbChooser;
@@ -1449,7 +1254,6 @@ private:
             img = img.rescaled (jmax (1, roundToInt ((float) img.getWidth() * k)), jmax (1, roundToInt ((float) img.getHeight() * k)), Graphics::highResamplingQuality);
         }
         orbImage = img;
-        updateWebImage();
         loopsView.orbImage = img;
         loopsView.repaint();
         if (save) saveNow();
@@ -1744,7 +1548,6 @@ private:
         if (! orbRecArmed)
             for (auto& bl : orbLane) for (auto& l : bl) if (l.recording) orbFinishLane (l);
         setMessage (orbRecArmed ? gr ("Rec motion (16 bars): drag a circle in the orb") : gr ("Rec motion off"));
-        orbRecTile.setState (orbStage, orbRecArmed);
     }
 
     void orbTick()   // εγγραφή και αναπαραγωγή κίνησης (30 φορές το δευτερόλεπτο)
@@ -1827,7 +1630,6 @@ private:
         std::array<Point<float>, 4> pos;
         for (int c = 0; c < 4; ++c) pos[(size_t) c] = (selected >= 0 && selected < flow::numBlocks) ? orbPos[(size_t) selected][(size_t) c] : orbDefault (c);
         loopsView.setOrb (st, pos, knobStage != 0 ? knobSlot : -1, orbRecArmed, anyOrbMotion());
-        pushWebState (st, pos);
     }
     bool learnClick (int ctl)
     {
@@ -2752,7 +2554,6 @@ private:
             r.push_back ({ "Rec Audio", folder });
         }
         r.push_back ({ "Key lights", keyLights.isOn() ? "on" : "off" });
-        if (webOrbOn) r.push_back ({ "iPad orb", webOrbUrl() + "  \xc2\xb7  " + String (webServer.getNumClients()) + " connected" });
         return r;
     }
 
@@ -2932,15 +2733,6 @@ private:
         h.panicAssign = [this] { startPedalLearn (flow::ctlPanic); };
         h.panicRemove = [this] { engine.mapCode[flow::ctlPanic] = 0; saveNow(); };
         h.panicCodeText = [this]() -> String { const int c = engine.mapCode[flow::ctlPanic].load(); return c != 0 ? pedalCodeText (c) : String(); };
-        h.ipadGet = [this] { return webOrbOn; };
-        h.ipadToggle = [this]
-        {
-            if (webOrbOn) stopWebOrb(); else startWebOrb();
-            setMessage (webOrbOn ? gr ("iPad orb: on") : gr ("iPad orb: off"));
-        };
-        h.ipadUrl = [this] { return webOrbUrl(); };
-        h.ipadClients = [this] { return webServer.getNumClients(); };
-        h.ipadOtherIps = [this] { return webOrbOtherIps(); };
         h.orbFolderText = [this]
         {
             String path = orbImagesDir().getFullPathName();
@@ -3850,8 +3642,6 @@ private:
         settings->setValue ("keyLights", lightsWanted);
         settings->setValue ("orbFolder", orbFolderPath);
         settings->setValue ("windowSize", windowSizeMode);
-        settings->setValue ("webOrbOn", webOrbOn);
-        settings->setValue ("webOrbToken", webOrbToken);
 
         for (int i = 0; i < flow::numControls; ++i)
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
@@ -4248,7 +4038,6 @@ private:
     LoopsView loopsView;
     KeyboardView keyboardView;
     PanelHeader header;
-    OrbRecTile orbRecTile;
     AudioMidiPanel audioPanel { deviceManager, typeface };
     SettingsScreen settingsScreen { typeface };
     RoleCard roleCard { typeface };
@@ -4274,7 +4063,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.59.0"; }
+    const String getApplicationVersion() override { return "0.59.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

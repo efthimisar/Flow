@@ -525,50 +525,6 @@ void HobbyLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& butt
 }
 
 // ---------------------------------------------------------- κουμπί ORB + REC
-void OrbRecTile::paint (juce::Graphics& g)
-{
-    const auto r = getLocalBounds().toFloat().reduced (0.5f);
-    const bool anyDown = down != 0;
-    g.setGradientFill (juce::ColourGradient (juce::Colour (anyDown ? 0xff3d3733 : 0xff46403b), 0.0f, r.getY(),
-                                             juce::Colour (anyDown ? 0xff24211f : 0xff2a2623), 0.0f, r.getBottom(), false));
-    g.fillRoundedRectangle (r, 14.0f);
-    g.setColour (juce::Colours::white.withAlpha (anyDown ? 0.08f : 0.18f));
-    g.drawLine (r.getX() + 12.0f, r.getY() + 1.5f, r.getRight() - 12.0f, r.getY() + 1.5f, 1.0f);
-
-    const float mid = r.getCentreX(), cy = r.getCentreY();
-    g.setColour (juce::Colours::white.withAlpha (0.10f));
-    g.drawLine (mid, r.getY() + 11.0f, mid, r.getBottom() - 11.0f, 1.0f);
-
-    const auto white = juce::Colour (0xffe6e0d8);
-    const auto green = hobby::kOn;
-
-    // αριστερά: ORB. 0 = σφαίρα (άσπρη), 1 = σφαίρα (πράσινη, στην οθόνη του Flow), 2 = ορθογώνιο παράθυρο (πράσινο)
-    {
-        const juce::Point<float> c (mid - r.getWidth() * 0.25f, cy);
-        const auto col = stage == 0 ? white : green;
-        g.setColour (col);
-        if (stage == 2)
-        {
-            // QR: τρία τετράγωνα στις γωνίες και μία τελεία
-            for (auto o : { juce::Point<float> (-10.0f, -10.0f), juce::Point<float> (3.0f, -10.0f), juce::Point<float> (-10.0f, 3.0f) })
-                g.drawRect (c.x + o.x, c.y + o.y, 7.0f, 7.0f, 2.0f);
-            g.fillRect (c.x + 3.5f, c.y + 3.5f, 6.0f, 6.0f);
-        }
-        else
-        {
-            g.drawEllipse (c.x - 10.0f, c.y - 10.0f, 20.0f, 20.0f, 2.0f);
-            juce::Path arc;
-            arc.addCentredArc (c.x, c.y, 6.0f, 6.0f, 0.0f, juce::degreesToRadians (-80.0f), juce::degreesToRadians (-10.0f), true);
-            g.strokePath (arc, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        }
-    }
-    // δεξιά: REC motion
-    {
-        const juce::Point<float> c (mid + r.getWidth() * 0.25f, cy);
-        g.setColour (rec ? green : white);
-        g.fillEllipse (c.x - 8.0f, c.y - 8.0f, 16.0f, 16.0f);
-    }
-}
 
 // ---------------------------------------------------------- κουμπί Sound Palette (ζάρι + κάμερα)
 void PaletteTile::paint (juce::Graphics& g)
