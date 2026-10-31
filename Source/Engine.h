@@ -134,7 +134,7 @@ namespace flow
                 transpose[b] = 0;
                 volPos[b] = 1.0f; gainOut[b] = 1.0f;
                 volMap[b] = 0;
-                followBlock[b] = 0;
+                followBlock[b] = 1; followPrevHold[b] = 0;
                 smartType[b] = 0; smartWidth[b] = 0.0f; smartNeedWidth[b] = 1.0f;
                 for (int k = 0; k < smartBands; ++k) { smartBand[b][(size_t) k] = 0.0f; smartNeed[b][(size_t) k] = 0.0f; }
                 smartResetApp ((int) b);
@@ -178,11 +178,33 @@ namespace flow
         std::atomic<int> followHomeRoot { 9 }, followHomeType { 1 }, followHomeSet { 0 };   // τελευταία συγχορδία με σβηστό Follow (τονικότητα πηγής)           // κλίμακα-στόχος (από τη συγχορδία)
         std::array<std::atomic<int>, numBlocks> followBlock;             // 1 = το block ακολουθεί
         // Follow on/off (πλήκτρο B0 ή οθόνη): όταν ανάβει, η τελευταία συγχορδία που κράτησες με σβηστό Follow γίνεται η τονικότητα πηγής
-        void toggleFollow()
+        std::array<std::atomic<int>, numBlocks> followPrevHold;          // κράτημα (Hold) κάθε block πριν ανάψει το Follow
+        void toggleFollow() { setFollow (followOn.load() != 0 ? 0 : 1); }
+        // Με ανοιχτό Follow το κράτημα σβήνει σε όλα τα block (θα κρατούσε νότες στην παλιά κλίμακα) και επανέρχεται όταν κλείσει
+        void setFollow (int nowOn)
         {
-            const int nowOn = followOn.load() != 0 ? 0 : 1;
-            if (nowOn != 0 && followHomeSet.load() != 0)
-                followSetScale (followHomeRoot.load(), followHomeType.load());
+            if (nowOn == (followOn.load() != 0 ? 1 : 0)) return;
+            if (nowOn != 0)
+            {
+                if (followHomeSet.load() != 0)
+                    followSetScale (followHomeRoot.load(), followHomeType.load());
+                for (int b = 0; b < numBlocks; ++b)
+                {
+                    followPrevHold[(size_t) b] = holdMode[(size_t) b].load();
+                    holdMode[(size_t) b] = 0;
+                }
+                ++changeCount;
+            }
+            else
+            {
+                for (int b = 0; b < numBlocks; ++b)
+                {
+                    if (holdMode[(size_t) b].load() == 0 && followPrevHold[(size_t) b].load() > 0)
+                        holdMode[(size_t) b] = followPrevHold[(size_t) b].load();
+                    followPrevHold[(size_t) b] = 0;
+                }
+                ++changeCount;
+            }
             followOn = nowOn;
         }
         // μόνο Major (0) και Minor (1): οι παλιές κλίμακες γίνονται η πιο κοντινή (Dorian, Phrygian → Minor, Mixolydian, Lydian → Major)
@@ -1777,7 +1799,10 @@ namespace flow
 
             if (on)
             {
-                B.outNote[(size_t) note] = (uint8_t) juce::jlimit (0, 127, note + transpose[(size_t) b].load());
+                // Follow: ένα block χωρίς λούπα που παίζει (π.χ. με arpeggiator) ακολουθεί κι αυτό τη συγχορδία
+                const bool looped = B.loopState == loopPlay && B.nLayers > 0;
+                const int fn = looped ? note : followMapNote (b, note);
+                B.outNote[(size_t) note] = (uint8_t) juce::jlimit (0, 127, fn + transpose[(size_t) b].load());
                 B.out.addEvent (juce::MidiMessage::noteOn (1, B.outNote[(size_t) note], (juce::uint8) vel), pos);
             }
             else

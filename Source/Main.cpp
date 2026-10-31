@@ -182,6 +182,7 @@ public:
         loopsView.onSmartType = [this] (int b)
         {
             engine.smartType[(size_t) b] = (engine.smartType[(size_t) b].load() + 1) % 8;
+            if (engine.smartType[(size_t) b].load() == 6) engine.followBlock[(size_t) b] = 0;   // Drums: δεν ακολουθούν (μπορείς να το ξανανάψεις στις ρυθμίσεις)
             engine.smartResetApp (b);
             saveNow(); loopsView.repaint();
         };
@@ -391,7 +392,7 @@ public:
     {
         if (k.getModifiers().isAnyModifierKeyDown()) return false;
         const auto c = k.getTextCharacter();
-        if (k == KeyPress::escapeKey) { if (learnMode != 0) { learnMode = 0; stopKnobLearn(); setMessage (gr ("MIDI learn cancelled")); updateToolLamps(); return true; } if (settingsScreen.isVisible()) { settingsScreen.goBack(); return true; } if (audioPanel.isVisible()) { audioPanel.close(); return true; } doPanic(); return true; }
+        if (k == KeyPress::escapeKey) { if (knobStage != 0) { stopKnobLearn(); setMessage (gr ("Assignment cancelled")); flow::flowLog ("orb learn: cancelled (Esc)"); if (settingsScreen.isVisible()) settingsScreen.repaint(); return true; } if (learnMode != 0) { learnMode = 0; stopKnobLearn(); setMessage (gr ("MIDI learn cancelled")); updateToolLamps(); return true; } if (settingsScreen.isVisible()) { settingsScreen.goBack(); return true; } if (audioPanel.isVisible()) { audioPanel.close(); return true; } doPanic(); return true; }
         return false;
     }
 
@@ -1081,12 +1082,17 @@ private:
     {
         AudioPluginInstance* plugin = nullptr;
         std::atomic<int>* sink = nullptr;
+        std::atomic<int> fallback { -1 };      // πρώτη αλλαγή τιμής χωρίς gesture (για plugins που δεν στέλνουν gestures)
+        std::atomic<int> gestureCount { 0 }, ignoredCount { 0 };
+        std::vector<char> ignore;              // παράμετροι που οδηγεί το ίδιο το Flow (ήδη αναθέσεις)
         int block = 0;
         uint32 ignoreUntil = 0;
-        void attach (AudioPluginInstance* p, int b, std::atomic<int>* s)
+        void attach (AudioPluginInstance* p, int b, std::atomic<int>* s, std::vector<char> skip)
         {
             detach();
-            plugin = p; block = b; sink = s; ignoreUntil = Time::getMillisecondCounter() + 400;
+            plugin = p; block = b; sink = s; ignore = std::move (skip);
+            fallback = -1; gestureCount = 0; ignoredCount = 0;
+            ignoreUntil = Time::getMillisecondCounter() + 400;
             for (auto* prm : p->getParameters()) prm->addListener (this);
         }
         void detach()
@@ -1094,12 +1100,22 @@ private:
             if (plugin != nullptr) for (auto* prm : plugin->getParameters()) prm->removeListener (this);
             plugin = nullptr;
         }
-        void parameterValueChanged (int i, float) override { hit (i); }
-        void parameterGestureChanged (int i, bool starting) override { if (starting) hit (i); }
-        void hit (int i)
+        bool skipped (int i) const { return i >= 0 && (size_t) i < ignore.size() && ignore[(size_t) i] != 0; }
+        // μόνο αληθινή κίνηση από τον χρήστη (gesture) γίνεται δεκτή αμέσως
+        void parameterGestureChanged (int i, bool starting) override
         {
-            if (sink != nullptr && Time::getMillisecondCounter() >= ignoreUntil && sink->load() < 0)
-                *sink = (block << 20) | (i & 0xfffff);
+            if (! starting || Time::getMillisecondCounter() < ignoreUntil) return;
+            if (skipped (i)) { ++ignoredCount; return; }
+            ++gestureCount;
+            int expected = -1;
+            if (sink != nullptr) sink->compare_exchange_strong (expected, (block << 20) | (i & 0xfffff));
+        }
+        void parameterValueChanged (int i, float) override
+        {
+            if (Time::getMillisecondCounter() < ignoreUntil) return;
+            if (skipped (i)) { ++ignoredCount; return; }
+            int expected = -1;
+            fallback.compare_exchange_strong (expected, i);
         }
         ~ParamWatch() override { detach(); }
     };
@@ -1216,7 +1232,13 @@ private:
         // η ανάθεση γίνεται για το plugin του επιλεγμένου block
         auto* p = isActive (selected) ? engine.getPlugin (selected) : nullptr;
         if (p == nullptr || p->getParameters().isEmpty()) { setMessage (gr ("The selected block has no parameters")); return; }
-        watches[(size_t) selected].attach (p, selected, &knobTouched);
+        std::vector<char> skip ((size_t) p->getParameters().size(), 0);
+        for (int j = 0; j < kSlots; ++j)
+        {
+            const int ai = blockKnobs[(size_t) selected][(size_t) j].idx;
+            if (j != k && ai >= 0 && (size_t) ai < skip.size()) skip[(size_t) ai] = 1;
+        }
+        watches[(size_t) selected].attach (p, selected, &knobTouched, std::move (skip));
         knobStage = 1; knobSlot = k; knobStageStart = Time::getMillisecondCounter();
         setMessage (gr ("Move a parameter in a plugin window"));
     }
@@ -1587,21 +1609,35 @@ private:
             {
                 stopKnobLearn(); setMessage (gr ("Assignment cancelled"));
             }
-            else if (knobStage == 1 && knobTouched.load() >= 0)
+            else
             {
-                const int t = knobTouched.load();
-                for (auto& w : watches) w.detach();
-                const int tb = t >> 20, ti = t & 0xfffff;
-                if (tb >= 0 && tb < flow::numBlocks)
-                    if (auto* tp = engine.getPlugin (tb))
-                        if (ti < tp->getParameters().size())
-                        {
-                            blockKnobs[(size_t) tb][(size_t) knobSlot] = { ti, tp->getParameters()[ti]->getName (64) };
-                            rememberKnobs (tb);
-                            setMessage (tp->getParameters()[ti]->getName (40));
-                        }
-                knobStage = 0; knobSlot = -1;
-                saveNow();
+                int t = knobTouched.load();
+                bool viaFallback = false;
+                if (t < 0 && Time::getMillisecondCounter() - knobStageStart > 5000)   // plugin χωρίς gestures: δέχεται την πρώτη αλλαγή τιμής
+                    for (auto& w : watches)
+                        if (w.plugin != nullptr && w.gestureCount.load() == 0 && w.fallback.load() >= 0)
+                        { t = (w.block << 20) | w.fallback.load(); viaFallback = true; }
+                if (t >= 0)
+                {
+                    int ign = 0;
+                    for (auto& w : watches) if (w.plugin != nullptr) ign += w.ignoredCount.load();
+                    for (auto& w : watches) w.detach();
+                    const int tb = t >> 20, ti = t & 0xfffff;
+                    if (tb >= 0 && tb < flow::numBlocks)
+                        if (auto* tp = engine.getPlugin (tb))
+                            if (ti < tp->getParameters().size())
+                            {
+                                const auto nm = tp->getParameters()[ti]->getName (64);
+                                blockKnobs[(size_t) tb][(size_t) knobSlot] = { ti, nm };
+                                rememberKnobs (tb);
+                                setMessage (nm.substring (0, 40));
+                                flow::flowLog ("orb learn: slot " + String (knobSlot) + " block " + String (tb + 1) + " -> param " + String (ti) + " '" + nm + "' ("
+                                               + (viaFallback ? "no gesture, first value change" : "user gesture") + "), ignored changes of assigned params: " + String (ign));
+                            }
+                    knobStage = 0; knobSlot = -1;
+                    saveNow();
+                    if (settingsScreen.isVisible()) settingsScreen.repaint();
+                }
             }
         }
 
@@ -2004,7 +2040,7 @@ private:
             engine.holdMode[(size_t) block] = 0;
             engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
             engine.curveMode[(size_t) block] = 0;
-            engine.followBlock[(size_t) block] = 0; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block);
+            engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block);
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
             engine.transpose[(size_t) block] = 0;
@@ -2186,7 +2222,7 @@ private:
         engine.holdMode[(size_t) block] = 0;
         engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
         engine.curveMode[(size_t) block] = 0;
-        engine.followBlock[(size_t) block] = 0; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block);
+        engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block);
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
         engine.transpose[(size_t) block] = 0;
@@ -2742,17 +2778,17 @@ private:
             {
                 auto& x = v[(size_t) b];
                 if (auto* p = engine.getPlugin (b)) { x.active = true; x.name = p->getName(); }
-                x.on = engine.followBlock[(size_t) b].load() != 0;
+                x.on = engine.followBlock[(size_t) b].load() == 0;   // ON = αποκλείεται (δεν ακολουθεί)
             }
             return v;
         };
         h.followOnGet = [this] { return engine.followOn.load(); };
-        h.followOnSet = [this] (int v) { engine.followOn = v; refreshSmartTile(); };
+        h.followOnSet = [this] (int v) { engine.setFollow (v); saveNow(); refreshSmartTile(); };
         h.followRootGet = [this] { return engine.followRoot.load(); };
         h.followTypeGet = [this] { return engine.followType.load(); };
         h.followRootSet = [this] (int v) { engine.followSetScale (v, engine.followType.load()); saveNow(); };
         h.followTypeSet = [this] (int v) { engine.followSetScale (engine.followRoot.load(), v); saveNow(); };
-        h.followBlockSet = [this] (int b, bool on) { engine.followBlock[(size_t) b] = on ? 1 : 0; saveNow(); };
+        h.followBlockSet = [this] (int b, bool excluded) { engine.followBlock[(size_t) b] = excluded ? 0 : 1; saveNow(); };
         h.smartBlocks = [this]
         {
             std::vector<SettingsScreen::SmartBlock> v ((size_t) flow::numBlocks);
@@ -2780,6 +2816,7 @@ private:
         h.smartTypeSet = [this] (int b, int t)
         {
             engine.smartType[(size_t) b] = jlimit (0, 7, t);
+            if (jlimit (0, 7, t) == 6) engine.followBlock[(size_t) b] = 0;   // Drums: αποκλείονται από το Follow
             engine.smartResetApp (b);   // νέος τύπος: καθαρή αρχή
             saveNow();
         };
@@ -2812,6 +2849,7 @@ private:
             return v;
         };
         h.orbAssign = [this] (int slot) { startKnobLearn (slot); };
+        h.orbLearnSlot = [this] { return knobStage != 0 ? knobSlot : -1; };
         h.orbClear = [this] (int slot) { clearKnobSlot (slot); };
         h.learnStart = [this] (int mode)
         {
@@ -2986,7 +3024,7 @@ private:
             e->setAttribute ("hold", engine.holdMode[(size_t) b].load());
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
             e->setAttribute ("stype", engine.smartType[(size_t) b].load());
-            e->setAttribute ("follow", engine.followBlock[(size_t) b].load());
+            e->setAttribute ("nofollow", engine.followBlock[(size_t) b].load() == 0 ? 1 : 0);
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
             e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : 0);
             e->setAttribute ("lsilent", engine.liveSilent[(size_t) b].load());
@@ -3207,7 +3245,9 @@ private:
             engine.holdMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("hold", 0));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
             engine.smartType[(size_t) slot] = jlimit (0, 7, e->getIntAttribute ("stype", 0));
-            engine.followBlock[(size_t) slot] = e->getIntAttribute ("follow", 0) != 0 ? 1 : 0;
+            // παλιό attribute "follow" αγνοείται: όλα ακολουθούν, εκτός από όσα το έχουν αποκλείσει ή είναι Drums
+            engine.followBlock[(size_t) slot] = e->hasAttribute ("nofollow") ? (e->getIntAttribute ("nofollow", 0) != 0 ? 0 : 1)
+                                                                              : (engine.smartType[(size_t) slot].load() == 6 ? 0 : 1);
             engine.smartResetApp (slot);
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
             if (e->getIntAttribute ("special", 0) != 0) engine.specialBlock = slot;
@@ -4043,7 +4083,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.60.0"; }
+    const String getApplicationVersion() override { return "0.61.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

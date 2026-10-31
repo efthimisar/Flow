@@ -62,39 +62,78 @@ namespace hobby
         return c[juce::jlimit (0, 5, k)];
     }
 
-    // 6 λωρίδες τόξου 270° (από -135° ως +135°). outerEdge = εξωτερική άκρη της πρώτης λωρίδας, total = συνολικό πάχος προς τα μέσα.
-    // vals = στάθμη 0..1 ανά ζώνη, lim = όρια 0..1 (μόνο όταν active), το κομμάτι πάνω από το όριο γίνεται κρεμ.
+    // 3 δακτύλιοι (270°, ανοιχτοί κάτω), ο καθένας χωρισμένος σε δύο μισά: αριστερά η χαμηλότερη ζώνη του ζεύγους, δεξιά η υψηλότερη.
+    // Και τα δύο μισά ανεβαίνουν από τη βάση προς την κορυφή. Ανοιχτό γκρι γέμισμα, έγχρωμη παύλα στο τέλος της στάθμης, λευκή γραμμή = όριο.
+    // outerEdge = εξωτερική άκρη του πρώτου δακτυλίου, total = συνολικό πάχος προς τα μέσα. vals/lim = 0..1 ανά ζώνη (lim μόνο όταν active).
+    inline juce::Colour smartDashColour (int k)   // μπορντώ, πορτοκάλι, κίτρινο: χαμηλή ζώνη φωτεινότερη, υψηλή πιο σκούρα
+    {
+        static const juce::uint32 c[6] { 0xffc44054, 0xff962c40, 0xffffa040, 0xffd67824, 0xffffd65c, 0xffdcaa2c };
+        return juce::Colour (c[juce::jlimit (0, 5, k)]);
+    }
     inline void drawSmartLanes (juce::Graphics& g, float cx, float cy, float outerEdge, float total, const float* vals, const float* lim,
                                 bool active, juce::Colour trackC, juce::Colour tickC)
     {
-        const float w = total / 7.6f, gin = 0.2f * w, gout = 0.5f * w;
-        const float full = juce::degreesToRadians (270.0f), start = juce::degreesToRadians (-135.0f);
+        const float w = total / 3.6f, gap = 0.3f * w;
+        const float half = juce::degreesToRadians (133.5f), edge = juce::degreesToRadians (135.0f), top = juce::degreesToRadians (1.5f);
+        const juce::Colour fillC = active ? juce::Colour (205, 202, 198) : juce::Colour (118, 115, 112);
         float r = outerEdge - w * 0.5f;
-        for (int k = 0; k < 6; ++k)
+        for (int ring = 0; ring < 3; ++ring)
         {
-            juce::Path tp; tp.addCentredArc (cx, cy, r, r, 0.0f, start, start + full, true);
-            g.setColour (trackC); g.strokePath (tp, juce::PathStrokeType (w));
-            const float v = juce::jlimit (0.0f, 1.0f, vals[k]);
-            const bool lm = active && lim[k] < 0.999f;
-            const float base = lm ? juce::jmin (v, lim[k]) : v;
-            if (base > 0.003f)
+            for (int side = 0; side < 2; ++side)          // 0 = αριστερά (χαμηλότερη ζώνη), 1 = δεξιά (υψηλότερη)
             {
-                juce::Path vp; vp.addCentredArc (cx, cy, r, r, 0.0f, start, start + full * base, true);
-                g.setColour (smartLaneColour (k)); g.strokePath (vp, juce::PathStrokeType (w));
+                const int k = ring * 2 + side;
+                const float dir = side == 0 ? -1.0f : 1.0f;
+                auto angAt = [&] (float f) { return dir * (edge - f * half); };   // f = 0 βάση, 1 κορυφή
+                auto arc = [&] (float f0, float f1, juce::Colour c)
+                {
+                    if (f1 <= f0 + 0.0005f) return;
+                    const float a0 = angAt (f0), a1 = angAt (f1);
+                    juce::Path p; p.addCentredArc (cx, cy, r, r, 0.0f, juce::jmin (a0, a1), juce::jmax (a0, a1), true);
+                    g.setColour (c); g.strokePath (p, juce::PathStrokeType (w));
+                };
+                (void) top;
+                arc (0.0f, 1.0f, trackC);
+                const float v = juce::jlimit (0.0f, 1.0f, vals[k]);
+                const bool lm = active && lim[k] < 0.999f;
+                const float base = lm ? juce::jmin (v, lim[k]) : v;
+                arc (0.0f, base, fillC);
+                if (lm && v > lim[k]) arc (lim[k], v, kSmartOver);
+                // παύλα στο τέλος της στάθμης
+                {
+                    const float fa = juce::jmax (v, 0.02f), dl = juce::jmin (0.5f * w / (r * half), 0.2f);
+                    arc (juce::jmax (0.0f, fa - dl), fa, smartDashColour (k));
+                }
+                if (lm)
+                {
+                    const float a = angAt (lim[k]);
+                    const float dx = std::sin (a), dy = -std::cos (a);
+                    g.setColour (tickC);
+                    g.drawLine (cx + dx * (r - w * 0.5f - 1.5f), cy + dy * (r - w * 0.5f - 1.5f), cx + dx * (r + w * 0.5f + 1.5f), cy + dy * (r + w * 0.5f + 1.5f), juce::jmax (1.3f, w * 0.14f));
+                }
             }
-            if (lm && v > lim[k])
-            {
-                juce::Path op; op.addCentredArc (cx, cy, r, r, 0.0f, start + full * lim[k], start + full * v, true);
-                g.setColour (kSmartOver); g.strokePath (op, juce::PathStrokeType (w));
-            }
-            if (lm)
-            {
-                const float a = start + full * lim[k];
-                const float dx = std::sin (a), dy = -std::cos (a);
-                g.setColour (tickC);
-                g.drawLine (cx + dx * (r - w * 0.5f - 1.5f), cy + dy * (r - w * 0.5f - 1.5f), cx + dx * (r + w * 0.5f + 1.5f), cy + dy * (r + w * 0.5f + 1.5f), juce::jmax (1.3f, w * 0.14f));
-            }
-            r -= w + ((k % 2 == 0) ? gin : gout);
+            r -= w + gap;
+        }
+    }
+
+    // Πλάτος stereo: δύο κάθετες μπάρες που απομακρύνονται όσο μεγαλώνει το πλάτος (mono = μία μπάρα). Γκρι· λευκή όταν περνά το όριο.
+    // halfW = μέγιστη απόσταση κάθε μπάρας από το κέντρο, halfH = μισό ύψος, lim = όριο 0..1 (δύο μικρές τελείες όταν active).
+    inline void drawSmartWidth (juce::Graphics& g, float cx, float cy, float halfW, float halfH, float barW, float width, float lim, bool active, bool on)
+    {
+        const float wv = juce::jlimit (0.0f, 1.0f, width);
+        const bool over = active && wv > lim;
+        const juce::Colour c = ! on ? juce::Colour (74, 70, 66) : over ? juce::Colour (250, 250, 250) : juce::Colour (150, 148, 146);
+        const float d = wv * halfW;
+        g.setColour (c);
+        if (d < barW * 0.6f)
+            g.fillRoundedRectangle (cx - barW * 0.5f, cy - halfH, barW, halfH * 2.0f, barW * 0.5f);
+        else
+            for (int sgn = -1; sgn <= 1; sgn += 2)
+                g.fillRoundedRectangle (cx + (float) sgn * d - barW * 0.5f, cy - halfH, barW, halfH * 2.0f, barW * 0.5f);
+        if (active && lim < 0.999f)
+        {
+            g.setColour (juce::Colour (200, 198, 194));
+            for (int sgn = -1; sgn <= 1; sgn += 2)
+                g.drawEllipse (cx + (float) sgn * lim * halfW - 2.5f, cy - halfH - 7.0f, 5.0f, 5.0f, 1.2f);
         }
     }
 
