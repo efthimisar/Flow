@@ -92,24 +92,21 @@ namespace hobby
             const float top = juce::jmax (v0, v1);
             const float lm = active ? juce::jmax (lim[k0], lim[k1]) : 2.0f;   // πιο χαλαρό όριο της ομάδας
             const bool limited = active && lm < 0.999f;
-            if (ring == 2)   // μόνο ο εσωτερικός δακτύλιος φαίνεται (αχνή τροχιά + γέμισμα με διαβάθμιση)
+            // κανένας δακτύλιος: μόνο δύο λεπτές παύλες ανά ομάδα, με σβηστή ουρά πίσω τους· κρεμ όταν η ζώνη περνά το όριο
+            const float dl = 0.008f, tailLen = 0.13f;
+            const int nt = 14;
+            for (int j = 0; j < 2; ++j)
             {
-                arc (0.0f, 1.0f, trackC);
-                const float base = limited ? juce::jmin (top, lm) : top;
-                const int nseg = juce::jmax (1, (int) std::ceil (base * 48.0f));
-                for (int i = 0; i < nseg; ++i)
+                const int k = ring * 2 + j;
+                const float v = j == 0 ? v0 : v1;
+                const juce::Colour c = (limited && v > lm) ? kSmartOver : smartDashColour (k);
+                for (int i = 0; i < nt; ++i)
                 {
-                    const float f0 = base * (float) i / (float) nseg, f1 = juce::jmin (base, base * (float) (i + 1) / (float) nseg + 0.004f);
-                    const float m = 0.3f + 0.7f * (f0 + f1) * 0.5f;
-                    auto ch = [&] (int c) { return (juce::uint8) juce::jlimit (0, 255, juce::jmax (76, (int) ((float) baseGrey[ring][c] * m * dim))); };
-                    arc (f0, f1, juce::Colour (ch (0), ch (1), ch (2)));
+                    const float al = 0.4f * std::pow (1.0f - (float) (i + 1) / (float) nt, 2.2f) * dim;
+                    arc (juce::jmax (0.0f, v - tailLen * (float) (i + 1) / (float) nt), juce::jmax (0.0f, v - tailLen * (float) i / (float) nt), c.withAlpha (al));
                 }
-                if (limited && top > lm) arc (lm, top, kSmartOver);
+                arc (juce::jmax (0.0f, v - dl), juce::jmax (v, dl), c);
             }
-            // δύο λεπτές παύλες, μία ανά ζώνη· κρεμ όταν η ζώνη περνά το όριο
-            const float dl = 0.008f;
-            arc (juce::jmax (0.0f, v0 - dl), juce::jmax (v0, dl), (limited && v0 > lm) ? kSmartOver : smartDashColour (k0));
-            arc (juce::jmax (0.0f, v1 - dl), juce::jmax (v1, dl), (limited && v1 > lm) ? kSmartOver : smartDashColour (k1));
             if (limited)
             {
                 const float a = start + full * lm;
@@ -121,25 +118,27 @@ namespace hobby
         }
     }
 
-    // Πλάτος stereo: δύο κάθετες μπάρες που απομακρύνονται όσο μεγαλώνει το πλάτος (mono = μία μπάρα). Γκρι· λευκή όταν περνά το όριο.
-    // halfW = μέγιστη απόσταση κάθε μπάρας από το κέντρο, halfH = μισό ύψος, lim = όριο 0..1 (δύο μικρές τελείες όταν active).
-    inline void drawSmartWidth (juce::Graphics& g, float cx, float cy, float halfW, float halfH, float barW, float width, float lim, bool active, bool on)
+    // Πλάτος stereo: γεμάτος κύκλος που μεγαλώνει με το πλάτος (mono = μικρή τελεία) και αφήνει γύρω του ομόκεντρα κύματα που σβήνουν.
+    // Λεπτός κύκλος = όριο (όταν active). Γκρι· λευκός όταν περνά το όριο. rmax = ακτίνα στο 100% πλάτος, unit = μέγεθος των κυμάτων.
+    inline void drawSmartWidth (juce::Graphics& g, float cx, float cy, float rmax, float /*unused*/, float unit, float width, float lim, bool active, bool on)
     {
         const float wv = juce::jlimit (0.0f, 1.0f, width);
         const bool over = active && wv > lim;
         const juce::Colour c = ! on ? juce::Colour (74, 70, 66) : over ? juce::Colour (250, 250, 250) : juce::Colour (150, 148, 146);
-        const float d = wv * halfW;
+        const float rad = juce::jmax (unit * 0.4f, wv * rmax);
         g.setColour (c);
-        if (d < barW * 0.6f)
-            g.fillRoundedRectangle (cx - barW * 0.5f, cy - halfH, barW, halfH * 2.0f, barW * 0.5f);
-        else
-            for (int sgn = -1; sgn <= 1; sgn += 2)
-                g.fillRoundedRectangle (cx + (float) sgn * d - barW * 0.5f, cy - halfH, barW, halfH * 2.0f, barW * 0.5f);
+        g.fillEllipse (cx - rad, cy - rad, rad * 2.0f, rad * 2.0f);
+        for (int i = 1; i <= 3; ++i)
+        {
+            const float ri = rad + (float) i * unit * 1.15f;
+            g.setColour (c.withAlpha (0.5f / std::pow ((float) i, 1.2f)));
+            g.drawEllipse (cx - ri, cy - ri, ri * 2.0f, ri * 2.0f, juce::jmax (1.0f, unit * 0.23f));
+        }
         if (active && lim < 0.999f)
         {
+            const float lr = lim * rmax;
             g.setColour (juce::Colour (200, 198, 194));
-            for (int sgn = -1; sgn <= 1; sgn += 2)
-                g.drawEllipse (cx + (float) sgn * lim * halfW - 2.5f, cy - halfH - 7.0f, 5.0f, 5.0f, 1.2f);
+            g.drawEllipse (cx - lr, cy - lr, lr * 2.0f, lr * 2.0f, juce::jmax (1.0f, unit * 0.17f));
         }
     }
 

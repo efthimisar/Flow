@@ -1196,9 +1196,9 @@ private:
             const float sr = (float) (stH - 12) * 0.5f + 2.0f;
             const float scx = (float) c.getX() + 12.0f + sr, scy = (float) (ringBottom + 6 + stH / 2);
             const bool wOver = over (B.width, B.lim[6]);
-            hobby::drawSmartWidth (g, scx, scy, sr, (sr + 2.0f) * 0.5f, 4.0f, B.width, B.lim[6], on && B.type != 0, on);
+            hobby::drawSmartWidth (g, scx, scy, sr, 0.0f, 3.0f, B.width, B.lim[6], on && B.type != 0, on);
             g.setColour (wOver ? amber : txt()); g.setFont (font (compact ? 14.0f : 17.0f, true));
-            g.drawText (String ((int) std::round (B.width * 100.0f)) + " %", (int) (scx + sr + 8.0f), (int) (scy - 12.0f), cw - (int) (sr * 2.0f) - 34, 24, Justification::centredLeft, false);
+            g.drawText (String ((int) std::round (B.width * 100.0f)) + " %", (int) (scx + sr + 22.0f), (int) (scy - 12.0f), cw - (int) (sr * 2.0f) - 48, 24, Justification::centredLeft, false);
 
             // πρόταση / κατάσταση
             const Rectangle<int> sg (c.getX() + 8, c.getBottom() - sugH - 8, cw - 16, sugH);

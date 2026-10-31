@@ -1320,14 +1320,14 @@ public:
         // κέντρο: κύκλος του πλάτους stereo. Πάτημα = Off ↔ On (Auto)
         {
             const float sr = 26.0f * s;
-            hobby::drawSmartWidth (g, cx, cy, sr, 17.0f * s, 6.0f * s, width, lim[6], active, on);
+            hobby::drawSmartWidth (g, cx, cy, 32.0f * s, 0.0f, 6.0f * s, width, lim[6], active, on);
             if (on)
             {
                 g.setColour (dimC);
                 g.setFont (hobby::makeFont (typeface, 10.0f * s).boldened());
-                g.drawText ("Auto", Rectangle<float> (cx - 30.0f * s, cy + 17.0f * s + 8.0f * s, 60.0f * s, 14.0f * s), Justification::centred, false);
+                g.drawText ("Auto", Rectangle<float> (cx - 30.0f * s, cy + 64.0f * s, 60.0f * s, 14.0f * s), Justification::centred, false);
             }
-            const Rectangle<float> hit (cx - sr - 8.0f, cy - 17.0f * s - 14.0f, 2.0f * sr + 16.0f, 34.0f * s + 40.0f);
+            const Rectangle<float> hit (cx - 56.0f * s, cy - 56.0f * s, 112.0f * s, 112.0f * s);
             hot.push_back ({ hit, [this] { if (onSmartCycle) onSmartCycle(); } });
             tipZones.push_back ({ hit, String (on ? "Smart master: On (press = Off)" : "Smart master: Off (press = On)") });
         }
