@@ -87,27 +87,29 @@ namespace hobby
                 juce::Path p; p.addCentredArc (cx, cy, r, r, 0.0f, start + full * f0, start + full * f1, true);
                 g.setColour (c); g.strokePath (p, juce::PathStrokeType (w));
             };
-            arc (0.0f, 1.0f, trackC);
             const int k0 = ring * 2, k1 = ring * 2 + 1;
             const float v0 = juce::jlimit (0.0f, 1.0f, vals[k0]), v1 = juce::jlimit (0.0f, 1.0f, vals[k1]);
             const float top = juce::jmax (v0, v1);
             const float lm = active ? juce::jmax (lim[k0], lim[k1]) : 2.0f;   // πιο χαλαρό όριο της ομάδας
             const bool limited = active && lm < 0.999f;
-            const float base = limited ? juce::jmin (top, lm) : top;
-            // γέμισμα με διαβάθμιση: σκούρο στην αρχή, φωτεινό ψηλά
-            const int nseg = juce::jmax (1, (int) std::ceil (base * 48.0f));
-            for (int i = 0; i < nseg; ++i)
+            if (ring == 2)   // μόνο ο εσωτερικός δακτύλιος φαίνεται (αχνή τροχιά + γέμισμα με διαβάθμιση)
             {
-                const float f0 = base * (float) i / (float) nseg, f1 = juce::jmin (base, base * (float) (i + 1) / (float) nseg + 0.004f);
-                const float m = 0.3f + 0.7f * (f0 + f1) * 0.5f;
-                auto ch = [&] (int c) { return (juce::uint8) juce::jlimit (0, 255, juce::jmax (76, (int) ((float) baseGrey[ring][c] * m * dim))); };
-                arc (f0, f1, juce::Colour (ch (0), ch (1), ch (2)));
+                arc (0.0f, 1.0f, trackC);
+                const float base = limited ? juce::jmin (top, lm) : top;
+                const int nseg = juce::jmax (1, (int) std::ceil (base * 48.0f));
+                for (int i = 0; i < nseg; ++i)
+                {
+                    const float f0 = base * (float) i / (float) nseg, f1 = juce::jmin (base, base * (float) (i + 1) / (float) nseg + 0.004f);
+                    const float m = 0.3f + 0.7f * (f0 + f1) * 0.5f;
+                    auto ch = [&] (int c) { return (juce::uint8) juce::jlimit (0, 255, juce::jmax (76, (int) ((float) baseGrey[ring][c] * m * dim))); };
+                    arc (f0, f1, juce::Colour (ch (0), ch (1), ch (2)));
+                }
+                if (limited && top > lm) arc (lm, top, kSmartOver);
             }
-            if (limited && top > lm) arc (lm, top, kSmartOver);
-            // δύο λεπτές παύλες, μία ανά ζώνη
-            const float dl = 0.012f;
-            arc (juce::jmax (0.0f, v0 - dl), juce::jmax (v0, dl), smartDashColour (k0));
-            arc (juce::jmax (0.0f, v1 - dl), juce::jmax (v1, dl), smartDashColour (k1));
+            // δύο λεπτές παύλες, μία ανά ζώνη· κρεμ όταν η ζώνη περνά το όριο
+            const float dl = 0.008f;
+            arc (juce::jmax (0.0f, v0 - dl), juce::jmax (v0, dl), (limited && v0 > lm) ? kSmartOver : smartDashColour (k0));
+            arc (juce::jmax (0.0f, v1 - dl), juce::jmax (v1, dl), (limited && v1 > lm) ? kSmartOver : smartDashColour (k1));
             if (limited)
             {
                 const float a = start + full * lm;
