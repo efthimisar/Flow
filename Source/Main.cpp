@@ -3486,6 +3486,7 @@ private:
         if (xml == nullptr || ! xml->hasTagName ("FlowSound")) return false;
         auto inst = readPluginEntry (xml->getChildByName ("Instrument"));
         if (! inst.ok) return false;
+        flow::flowLog ("palette load: " + inst.desc.name + " state " + String ((int) inst.state.getSize()) + " bytes from " + file.getFileName());
 
         const bool was = isActive (b);
         flow::LoopSnapshot snap;
@@ -3582,6 +3583,10 @@ private:
         xml->setAttribute ("tr", engine.transpose[(size_t) b].load());
         writeKnobs (*xml->createNewChildElement ("Orb"), blockKnobs[(size_t) b]);
         pluginElement (*xml, "Instrument", inst, true);
+        {
+            MemoryBlock probe; inst->getStateInformation (probe);
+            flow::flowLog ("snapshot: " + inst->getName() + " state " + String ((int) probe.getSize()) + " bytes (full plugin state at this moment, not a preset reference)");
+        }
         if (auto* m = engine.getMidiFx (b)) pluginElement (*xml, "MidiFx", m, true);
         // τα audio FX δεν μπαίνουν στο snapshot: ο ήχος κρατά τα FX που έχει ήδη το block
 
