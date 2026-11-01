@@ -189,7 +189,8 @@ public:
         loopsView.onFollowToggle = [this] { engine.toggleFollow(); saveNow(); refreshSmartTile(); loopsView.repaint(); };
         loopsView.getTempoBox().onChange = [this] { dirty = true; };
         keyboardView.onSelect = [this] (int b) { selectBlock (b); };
-        keyboardView.onRedoZone = [this] (int b) { showZoneMenu (b); };
+        keyboardView.onRedoZone = [this] (int b) { selectBlock (b); engine.startZone (b); refreshAll(); };   // ⟲ στη σειρά του block: ξαναορίζει τη ζώνη
+        keyboardView.onToggleMf = [this] (int b) { engine.mfBlock = engine.mfBlock.load() == b ? -1 : b; saveNow(); refreshAll(); keyboardView.repaint(); };
         keyboardView.onHold = [this] (int b) { selectBlock (b); cycleHold (b); };
         keyboardView.onRemoveBlock = [this] (int b) { removeBlock (b); };
         keyboardView.onSwapInstrument = [this] (int b) { selectBlock (b); replaceInstrument(); };
@@ -2222,6 +2223,7 @@ private:
         old.reset();
 
         if (engine.specialBlock.load() == block) engine.specialBlock = -1;
+        if (engine.mfBlock.load() == block) engine.mfBlock = -1;
         engine.liveSilent[(size_t) block] = 1;
         engine.holdMode[(size_t) block] = 0;
         engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
@@ -2246,32 +2248,6 @@ private:
         }
     }
 
-    void showZoneMenu (int b)
-    {
-        PopupMenu menu;
-        menu.addItem (1, gr ("\xe2\x9f\xb2"));
-        menu.addItem (2, gr ("\xe2\x96\xb2  +1"));
-        menu.addItem (3, gr ("\xe2\x96\xbc  -1"));
-        menu.addItem (4, gr ("0"));
-        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardView),
-                            [safe = SafePointer<MainComponent> (this), b] (int result)
-        {
-            if (safe == nullptr || result == 0) return;
-            if (result == 1)
-            {
-                safe->selectBlock (b);
-                safe->engine.startZone (b);
-            }
-            else
-            {
-                auto& t = safe->engine.transpose[(size_t) b];
-                t = result == 2 ? jlimit (-48, 48, t.load() + 12) : result == 3 ? jlimit (-48, 48, t.load() - 12) : 0;
-                safe->saveNow();
-            }
-            safe->refreshAll();
-        });
-    }
-
     void toggleSpecial()
     {
         if (! isActive (selected)) return;
@@ -2280,7 +2256,6 @@ private:
         if (en.specialBlock.load() == s) en.specialBlock = -1;
         else
         {
-            en.pressUndo (s);   // το ειδικό block δεν έχει λούπα: αν είχε, σβήνεται
             en.specialBlock = s;
         }
         saveNow();
@@ -3034,6 +3009,7 @@ private:
             e->setAttribute ("nofollow", engine.followBlock[(size_t) b].load() == 0 ? 1 : 0);
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
             e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : 0);
+            e->setAttribute ("mf", engine.mfBlock.load() == b ? 1 : 0);
             e->setAttribute ("lsilent", engine.liveSilent[(size_t) b].load());
             e->setAttribute ("chord", engine.chordMode[(size_t) b].load());
             e->setAttribute ("ctype", engine.chordType[(size_t) b].load());
@@ -3217,6 +3193,7 @@ private:
         }
 
         engine.specialBlock = -1;
+        engine.mfBlock = -1;
         for (auto* e : root.getChildWithTagNameIterator ("Block"))
         {
             const int origSlot = e->getIntAttribute ("slot", -1);
@@ -3259,6 +3236,7 @@ private:
             engine.smartResetApp (slot);
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
             if (e->getIntAttribute ("special", 0) != 0) engine.specialBlock = slot;
+            if (e->getIntAttribute ("mf", 0) != 0) engine.mfBlock = slot;
             engine.liveSilent[(size_t) slot] = jlimit (0, 1, e->getIntAttribute ("lsilent", 1));
             engine.chordMode[(size_t) slot]  = 0;   // το Chord δεν χρησιμοποιείται πια
             engine.chordType[(size_t) slot]  = jlimit (0, flow::numChordTypes - 1, e->getIntAttribute ("ctype", 0));
@@ -3928,7 +3906,7 @@ private:
             if (lp != lastFollowed)
             {
                 lastFollowed = lp;
-                if (lp >= 0 && lp != selected && isActive (lp) && lp != engine.specialBlock.load())
+                if (lp >= 0 && lp != selected && isActive (lp))
                 {
                     selected = lp;
                     engine.selectedBlock = lp;
@@ -4095,7 +4073,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.70.0"; }
+    const String getApplicationVersion() override { return "0.71.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

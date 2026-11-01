@@ -239,7 +239,8 @@ namespace flow
         std::atomic<juce::uint32> lastVolMoveMs { 0 };
         std::atomic<int> volMoveDirty { 0 };
         std::atomic<int> shiftHeld { 0 };       // sustain CC64 πατημένο: το ειδικό block παίρνει τα πλήκτρα της ζώνης του όσο το κρατάς
-        std::atomic<int> specialBlock { -1 };   // ειδικό block: πάνω από τα άλλα, χωρίς λούπα, παίζει πάντα ζωντανά (-1 = κανένα)
+        std::atomic<int> specialBlock { -1 };   // ειδικό block: πάνω από τα άλλα, παίζει στη ζώνη του όσο κρατιέται το sustain, έχει λούπα και εφέ (-1 = κανένα)
+        std::atomic<int> mfBlock { -1 };        // MF (master flow): το block που ορίζει τις συγχορδίες που ακολουθούν τα άλλα στο Follow (-1 = όλα τα πλήκτρα)
         std::atomic<float> metroLevel { 0.8f };
         std::atomic<int> metroChannel { 2 };      // έξοδος 3 (0-based 2)
         std::atomic<int> numOutChannels { 2 };
@@ -263,14 +264,14 @@ namespace flow
             const int lp = lastPlayed.load();
             if (fromPedal && lp >= 0 && lp < numBlocks && active[(size_t) lp].load() != 0) return lp;
             const int sel = selectedBlock.load();
-            return sel >= 0 && sel < numBlocks && sel != specialBlock.load() && active[(size_t) sel].load() != 0 ? sel : -1;   // το ειδικό block δεν έχει λούπα
+            return sel >= 0 && sel < numBlocks && active[(size_t) sel].load() != 0 ? sel : -1;
         }
 
-        void pressMain (int b) { if (b >= 0 && b != specialBlock.load()) ++cmdMain[(size_t) b]; }
-        void pressUndo (int b) { if (b != specialBlock.load()) ++cmdUndo[(size_t) b]; }
+        void pressMain (int b) { if (b >= 0) ++cmdMain[(size_t) b]; }
+        void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
         void pressStop (int b) { ++cmdStop[(size_t) b]; }
         void pressMute (int b) { ++cmdMute[(size_t) b]; }
-        void pressReRec (int b) { if (b >= 0 && b != specialBlock.load()) rerecReq[(size_t) b] = 1; }   // ξαναγράφω: σβήνει τη λούπα του block και ξεκινά νέα εγγραφή
+        void pressReRec (int b) { if (b >= 0) rerecReq[(size_t) b] = 1; }   // ξαναγράφω: σβήνει τη λούπα του block και ξεκινά νέα εγγραφή
         void tapFromUi()       { ++tapRequest; }
         void panic()           { ++panicCount; }
 
@@ -960,7 +961,7 @@ namespace flow
         // η νότα της λούπας μεταφέρεται από την κλίμακα που ηχογράφησες στην κλίμακα της συγχορδίας, βαθμίδα προς βαθμίδα
         int followMapNote (int b, int note) const
         {
-            if (followOn.load() == 0 || followBlock[(size_t) b].load() == 0) return note;
+            if (followOn.load() == 0 || followBlock[(size_t) b].load() == 0 || b == mfBlock.load()) return note;   // το MF block είναι η πηγή: δεν ακολουθεί
             const int sR = followRoot.load(), sT = followType.load(), tR = followTRoot.load(), tT = followTType.load();
             if (sR == tR && sT == tT) return note;
             const int* sI = followScale (sT);
@@ -982,7 +983,7 @@ namespace flow
             for (int n = 0; n < 128; ++n)
             {
                 const bool p = n < 64 ? ((lo >> n) & 1u) != 0 : ((hi >> (n - 64)) & 1u) != 0;
-                if (p) { mask |= 1 << (n % 12); if (lowest < 0) lowest = n; }
+                if (p && (mfBlock.load() < 0 || blockForNote (n) == mfBlock.load())) { mask |= 1 << (n % 12); if (lowest < 0) lowest = n; }   // με MF: μόνο οι νότες του MF block
             }
             if (std::bitset<12> ((unsigned) mask).count() < 3) return;
             const int root = lowest % 12;
@@ -1384,7 +1385,7 @@ namespace flow
                     if (b >= 0)
                     {
                         owner[(size_t) n] = b;
-                        if (b != specialBlock.load()) lastPlayed = b;
+                        lastPlayed = b;
                         Action a;
                         a.pos = pos; a.order = 1; a.kind = Kind::Live; a.note = n; a.vel = msg.getVelocity(); a.on = true;
                         inActions[(size_t) b].push_back (a);
@@ -1806,7 +1807,7 @@ namespace flow
                 B.rec.push_back ({ blkBeat0 + (double) pos * blkBps, on, note, vel });
                 B.recOpen.set ((size_t) note, on);
             }
-            else if (B.loopState == loopOff && ! isSpecialIdx (b))
+            else if (B.loopState == loopOff)
             {
                 const double bt = blkBeat0 + (double) pos * blkBps;
                 B.preRec.push_back ({ bt, on, note, vel });
