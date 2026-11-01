@@ -2053,7 +2053,7 @@ namespace flow
                 {
                     if (e.on)
                     {
-                        const double s = std::round (a / grid) * grid;
+                        const double s = B.recStart + std::round ((a - B.recStart) / grid) * grid;
                         shift[(size_t) e.note] = s - a;
                         hasShift.set ((size_t) e.note);
                         a = s;
@@ -2065,7 +2065,7 @@ namespace flow
                     }
                     else
                     {
-                        a = std::round (a / grid) * grid;
+                        a = B.recStart + std::round ((a - B.recStart) / grid) * grid;
                     }
                 }
 
@@ -2201,25 +2201,8 @@ namespace flow
             {
                 case loopOff:
                 {
-                    const int sq = startQ.load();
-                    // η ηχογράφηση ξεκινά αμέσως στο πάτημα. Το Start quantize κουμπώνει την αρχή προς τα πίσω.
-                    bool anyLoop = false;
-                    for (const auto& o : blocks)
-                        if (o.nLayers > 0 || o.loopState == loopRec || o.loopState == loopOver) anyLoop = true;
-                    const bool linkOn = linkWanted.load() && link.isEnabled();
-
-                    juce::ignoreUnused (anyLoop, linkOn);   // το ρολόι τρέχει ελεύθερα: η αρχή της λούπας κουμπώνει στο μέτρο όταν κλείσει η εγγραφή
-                    if (false) {}
-                    else if (sq == 0) B.recStart = beat;
-                    else
-                    {
-                        // αρχή του grid: αν παίζει ήδη λούπα, η αρχή του κύκλου της (της μεγαλύτερης)· αλλιώς ο κύκλος 2 μέτρων
-                        double cyc = 0.0, anc = 0.0;
-                        for (const auto& o : blocks)
-                            if (o.nLayers > 0 && o.loopBeats > cyc) { cyc = o.loopBeats; anc = o.loopAnchor; }
-                        if (cyc <= 0.0) { cyc = 2.0 * beatsPerBar; anc = 0.0; }
-                        B.recStart = anc + std::floor ((beat - anc) / cyc + 1.0e-9) * cyc;
-                    }
+                    // η εγγραφή ξεκινά ακριβώς στο πάτημα (Rec MIDI loop): εκεί είναι η αρχή της λούπας και το τέλος της οδηγεί πάλι εκεί
+                    B.recStart = beat;
                     B.rec.clear();
                     B.recOpen.reset();
                     for (const auto& pe : B.preRec)   // ό,τι έπαιξες από την αρχή του κύκλου μπαίνει στη λούπα
@@ -2235,7 +2218,7 @@ namespace flow
                 case loopRec:
                 {
                     // το τέλος περιμένει την επόμενη γραμμή μέτρου. Αν πατήσεις λίγο μετά τη γραμμή (μέχρι μισό beat), κλείνει στη γραμμή που μόλις πέρασε.
-                    const double prev = std::floor (beat / beatsPerBar + 1.0e-9) * beatsPerBar;
+                    const double prev = B.recStart + std::floor ((beat - B.recStart) / beatsPerBar + 1.0e-9) * beatsPerBar;   // μέτρα από την αρχή της λούπας
                     if (B.stopAt >= 0.0 || beat - prev <= 0.5) { B.stopAt = -1.0; finishRecording (B, beat); }
                     else B.stopAt = prev + beatsPerBar;
                     break;

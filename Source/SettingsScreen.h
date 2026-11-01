@@ -934,8 +934,8 @@ private:
     {
         const int x1 = 40, x2 = juce::jmax (440, getWidth() / 2 + 10);
         const int tapMs = host.tapMsGet ? host.tapMsGet() : 500;
-        chipRow (g, x1, 76, "Start quantize", "Where the loop starts when you press Rec MIDI loop", { "Off", "Beat", "Bar" },
-                 host.startQGet ? host.startQGet() : 0, [this] (int v) { if (host.startQSet) host.startQSet (v); });
+        chipRow (g, x1, 76, "Loop length", "Fit: loops fit whole times in the longest loop. Free: keeps the length you played", { "Fit", "Free" },
+                 host.loopFitGet ? 1 - host.loopFitGet() : 1, [this] (int v) { if (host.loopFitSet) host.loopFitSet (v == 0 ? 1 : 0); });
         chipRow (g, x2, 76, "Length quantize", "The loop length snaps to whole beats or bars", { "Off", "Beat", "Bar" },
                  host.lengthQGet ? host.lengthQGet() : 0, [this] (int v) { if (host.lengthQSet) host.lengthQSet (v); });
         chipRow (g, x1, 200, "Pedal press wait", "Time window for repeated pedal presses", { "0.5 s", "0.7 s", "1.0 s" },
@@ -944,8 +944,6 @@ private:
                  host.autoLoopGet ? host.autoLoopGet() : 0, [this] (int v) { if (host.autoLoopSet) host.autoLoopSet (v); });
         chipRow (g, x2, 200, "Note quantize", "The notes you play snap to the grid", { "Off", "1/8", "1/16" },
                  host.snapQGet ? host.snapQGet() : 0, [this] (int v) { if (host.snapQSet) host.snapQSet (v); });
-        chipRow (g, x2, 324, "Loop length", "Fit: loops fit whole times in the longest loop. Free: keeps the length you played", { "Fit", "Free" },
-                 host.loopFitGet ? 1 - host.loopFitGet() : 1, [this] (int v) { if (host.loopFitSet) host.loopFitSet (v == 0 ? 1 : 0); });
     }
 
     // ---------- window size ----------
