@@ -222,6 +222,7 @@ namespace flow
 
         // tempo και quantize (global)
         std::atomic<double> tempo { 110.0 };
+        std::atomic<int> loopFit { 0 };   // 0 Free: κάθε λούπα κρατά το μήκος που παίχτηκε. 1 Fit: χωράει ακέραιες φορές στον κύκλο (μεγαλύτερη λούπα)
         std::atomic<int> startQ { 1 }, lengthQ { 2 }, snapQ { 2 };   // startQ/lengthQ: 0 Off, 1 Beat, 2 Bar. snapQ: 0 Off, 1 = 1/8, 2 = 1/16
         std::atomic<int> tapRequest { 0 };
         std::atomic<int> afterFirst { 0 };      // μετά το πρώτο loop: 0 = Play, 1 = Overdub
@@ -2114,7 +2115,7 @@ namespace flow
                 if (&o != &self && o.nLayers > 0)
                     cycle = std::max (cycle, o.loopBeats);
 
-            if (cycle <= 0.0) return quantizedLength (elapsed);   // πρώτη λούπα: ορίζει το πλέγμα
+            if (cycle <= 0.0 || loopFit.load() == 0) return quantizedLength (elapsed);   // πρώτη λούπα ορίζει το πλέγμα· Free: κρατά το μήκος που παίχτηκε
 
             const int cBars = std::max (1, (int) std::lround (cycle / beatsPerBar));
             const double barsE = elapsed / beatsPerBar;

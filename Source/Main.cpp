@@ -2773,6 +2773,8 @@ private:
         h.startQSet = [this] (int v) { engine.startQ = v; saveNow(); };
         h.lengthQGet = [this] { return engine.lengthQ.load(); };
         h.lengthQSet = [this] (int v) { engine.lengthQ = v; saveNow(); };
+        h.loopFitGet = [this] { return engine.loopFit.load(); };
+        h.loopFitSet = [this] (int v) { engine.loopFit = v; saveNow(); };
         h.tapMsGet = [this] { return engine.tapMs.load(); };
         h.tapMsSet = [this] (int v) { engine.tapMs = v; saveNow(); };
         h.followBlocks = [this]
@@ -2985,6 +2987,7 @@ private:
         root->setAttribute ("startQ", engine.startQ.load());
         root->setAttribute ("lengthQ", engine.lengthQ.load());
         root->setAttribute ("snapQ", engine.snapQ.load());
+        root->setAttribute ("loopFit", engine.loopFit.load());
         root->setAttribute ("tapMs", engine.tapMs.load());
         root->setAttribute ("autoLoop", engine.autoLoop.load());
         root->setAttribute ("tempoManual", engine.tempoUserSet.load() ? 1 : 0);
@@ -3173,6 +3176,7 @@ private:
         engine.startQ = jlimit (0, 2, root.getIntAttribute ("startQ", 1));
         engine.lengthQ = jlimit (0, 2, root.getIntAttribute ("lengthQ", 2));
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 2));
+        engine.loopFit = jlimit (0, 1, root.getIntAttribute ("loopFit", 0));
         engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 500));
         engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 0));
         // το tempo του set ισχύει: δεν το αλλάζει η αυτόματη ανίχνευση και το Link παίρνει το tempo του set
@@ -4092,7 +4096,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.67.0"; }
+    const String getApplicationVersion() override { return "0.68.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

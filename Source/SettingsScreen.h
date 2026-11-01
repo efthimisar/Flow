@@ -56,8 +56,8 @@ public:
         std::function<juce::String()> panicCodeText;   // κενό = δεν έχει ανατεθεί
         std::function<juce::String()> orbFolderText;
         std::function<void()> chooseOrbFolder;
-        std::function<int()> startQGet, lengthQGet, tapMsGet, snapQGet;
-        std::function<void (int)> startQSet, lengthQSet, tapMsSet, snapQSet;
+        std::function<int()> startQGet, lengthQGet, tapMsGet, snapQGet, loopFitGet;
+        std::function<void (int)> startQSet, lengthQSet, tapMsSet, snapQSet, loopFitSet;
         std::function<int()> autoLoopGet;
         std::function<void (int)> autoLoopSet;
         std::function<std::vector<FollowBlock>()> followBlocks;
@@ -943,6 +943,8 @@ private:
                  host.autoLoopGet ? host.autoLoopGet() : 0, [this] (int v) { if (host.autoLoopSet) host.autoLoopSet (v); });
         chipRow (g, x2, 200, "Note quantize", "The notes you play snap to the grid", { "Off", "1/8", "1/16" },
                  host.snapQGet ? host.snapQGet() : 0, [this] (int v) { if (host.snapQSet) host.snapQSet (v); });
+        chipRow (g, x2, 324, "Loop length", "Fit: loops fit whole times in the longest loop. Free: keeps the length you played", { "Fit", "Free" },
+                 host.loopFitGet ? 1 - host.loopFitGet() : 1, [this] (int v) { if (host.loopFitSet) host.loopFitSet (v == 0 ? 1 : 0); });
     }
 
     // ---------- window size ----------
