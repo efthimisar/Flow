@@ -80,6 +80,7 @@ namespace flow
     struct LoopSnapshot
     {
         double beats = 0.0;
+        double anchor = 0.0;              // αρχή της λούπας (beat mod μήκος): από εκεί ξαναρχίζει όταν τελειώνει
         std::vector<double> layerBeats;   // μήκος κάθε layer (το loop είναι το μεγαλύτερο, τα άλλα επαναλαμβάνονται)
         unsigned mute = 0;
         std::vector<std::vector<LoopEvent>> layers;
@@ -140,6 +141,7 @@ namespace flow
                 smartResetApp ((int) b);
                 loopStateOut[b] = loopOff;
                 loopBeatsOut[b] = 0.0;
+                loopAnchorOut[b] = 0.0;
                 recStartBeatOut[b] = 0.0;
                 loopLayersOut[b] = 0;
                 loopMuteOut[b] = 0;
@@ -159,7 +161,8 @@ namespace flow
         std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, blockOff, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
                                                 volMap, loopStateOut, loopLayersOut, loopMuteOut, loopTapsOut,
                                                 cmdMain, cmdUndo, cmdStop, cmdMute, rerecReq, loopStoppedOut;
-        std::array<std::atomic<double>, numBlocks> loopBeatsOut, recStartBeatOut;
+        std::array<std::atomic<double>, numBlocks> loopBeatsOut, recStartBeatOut, loopAnchorOut;
+        std::atomic<double> cycleAnchorOut { 0.0 };   // αρχή του κύκλου (της μεγαλύτερης λούπας) για την οθόνη
         std::array<std::atomic<float>, numBlocks> volPos, gainOut;
         std::array<std::atomic<int>, numControls> mapCode;   // MIDI learn πεταλιών / πλήκτρων
         std::atomic<int> mapLearnTarget { -1 }, learnedCount { 0 }, learnedTarget { -1 }, learnedCode { 0 };
@@ -510,6 +513,7 @@ namespace flow
             auto& B = blocks[(size_t) b];
             if (B.nLayers == 0 || B.loopBeats <= 0.0) return false;
             snap.beats = B.loopBeats;
+            snap.anchor = std::fmod (std::fmod (B.loopAnchor, B.loopBeats) + B.loopBeats, B.loopBeats);
             snap.mute = B.muteMask;
             snap.layers.clear();
             for (int l = 0; l < B.nLayers; ++l) { snap.layers.push_back (B.layerEv[(size_t) l]); snap.layerBeats.push_back (B.layerBeats[(size_t) l]); }
@@ -535,6 +539,7 @@ namespace flow
             }
             if (B.nLayers == 0) B.loopBeats = snap.beats;
             B.muteMask = snap.mute;
+            B.loopAnchor = snap.anchor;
             B.loopState = B.nLayers > 0 ? loopPlay : loopOff;
         }
 
@@ -829,6 +834,7 @@ namespace flow
                 if (B.loopState == loopRec) longest = std::max (longest, beat1 - B.recStart);
             }
             metroCycleOut = playCycle();
+            cycleAnchorOut = playCycleAnchor();
             const double bars = longest / beatsPerBar;
             axisBarsOut = bars <= 4.0 + 1e-6 ? 4 : bars <= 8.0 + 1e-6 ? 8 : 16;
 
@@ -904,6 +910,7 @@ namespace flow
             int arpIndex = 0;
             int loopState = loopOff;
             double recStart = 0.0, loopBeats = 0.0;
+            double loopAnchor = 0.0;   // beat όπου ξεκινά η λούπα: η εγγραφή ξεκίνησε εκεί και το τέλος της οδηγεί πάλι εκεί
             bool panicPending = false;
             std::vector<LoopEvent> rec;
             double stopAt = -1.0;            // το τέλος της εγγραφής περιμένει αυτή τη γραμμή μέτρου (-1 = καμία)
@@ -919,7 +926,7 @@ namespace flow
                 vel.fill (0);
                 outNote.fill (0); loopOut.fill (0); chordCount.fill (0);
                 lastLatched = -1; prevHold = 0; prevArp = 0; arpIndex = 0;
-                loopState = loopOff; recStart = 0.0; loopBeats = 0.0;
+                loopState = loopOff; recStart = 0.0; loopBeats = 0.0; loopAnchor = 0.0;
                 rec.clear();
                 for (auto& l : layerEv) l.clear();
                 nLayers = 0; muteMask = 0; taps = 0; lastTap = 0; stopped = false; stopTapValid = false; loopSusMask = 0; loopBendMask = 0;
@@ -1228,20 +1235,29 @@ namespace flow
             return c >= beatsPerBar - 1.0e-6 ? c : (double) beatsPerBar;
         }
 
+        double playCycleAnchor() const
+        {
+            double c = 0.0, a = 0.0;
+            for (const auto& B : blocks)
+                if (B.plugin != nullptr && (B.loopState == loopPlay || B.loopState == loopOver) && B.loopBeats > c) { c = B.loopBeats; a = B.loopAnchor; }
+            return a;
+        }
+
         void renderMetronome (int n, double beat0, double beat1)
         {
             float* out = metroBuf.getWritePointer (0);
             juce::FloatVectorOperations::clear (out, n);
 
             // κλικ μόνο στην αρχή του κύκλου (έντονο) και στο τελευταίο beat του (πιο χαμηλά): σκαλοπάτι που δείχνει πότε τελειώνει/αρχίζει
-            const double cyc = playCycle();
+            const double cyc = playCycle(), cycAnc = playCycleAnchor();
             std::array<int, 8> startPos {};
             std::array<bool, 8> startAccent {};
             int starts = 0;
             for (double k = std::ceil (beat0 - 1.0e-9); k < beat1 - 1.0e-9 && starts < 8; k += 1.0)
             {
                 if (k < 0.0) continue;
-                const double pc = std::fmod (k, cyc);
+                double pc = std::fmod (k - cycAnc, cyc);
+                if (pc < 0.0) pc += cyc;
                 const bool strong = pc < 1.0e-6 || pc > cyc - 1.0e-6;
                 const bool weak = ! strong && std::abs (pc - (cyc - 1.0)) < 1.0e-6;
                 if (! strong && ! weak) continue;
@@ -1994,12 +2010,14 @@ namespace flow
             B.taps = 0;
             B.stopped = false;
             B.loopBeats = 0.0;
+            B.loopAnchor = 0.0;
             B.loopState = loopOff;
         }
 
         // κλείνει το layer που ηχογραφείται (rec) και το προσθέτει στο loop. Επιστρέφει true αν είχε νότες.
         bool commitLayer (Block& B, double beatNow, double len)
         {
+            const double anchor = B.nLayers > 0 ? B.loopAnchor : B.recStart;   // η λούπα ξεκινά εκεί που ξεκίνησε η εγγραφή
             const double rawElapsed = std::max (1.0e-6, beatNow - B.recStart);
             const double elapsed = std::max (1.0e-6, std::min (len, rawElapsed));
             // το μήκος στρογγυλεύτηκε στο πλησιέστερο μέτρο: αν η διαφορά είναι μέχρι ένα beat, οι νότες προσαρμόζονται αναλογικά
@@ -2025,7 +2043,7 @@ namespace flow
 
                 if (e.isRaw)    // CC, pitch bend, aftertouch: χωρίς snap
                 {
-                    double rp = std::fmod (a - B.recStart, len);   // η λούπα ξεκινά πάντα στην αρχή του πλέγματος
+                    double rp = std::fmod (a - anchor, len);   // η λούπα ξεκινά πάντα στην αρχή του πλέγματος
                     if (rp < 0.0) rp += len;
                     dst.push_back ({ rp, true, e.note, e.vel, true, e.d2 });
                     continue;
@@ -2051,7 +2069,7 @@ namespace flow
                     }
                 }
 
-                double p = std::fmod (a - B.recStart, len);   // η λούπα ξεκινά πάντα στην αρχή του πλέγματος: έτσι όλες οι λούπες συγχρονίζονται
+                double p = std::fmod (a - anchor, len);   // φάση μέσα στη λούπα, από την αρχή της
                 if (p < 0.0) p += len;
                 dst.push_back ({ p, e.on, e.note, e.vel });
             }
@@ -2091,6 +2109,7 @@ namespace flow
             B.recOpen.reset();
 
             if (dst.empty()) return false;
+            if (B.nLayers == 0) B.loopAnchor = B.recStart;
             B.layerBeats[(size_t) B.nLayers] = len;
             ++B.nLayers;
             B.loopBeats = 0.0;
@@ -2150,28 +2169,7 @@ namespace flow
 
         void finishRecording (Block& B, double beatNow, bool allowOverdub = true)
         {
-            // αρχή λούπας: αν η πρώτη νότα είναι μέχρι ένα beat από γραμμή μέτρου, η λούπα ξεκινά στη γραμμή (κρατά την αίσθηση του παιξίματος).
-            // Αλλιώς η σιωπή πριν την πρώτη νότα κόβεται και η λούπα ξεκινά με την πρώτη νότα, στο πλέγμα.
-            {
-                double first = 1.0e18;
-                for (const auto& ev : B.rec)
-                    if (ev.on && ! ev.isRaw) first = std::min (first, ev.phase);
-                if (first < 1.0e17)
-                {
-                    const double nb = std::round (first / beatsPerBar) * beatsPerBar;
-                    if (std::abs (first - nb) <= 1.0)
-                    {
-                        B.recStart = nb;
-                    }
-                    else if (first > B.recStart)
-                    {
-                        const int sq = snapQ.load();
-                        const double g = sq == 1 ? 0.5 : sq == 2 ? 0.25 : 0.0;
-                        const double ns = g > 0.0 ? std::round (first / g) * g : first;
-                        B.recStart = std::min (std::max (B.recStart, ns), first);
-                    }
-                }
-            }
+            // η λούπα ξεκινά στην αρχή του grid (εκεί που ξεκίνησε η εγγραφή): η σιωπή πριν την πρώτη νότα μένει και το τέλος της οδηγεί πάλι στην αρχή
 
             const double elapsed = beatNow - B.recStart;
             if (elapsed <= 0.0) { stopLoop (B); return; }   // ακυρώθηκε πριν αρχίσει (start quantize)
@@ -2215,8 +2213,12 @@ namespace flow
                     else if (sq == 0) B.recStart = beat;
                     else
                     {
-                        const double cycle = 2.0 * beatsPerBar;   // ο κύκλος 2 μέτρων της κόκκινης μπάρας
-                        B.recStart = std::floor (beat / cycle + 1.0e-9) * cycle;
+                        // αρχή του grid: αν παίζει ήδη λούπα, η αρχή του κύκλου της (της μεγαλύτερης)· αλλιώς ο κύκλος 2 μέτρων
+                        double cyc = 0.0, anc = 0.0;
+                        for (const auto& o : blocks)
+                            if (o.nLayers > 0 && o.loopBeats > cyc) { cyc = o.loopBeats; anc = o.loopAnchor; }
+                        if (cyc <= 0.0) { cyc = 2.0 * beatsPerBar; anc = 0.0; }
+                        B.recStart = anc + std::floor ((beat - anc) / cyc + 1.0e-9) * cyc;
                     }
                     B.rec.clear();
                     B.recOpen.reset();
@@ -2727,9 +2729,9 @@ namespace flow
 
                     for (const auto& e : B.layerEv[(size_t) layer])
                     {
-                        for (double m = std::floor (beat0 / L); m <= std::floor ((beat1 - 1.0e-9) / L); m += 1.0)
+                        for (double m = std::floor ((beat0 - B.loopAnchor) / L); m <= std::floor ((beat1 - 1.0e-9 - B.loopAnchor) / L); m += 1.0)
                         {
-                            const double x = m * L + e.phase;
+                            const double x = B.loopAnchor + m * L + e.phase;
                             if (x < beat0 || x >= beat1) continue;
                             Action a;
                             a.pos = juce::jlimit (0, numSamples - 1, (int) ((x - beat0) / blkBps));
@@ -2884,6 +2886,7 @@ namespace flow
             autoPausedOut[(size_t) b] = B.autoPaused ? 1 : 0;
             loopStateOut[b] = B.loopState;
             loopBeatsOut[b] = (B.loopState == loopPlay || B.loopState == loopOver) ? B.loopBeats : 0.0;
+            loopAnchorOut[b] = B.loopAnchor;
             loopLayersOut[b] = B.nLayers;
             loopMuteOut[b]   = (int) B.muteMask;
             loopTapsOut[b]   = B.taps;

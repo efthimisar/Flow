@@ -3028,6 +3028,7 @@ private:
             {
                 auto* l = e->createNewChildElement ("Loop");
                 l->setAttribute ("beats", snap.beats);
+                l->setAttribute ("anchor", snap.anchor);
                 {
                     StringArray lb;
                     for (auto v : snap.layerBeats) lb.add (String (v, 4));
@@ -3302,6 +3303,7 @@ private:
         {
             flow::LoopSnapshot snap;
             snap.beats = l->getDoubleAttribute ("beats", 0.0);
+            snap.anchor = l->getDoubleAttribute ("anchor", 0.0);
             snap.mute = (unsigned) l->getIntAttribute ("mute", 0);
             for (auto* layer : l->getChildWithTagNameIterator ("Layer"))
                 snap.layers.push_back (loopFromText (layer->getAllSubText()));
@@ -4073,7 +4075,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.71.0"; }
+    const String getApplicationVersion() override { return "0.72.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

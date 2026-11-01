@@ -692,6 +692,7 @@ public:
         const double axisBeats = (double) axisBars * flow::beatsPerBar;
         const double now = engine.beatPosOut.load();
         double cycleBeats = 0.0;   // ο μεγαλύτερος κύκλος λούπας που παίζει (0 = καμία)
+        const double cycA = engine.cycleAnchorOut.load();   // αρχή του κύκλου: το 0 του άξονα
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             const int st = engine.loopStateOut[(size_t) b].load();
@@ -782,9 +783,13 @@ public:
                 // οι λούπες είναι αγκυρωμένες στο πλέγμα (beat 0) και ο κύκλος είναι η μεγαλύτερη λούπα:
                 // η λωρίδα σχεδιάζεται μόνο μέσα στον κύκλο, όπως κινείται και το playhead
                 const double drawEnd = jmin (axisBeats, jmax (L, cycleBeats));
-                for (double k = 0.0; k < drawEnd - 1.0e-6; k += L)
+                double s0 = std::fmod (engine.loopAnchorOut[(size_t) b].load() - cycA, L);
+                if (s0 < 0.0) s0 += L;
+                for (double k0 = s0 - L; k0 < drawEnd - 1.0e-6; k0 += L)
                 {
-                    const double len = jmin (L, drawEnd - k);
+                    const double k = jmax (0.0, k0);
+                    const double len = jmin (k0 + L, drawEnd) - k;
+                    if (len <= 1.0e-6) continue;
                     const Rectangle<float> seg (laneX + laneW * (float) (k / axisBeats) + 0.002f * laneW, y,
                                                 laneW * (float) (len / axisBeats) - 0.004f * laneW, lh);
                     const bool dimSeg = allMuted || engine.blockOff[(size_t) b].load() != 0;
@@ -839,7 +844,7 @@ public:
             if (engine.loopStateOut[(size_t) list[i].getIntValue()].load() != flow::loopOff) anyLoop = true;
         // χωρίς λούπα το playhead περιμένει στην αρχή: ξεκινά όταν πατηθεί το Rec MIDI loop
         const double headBeats = (recording < 0 && cycleBeats > 0.0) ? jmin (axisBeats, cycleBeats) : axisBeats;
-        const float hx = laneX + (anyLoop ? laneW * (float) (std::fmod (now, headBeats) / axisBeats) : 0.0f);
+        const float hx = laneX + (anyLoop ? laneW * (float) (std::fmod (jmax (0.0, now - cycA), headBeats) / axisBeats) : 0.0f);
         g.setColour (anyLoop ? Colours::white : Colours::white.withAlpha (0.25f));
         g.fillRect (hx - 1.0f, (float) (top - 8), 2.0f, (float) (gridBottom - top + 8));
 
@@ -1201,7 +1206,7 @@ public:
             if (valid && (playing || recLoop))   // playhead
             {
                 const double headBeats = (playing && L > 0.0) ? jmin (axisBeats, jmax (0.25, L)) : axisBeats;   // η λούπα ξαναρχίζει στο μήκος της, όχι στο τέλος του άξονα
-                const float a = MathConstants<float>::twoPi * (float) (std::fmod (jmax (0.0, now), headBeats) / axisBeats);
+                const float a = MathConstants<float>::twoPi * (float) (std::fmod (jmax (0.0, now - (playing ? engine.loopAnchorOut[(size_t) sel].load() : engine.recStartBeatOut[(size_t) sel].load())), headBeats) / axisBeats);
                 const float dx = std::sin (a), dy = -std::cos (a);
                 g.setColour (Colours::white);
                 g.drawLine (cx + dx * (r - lw * 0.5f - 5.0f * s), cy + dy * (r - lw * 0.5f - 5.0f * s), cx + dx * (r + lw * 0.5f + 5.0f * s), cy + dy * (r + lw * 0.5f + 5.0f * s), jmax (2.0f, 3.0f * s));
