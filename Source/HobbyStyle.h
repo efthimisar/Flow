@@ -72,7 +72,7 @@ namespace hobby
         return juce::Colour (c[juce::jlimit (0, 5, k)]);
     }
     inline void drawSmartLanes (juce::Graphics& g, float cx, float cy, float outerEdge, float total, const float* vals, const float* lim,
-                                bool active, juce::Colour trackC, juce::Colour tickC)
+                                bool active, juce::Colour trackC, juce::Colour tickC, juce::Colour blockC)
     {
         (void) total;
         // οι παύλες κάθονται στα κενά ανάμεσα στους κύκλους του drawSmartWidth: ίδιο βήμα (20/118 της εξωτερικής ακτίνας)
@@ -101,7 +101,9 @@ namespace hobby
             {
                 const int k = ring * 2 + j;
                 const float v = j == 0 ? v0 : v1;
-                const juce::Colour c = (limited && v > lm) ? kSmartOver : smartDashColour (k);
+                // χρώμα του block με τονικές διαφορές: ο εξωτερικός δακτύλιος (μπάσα) πιο σκούρος, ο εσωτερικός (πρίμα) πιο φωτεινός· μέσα στο ζεύγος η χαμηλή ζώνη λίγο φωτεινότερη
+                static const float tone[6] { 0.62f, 0.50f, 0.95f, 0.80f, 1.30f, 1.12f };
+                const juce::Colour c = (limited && v > lm) ? kSmartOver : blockC.withMultipliedBrightness (tone[k]);
                 for (int i = 0; i < nt; ++i)
                 {
                     const float al = 0.5f * std::pow (1.0f - (float) (i + 1) / (float) nt, 1.8f) * dim;

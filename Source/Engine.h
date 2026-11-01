@@ -238,7 +238,7 @@ namespace flow
         std::array<std::atomic<int>, numBlocks> liveSilent;   // 1 = όσο παίζει η λούπα του block, το live του block μένει σιωπηλό (default). 0 = ακούγεται και το live.
         std::atomic<juce::uint32> lastVolMoveMs { 0 };
         std::atomic<int> volMoveDirty { 0 };
-        std::atomic<int> shiftHeld { 0 };       // sustain CC64 πατημένο: το ειδικό block παίρνει όλο το πληκτρολόγιο όσο το κρατάς
+        std::atomic<int> shiftHeld { 0 };       // sustain CC64 πατημένο: το ειδικό block παίρνει τα πλήκτρα της ζώνης του όσο το κρατάς
         std::atomic<int> specialBlock { -1 };   // ειδικό block: πάνω από τα άλλα, χωρίς λούπα, παίζει πάντα ζωντανά (-1 = κανένα)
         std::atomic<float> metroLevel { 0.8f };
         std::atomic<int> metroChannel { 2 };      // έξοδος 3 (0-based 2)
@@ -349,7 +349,8 @@ namespace flow
             if (shiftHeld.load() != 0 && n >= firstPlayNote)
             {
                 const int sb = specialBlock.load();
-                if (sb >= 0 && sb < numBlocks && active[(size_t) sb].load() != 0 && blockOff[(size_t) sb].load() == 0) return sb;
+                if (sb >= 0 && sb < numBlocks && active[(size_t) sb].load() != 0 && blockOff[(size_t) sb].load() == 0
+                    && zoneState[(size_t) sb].load() == 0 && n >= lo[(size_t) sb].load() && n <= hi[(size_t) sb].load()) return sb;   // μόνο στη ζώνη του
             }
             int best = -1, bestSeq = -1;
             for (int b = 0; b < numBlocks; ++b)
@@ -363,7 +364,7 @@ namespace flow
         }
 
         // το ειδικό block παίζει το πλήκτρο n (εφόσον υπάρχει, είναι αναμμένο και το πλήκτρο είναι στη ζώνη του)
-        // (το ειδικό block δεν παίζει πια από ζώνη: παίζει όλο το πληκτρολόγιο μόνο όσο κρατιέται το sustain, βλ. blockForNote)
+        // (το ειδικό block παίζει μόνο τα πλήκτρα της ζώνης του και μόνο όσο κρατιέται το sustain, βλ. blockForNote)
         int specialForNote (int) const { return -1; }
 
         void startVolumeLearn (int b) { mapLearnTarget = -1; volLearn = b; }

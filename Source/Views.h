@@ -1316,7 +1316,7 @@ public:
         const float width = valid ? engine.smartWidth[(size_t) sel].load() : 0.0f;
 
         // 6 ζώνες: 3 ζεύγη λωρίδων (μπορντώ, πορτοκάλι, κίτρινο). Ίδιο συνολικό πάχος με τους 3 παλιούς δακτυλίους.
-        hobby::drawSmartLanes (g, cx, cy, r + lw * 0.5f, 3.0f * lw + 8.0f * s, vals, lim, active, trackC, txtC.withAlpha (0.85f));
+        hobby::drawSmartLanes (g, cx, cy, r + lw * 0.5f, 3.0f * lw + 8.0f * s, vals, lim, active, trackC, txtC.withAlpha (0.85f), blockLight (sel));
 
         // κέντρο: κύκλος του πλάτους stereo. Πάτημα = Off ↔ On (Auto)
         {
@@ -1829,7 +1829,7 @@ public:
             g.fillRect (sx - 1.0f, keysY, 2.0f, 56.0f);
 
         // ειδικό block: άσπρη λωρίδα πάνω από τα πλήκτρα της ζώνης του, και λευκό περίγραμμα στο πρώτο και στο τελευταίο πλήκτρο
-        specialRect = {};
+        specialRect = {}; menuBg = {};
         {
             const int sb = engine.specialBlock.load();
             if (sb >= 0 && engine.active[(size_t) sb].load() != 0 && engine.zoneState[(size_t) sb].load() == 0)
@@ -1902,6 +1902,12 @@ public:
                 x = jlimit (14.0f, (float) getWidth() - 14.0f - total, x);
             }
             const float cy = labelY;
+            if (open)   // φόντο πίσω από τις λειτουργίες: καλύπτει ό,τι είναι από κάτω και τα κλικ πάνω του πιάνουν μόνο αυτό το block
+            {
+                menuBg = { x - 7.0f, cy - 5.0f, total + 14.0f, D + 10.0f };
+                g.setColour (hobby::kScreen); g.fillRoundedRectangle (menuBg, (D + 10.0f) * 0.5f);
+                g.setColour (col.withAlpha (0.35f)); g.drawRoundedRectangle (menuBg.reduced (0.5f), (D + 10.0f) * 0.5f, 1.0f);
+            }
 
             // αριθμός
             numRect[(size_t) b] = { x, cy, D, D };
@@ -2046,10 +2052,12 @@ public:
 
         // το μενού του block ανοίγει και κλείνει μόνο με τον αριθμό του (όχι με κλικ αλλού)
 
+        const bool inMenu = ! menuBg.isEmpty() && menuBg.contains (p);   // πάνω στο φόντο του ανοιχτού μενού ακούει μόνο το block του
+
         // ο αριθμός ανοίγει/κλείνει το μενού του block, ανεξάρτητα από γειτονικά blocks που μπορεί να επικαλύπτονται
         if (! e.mods.isPopupMenu())
             for (int b = 0; b < flow::numBlocks; ++b)
-                if (spans[(size_t) b].used && numRect[(size_t) b].expanded (2.0f).contains (p))
+                if (spans[(size_t) b].used && ! (inMenu && b != expanded) && numRect[(size_t) b].expanded (2.0f).contains (p))
                 {
                     expanded = expanded == b ? -1 : b;
                     repaint();
@@ -2059,7 +2067,7 @@ public:
         // το ✕ του ανοιχτού block ελέγχεται πρώτο: τα κυκλάκια μπορεί να πέφτουν πάνω στην περιοχή γειτονικού block
         if (! e.mods.isPopupMenu())
             for (int b = 0; b < flow::numBlocks; ++b)
-                if (spans[(size_t) b].used && xRect[(size_t) b].expanded (2.0f).contains (p))
+                if (spans[(size_t) b].used && ! (inMenu && b != expanded) && xRect[(size_t) b].expanded (2.0f).contains (p))
                 {
                     if (armedBlock == b && Time::getMillisecondCounter() < armedUntil) { armedBlock = -1; repaint(); if (onRemoveBlock) onRemoveBlock (b); }
                     else { armedBlock = b; armedUntil = Time::getMillisecondCounter() + 3000; repaint(); Component::SafePointer<KeyboardView> sp (this); Timer::callAfterDelay (3100, [sp] { if (sp != nullptr) sp->repaint(); }); }
@@ -2084,7 +2092,7 @@ public:
                 for (const auto* r : { &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &silentRect[(size_t) b], &swapRect[(size_t) b], &spRect[(size_t) b] })
                     if (r->expanded (2.0f).contains (p)) { onCircle = true; break; }
 
-        if (! onCircle && ! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
+        if (! onCircle && ! inMenu && ! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
         {
             const int sb = engine.specialBlock.load();
             if (e.mods.isPopupMenu()) { if (onVolumeMenu) onVolumeMenu (sb); return; }
@@ -2098,7 +2106,8 @@ public:
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             const auto& s = spans[(size_t) b];
-            if (! s.used || p.x < s.l || p.x > s.r || p.y < labelY - 2.0f || p.y > keysY + 56.0f) continue;
+            if (inMenu && b != expanded) continue;   // πάνω στο ανοιχτό μενού ακούει μόνο το block του
+            if (! s.used || (! (inMenu && b == expanded) && (p.x < s.l || p.x > s.r || p.y < labelY - 2.0f || p.y > keysY + 56.0f))) continue;
             if (b == engine.specialBlock.load() && p.y >= keysY - 13.0f) continue;   // κάτω από τα κυκλάκια το ειδικό block δεν παίρνει κλικ (τα πλήκτρα ανήκουν στα κανονικά blocks)
 
             const bool onBar = barRect[(size_t) b].expanded (0.0f, 6.0f).contains (p);
@@ -2253,7 +2262,7 @@ private:
     int dragBlock = -1;
     std::array<float, 128> noteL {}, noteR {};
     std::array<int, 52> whiteNote {};
-    Rectangle<float> specialRect;
+    Rectangle<float> specialRect, menuBg;   // menuBg: φόντο του ανοιχτού μενού λειτουργιών ενός block
     int spMode = 0, spLo0 = 0, spHi0 = 0, spStartNote = 0;
     bool spMoved = false;
 };

@@ -17,6 +17,7 @@ public:
         float band[6] = {}, need[6] = {}, app[6] = {};  // ανά ζώνη: μέτρηση 0..1, αναγκαία και εφαρμοσμένη μείωση (dB)
         float lim[7] = { 1, 1, 1, 1, 1, 1, 1 };        // όρια του τύπου {6 ζώνες, πλάτος}
         float width = 0, needW = 1, appW = 1;
+        juce::Colour colour { juce::Colour (0xffe6c85f) };   // χρώμα του block
     };
     struct FollowBlock { bool active = false; juce::String name; bool on = false; };
     struct SetInfo { juce::String name, date; juce::Image thumb; bool current = false; juce::File file; };
@@ -1191,7 +1192,7 @@ private:
             auto over = [&] (float v, float lm) { return on && B.type != 0 && v > lm; };
             {
                 float lm6[6]; for (int k = 0; k < 6; ++k) lm6[k] = B.lim[k];
-                hobby::drawSmartLanes (g, rcx, rcy, R0, th * 3.4f, B.band, lm6, ! dim0, Colour (0xff343130), txt().withAlpha (0.85f));
+                hobby::drawSmartLanes (g, rcx, rcy, R0, th * 3.4f, B.band, lm6, ! dim0, Colour (0xff343130), txt().withAlpha (0.85f), B.colour);
             }
 
             // πλάτος: κύκλος με γεμάτο σχήμα

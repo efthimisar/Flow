@@ -2808,6 +2808,7 @@ private:
                     x.need[k] = engine.smartNeed[(size_t) b][(size_t) k].load();
                     x.app[k]  = engine.smartApp[(size_t) b][(size_t) k].load();
                 }
+                x.colour = blockLight (b);
                 x.width = engine.smartWidth[(size_t) b].load();
                 flow::smartLimits (x.type, x.lim);
                 x.needW = engine.smartNeedWidth[(size_t) b].load(); x.appW = engine.smartAppWidth[(size_t) b].load();
@@ -4094,7 +4095,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.69.0"; }
+    const String getApplicationVersion() override { return "0.70.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
