@@ -212,7 +212,7 @@ namespace flow
         std::atomic<int> pedalMute { 0 }, pedalDel { 0 };       // πατήματα πεταλιού (mute / σβήσιμο): ο αριθμός πατημάτων = αριθμός block
         std::atomic<int> tapsMuteOut { 0 }, tapsDelOut { 0 };   // πατήματα που μετρήθηκαν τώρα (για την κεφαλίδα)
         std::atomic<int> tapMs { 500 };                         // αναμονή μετά το τελευταίο πάτημα
-        std::atomic<int> autoLoop { 0 };                        // ανίχνευση επανάληψης: 0 = Off, 1 = Auto (ξεκινά μόνη), 2 = ξεκινά με πάτημα του Rec MIDI loop
+        std::atomic<int> autoLoop { 0 };                        // ανίχνευση επανάληψης: 0 = Off, 1 = Auto (ξεκινά μόνη)
         std::atomic<bool> tempoUserSet { false };               // το tempo το όρισες εσύ (κουτί, tap, Link, set): η ανίχνευση δεν το αλλάζει
         std::array<std::atomic<int>, numBlocks> autoPausedOut;   // 1 = η αυτόματη ανίχνευση του block είναι σε παύση (μετά από διαγραφή)
         std::array<std::atomic<int>, numBlocks> autoReadyOut;   // 1 = το block είναι έτοιμο για λούπα (για την κεφαλίδα)
@@ -2338,6 +2338,23 @@ namespace flow
             std::sort (iois.begin(), iois.end());
             const double medIoi = iois[iois.size() / 2];
 
+            // Αρχή του παραθύρου 4 μέτρων: τα όρια των μέτρων πέφτουν στο μεγαλύτερο κενό ανάμεσα στις νότες (όχι πάνω σε νότα),
+            // ώστε μια νότα που επαναλαμβάνεται σε κάθε μέτρο να μην πέφτει πότε στο ένα και πότε στο διπλανό μέτρο.
+            auto windowStart = [&] (double D) -> double
+            {
+                std::vector<double> ph;
+                for (double t : on)
+                    if (t >= tL - 5.0 * D) { double p = std::fmod (tL - t, D); if (p < 0.0) p += D; ph.push_back (p); }
+                std::sort (ph.begin(), ph.end());
+                double c = 0.5 * D, bestGap = -1.0;
+                for (size_t i = 0; i < ph.size(); ++i)
+                {
+                    const double a = ph[i], b = i + 1 < ph.size() ? ph[i + 1] : ph[0] + D;
+                    if (b - a > bestGap) { bestGap = b - a; c = std::fmod (0.5 * (a + b), D); }
+                }
+                return tL - c - 4.0 * D;   // τέλος παραθύρου = το τελευταίο όριο μέτρου πριν την τελευταία νότα
+            };
+
             const bool linkActive = linkWanted.load() && link.isEnabled();
             const bool known = tempoUserSet.load() || tempoAdopted || linkActive;
             const double D0 = 240.0 / juce::jlimit (40.0, 240.0, tempo.load());
@@ -2363,7 +2380,7 @@ namespace flow
                 const double tol = std::min (0.06 * D + 0.03, std::max (0.03, 0.4 * medIoi));
                 if (on.front() > tL - 3.0 * D + tol) continue;               // δεν υπάρχουν δεδομένα για 4 μέτρα
 
-                const double ws = tL - 4.0 * D;
+                const double ws = windowStart (D);
                 std::array<std::vector<double>, 4> seg;
                 for (double t : on)
                 {
@@ -2411,7 +2428,7 @@ namespace flow
             // πρώτο πλήκτρο του μέτρου: η φάση μετά το μεγαλύτερο κενό
             const double D = bestD;
             const double tol = std::min (0.06 * D + 0.03, std::max (0.03, 0.4 * medIoi));
-            const double ws = tL - 4.0 * D;
+            const double ws = windowStart (D);
             std::vector<double> ph;
             for (double t : on)
             {
@@ -2646,10 +2663,7 @@ namespace flow
             {
                 ++B.seenMain;
                 if (B.autoPaused) { B.autoPaused = false; B.hist.clear(); B.lastDetect = 0; }
-                if (autoLoop.load() == 2 && B.loopState == loopOff && B.autoReady)
-                    commitAuto (B, b, B.autoHit, gs, sr, beat0);   // "ξεκινά με πάτημα": το Rec MIDI loop παίρνει την ετοιμασμένη λούπα
-                else
-                    loopMain (B, beat0);
+                loopMain (B, beat0);
             }
 
             for (int cu = cmdUndo[(size_t) b].load(); B.seenUndo != cu; )

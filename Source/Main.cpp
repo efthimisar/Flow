@@ -2377,7 +2377,6 @@ private:
         PopupMenu autoMenu;
         autoMenu.addItem (70, gr ("\xe2\x8a\x98"), true, engine.autoLoop.load() == 0);
         autoMenu.addItem (71, gr ("A"), true, engine.autoLoop.load() == 1);
-        autoMenu.addItem (72, gr ("A  \xe2\x97\x8f"), true, engine.autoLoop.load() == 2);
         menu.addSubMenu (gr ("A"), autoMenu);
         PopupMenu tapMenu;
         tapMenu.addItem (60, "0.5 s", true, engine.tapMs.load() == 500);
@@ -2397,7 +2396,7 @@ private:
             if (r >= 10 && r <= 12) e.startQ = r - 10;
             if (r >= 20 && r <= 22) e.lengthQ = r - 20;
             if (r >= 30 && r <= 32) e.snapQ = r - 30;
-            if (r >= 70 && r <= 72) e.autoLoop = r - 70;
+            if (r >= 70 && r <= 71) e.autoLoop = r - 70;
             if (r >= 60 && r <= 62) e.tapMs = r == 60 ? 500 : r == 61 ? 700 : 1000;
             if (r == 40) safe->startPedalLearn (flow::ctlRec);
             if (r == 41) e.mapCode[flow::ctlRec] = 0;
@@ -3178,7 +3177,7 @@ private:
         engine.snapQ = jlimit (0, 2, root.getIntAttribute ("snapQ", 2));
         engine.loopFit = jlimit (0, 1, root.getIntAttribute ("loopFit", 0));
         engine.tapMs = jlimit (300, 1500, root.getIntAttribute ("tapMs", 500));
-        engine.autoLoop = jlimit (0, 2, root.getIntAttribute ("autoLoop", 0));
+        engine.autoLoop = jlimit (0, 1, root.getIntAttribute ("autoLoop", 0));   // 2 (On Rec, παλιό) → 1
         // το tempo του set ισχύει: δεν το αλλάζει η αυτόματη ανίχνευση και το Link παίρνει το tempo του set
         {
             const bool manual = root.getIntAttribute ("tempoManual", 1) != 0 || std::abs (engine.tempo.load() - 110.0) > 0.01;
@@ -3882,7 +3881,6 @@ private:
         if (message.isNotEmpty())  { header.notice = message; header.noticeColour = hobby::kCoral; }
         else if (stopTaps > 0)     { header.notice = stopTaps == 1 ? String ("LOOP OFF") : String ("LOOP ON"); header.noticeColour = hobby::kLilac; }
         else if (delTaps > 0)      { header.notice = delTaps == 1 ? String ("RE-REC") : String ("DEL"); header.noticeColour = hobby::kCoral; }
-        else if (valid && engine.autoLoop.load() == 2 && engine.autoReadyOut[(size_t) sel].load() != 0) { header.notice = "REC = LOOP"; header.noticeColour = hobby::kLilac; }
         else                       header.notice = String();
         header.accent = valid ? blockLight (sel) : hobby::kIconGrey;
         header.masterMode = master;
@@ -4096,7 +4094,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.68.0"; }
+    const String getApplicationVersion() override { return "0.69.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
