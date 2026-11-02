@@ -32,7 +32,7 @@ namespace hobby
 
     void drawBrandMark (juce::Graphics& g, const juce::Typeface::Ptr& typeface, int windowWidth)
     {
-        const auto f = makeFont (typeface, 15.0f);
+        const auto f = makeFont (typeface, 16.0f).boldened();
         const juce::String chars[3] = { juce::String (juce::CharPointer_UTF8 ("\xcf\x80")), "/", "-" };
         const float gap = 6.0f;
         float w[3], total = gap * 2.0f;
@@ -40,13 +40,13 @@ namespace hobby
         g.setFont (f);
         for (int pass = 0; pass < 3; ++pass)
         {
-            const float off = pass == 0 ? -1.4f : 1.4f;
             float x = ((float) windowWidth - total) * 0.5f;
             for (int i = 0; i < 3; ++i)
             {
-                const juce::Rectangle<float> r (x + (pass == 2 ? 0.0f : off), kBrandY + (pass == 2 ? 0.0f : off), w[i] + 2.0f, 16.0f);
-                g.setColour (pass == 0 ? juce::Colours::white.withAlpha (0.95f)
-                                       : pass == 1 ? juce::Colour (0xffcdc1b1) : juce::Colour (0xfff1ebe2));
+                const float ox = pass == 0 ? 1.0f : pass == 1 ? -0.8f : 0.0f, oy = pass == 0 ? 1.5f : pass == 1 ? -0.8f : 0.0f;
+                const juce::Rectangle<float> r (x + ox, kBrandY + oy, w[i] + 2.0f, 16.0f);
+                g.setColour (pass == 0 ? juce::Colours::white.withAlpha (0.9f)
+                                       : pass == 1 ? juce::Colour (0xffcdc1b4) : juce::Colour (0xff968a7e));   // όπως το + και το M
                 g.drawText (chars[i], r, juce::Justification::centredLeft, false);
                 x += w[i] + gap;
             }
@@ -55,14 +55,14 @@ namespace hobby
 
     void drawEmbossedText (juce::Graphics& g, const juce::Typeface::Ptr& typeface, const juce::String& text, float x)
     {
-        const auto f = makeFont (typeface, 15.0f);
+        const auto f = makeFont (typeface, 16.0f).boldened();
         g.setFont (f);
         for (int pass = 0; pass < 3; ++pass)
         {
-            const float off = pass == 0 ? -1.4f : 1.4f;
-            const juce::Rectangle<float> r (x + (pass == 2 ? 0.0f : off), kBrandY + (pass == 2 ? 0.0f : off), 120.0f, 16.0f);
-            g.setColour (pass == 0 ? juce::Colours::white.withAlpha (0.95f)
-                                   : pass == 1 ? juce::Colour (0xffcdc1b1) : juce::Colour (0xfff1ebe2));
+            const float ox = pass == 0 ? 1.0f : pass == 1 ? -0.8f : 0.0f, oy = pass == 0 ? 1.5f : pass == 1 ? -0.8f : 0.0f;
+            const juce::Rectangle<float> r (x + ox, kBrandY + oy, 120.0f, 16.0f);
+            g.setColour (pass == 0 ? juce::Colours::white.withAlpha (0.9f)
+                                   : pass == 1 ? juce::Colour (0xffcdc1b4) : juce::Colour (0xff968a7e));   // όπως το + και το M
             g.drawText (text, r, juce::Justification::centredLeft, false);
         }
     }
