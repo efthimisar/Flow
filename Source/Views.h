@@ -154,7 +154,7 @@ public:
         lamp ((float) w - 124.0f, String::fromUTF8 ("\xe2\x89\xa1"), showAll ? hobby::kOn : hobby::kIconGrey, [this] { showAll = ! showAll; scroll = 0; repaint(); });
 
         const int cols = w >= 640 ? 2 : 1;
-        const float gapX = 20.0f, left = 26.0f, rowH = 34.0f, top = 58.0f;
+        const float gapX = 20.0f, left = 26.0f, rowH = 76.0f, top = 58.0f;
         const float colW = ((float) w - 2.0f * left - gapX * (float) (cols - 1)) / (float) cols;
         const int rowsVisible = jmax (1, (int) ((float) (getHeight() - 58 - 8) / rowH));
         std::vector<int> vis;   // ευρετήριο των plugins που ταιριάζουν στην αναζήτηση
@@ -183,8 +183,8 @@ public:
                 g.fillRoundedRectangle (rr, 6.0f);
                 const bool fav = idx < keys.size() && favs.contains (keys[idx]);
                 const Rectangle<float> fr (rr.getX() + 6.0f, rr.getY() + (rr.getHeight() - 22.0f) * 0.5f, 22.0f, 22.0f);
-                if (fav) { g.setColour (hobby::kOn.withAlpha (0.22f)); g.fillEllipse (fr); }
-                g.setColour (fav ? hobby::kOn : hobby::kIconGrey.withAlpha (0.4f));
+                if (fav) { g.setColour (Colour (0xfff3f4f6).withAlpha (0.16f)); g.fillEllipse (fr); }
+                g.setColour (fav ? Colour (0xfff3f4f6) : hobby::kIconGrey.withAlpha (0.4f));
                 g.setFont (hobby::makeFont (typeface, 16.0f));
                 g.drawText ("f", fr, Justification::centred, false);
                 hot.push_back ({ fr.expanded (3.0f), [this, idx]
@@ -196,10 +196,9 @@ public:
                     repaint();
                 } });
                 {   // μικρογραφία του plugin (από το παράθυρό του, όταν το έχεις ανοίξει μία φορά)· αλλιώς το αρχικό γράμμα
-                    const Rectangle<float> tr (rr.getX() + 36.0f, rr.getY() + 3.0f, rr.getHeight() - 6.0f, rr.getHeight() - 6.0f);
-                    g.setColour (Colour (0xff1f1c1a)); g.fillRoundedRectangle (tr, 5.0f);
+                    const Rectangle<float> tr (rr.getX() + 36.0f, rr.getY() + 4.0f, (rr.getHeight() - 8.0f) * 1.5f, rr.getHeight() - 8.0f);
                     Image im = thumbFn ? thumbFn (items[idx]) : Image();
-                    if (im.isValid()) g.drawImage (im, tr.reduced (1.0f), RectanglePlacement::centred);
+                    if (im.isValid()) g.drawImage (im, tr, RectanglePlacement::centred);
                     else
                     {
                         g.setColour (hobby::kIconGrey.withAlpha (0.55f)); g.setFont (hobby::makeFont (typeface, 15.0f).boldened());
@@ -208,7 +207,7 @@ public:
                 }
                 g.setColour (hobby::kText);
                 g.setFont (hobby::makeFont (typeface, 15.0f));
-                g.drawText (items[idx], rr.withTrimmedLeft (36.0f + rr.getHeight() + 4.0f).withTrimmedRight (60.0f), Justification::centredLeft, true);
+                g.drawText (items[idx], rr.withTrimmedLeft (36.0f + (rr.getHeight() - 8.0f) * 1.5f + 12.0f).withTrimmedRight (60.0f), Justification::centredLeft, true);
                 g.setColour (hobby::kIconGrey.withAlpha (0.6f));
                 g.setFont (hobby::makeFont (typeface, 11.0f));
                 g.drawText (fmts[idx], rr.withTrimmedRight (12.0f), Justification::centredRight, false);

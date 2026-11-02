@@ -325,13 +325,12 @@ private:
             { 9, "Loop recording", false, false, [this] { showPage (LoopRec); } },
             { 12, "Follow", host.followOnGet && host.followOnGet() != 0, false, [this] { if (host.followOnSet) host.followOnSet ((host.followOnGet && host.followOnGet() != 0) ? 0 : 1); repaint(); } },
             { 15, "Orb knobs", false, false, {}, true, 13 },
-            { 11, "Smart master", host.smartOnGet && host.smartOnGet() != 0, false, {}, true, 11 },
+            { 11, "Smart master", false, false, {}, true, 11 },
             { 4, "Rec Audio folder", false, false, [this] { showPage (RecFolder); } },
             { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
             { 8, "Window size", false, false, [this] { showPage (WindowSize); } },
             { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
             { 0, "Audio & MIDI", false, false, [this] { if (host.openAudio) host.openAudio(); } },
-            { 5, "Master Output", false, false, [this] { showPage (Master); } },
             { 6, "Ableton Link", linkOn, ! linkAv, [this, linkAv] { if (linkAv && host.linkToggle) host.linkToggle(); } },
             { 17, "Help", host.helpGet && host.helpGet(), false, [this] { if (host.helpToggle) host.helpToggle(); repaint(); } },
             { 7, "Panic", false, false, [this] { showPage (Panic); } },
@@ -354,11 +353,11 @@ private:
             const Rectangle<int> r (ccx - d / 2, ccy - d / 2, d, d);
             const bool isSel = t.card && t.cardId == selTile;
             const bool h = hov (r);
-            g.setColour (isSel ? Colour (0xff3c5a46) : h ? Colour (0xff36322f) : card());
+            g.setColour (isSel ? Colour (0xff4a4642) : h ? Colour (0xff36322f) : card());
             g.fillEllipse (r.toFloat());
-            g.setColour (isSel || t.hot ? hobby::kOn : lineC());
+            g.setColour (isSel || t.hot ? Colour (0xfff3f4f6) : lineC());
             g.drawEllipse (r.toFloat().reduced (1.0f), isSel ? 2.4f : t.hot ? 2.0f : 1.2f);
-            const Colour ink = t.dimmed ? dim().withAlpha (0.5f) : (t.hot || isSel) ? hobby::kOn : txt();
+            const Colour ink = t.dimmed ? dim().withAlpha (0.5f) : (t.hot || isSel || h) ? Colour (0xfff3f4f6) : dim();
             drawIcon (g, t.icon, { (float) ccx, (float) ccy }, ink);
             g.setColour (isSel ? txt() : t.dimmed ? dim().withAlpha (0.6f) : dim()); g.setFont (font (11.0f, true));
             g.drawText (t.title, ccx - pitch / 2, r.getBottom() + 3, pitch, 16, Justification::centred, true);

@@ -286,11 +286,11 @@ public:
         engine.metroChannel = jmax (0, settings->getIntValue ("metroChannel", 2));
         favPlugins.addLines (settings->getValue ("favPlugins"));
         favPlugins.removeEmptyStrings();
-        engine.masterPos = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("masterPos", 1.0));
+        engine.masterPos = 1.0f;   // το master volume είναι πάντα 100%
         engine.followSetScale (settings->getIntValue ("followRoot", 9), settings->getIntValue ("followType", 1));
         engine.smartOn = settings->getIntValue ("smartOn", 0) != 0 ? 1 : 0;
         engine.smartAccept = jlimit (0.0f, 1.0f, (float) settings->getDoubleValue ("smartAccept", 0.6));
-        engine.masterCc = settings->getIntValue ("masterCc", 0);
+        engine.masterCc = 0;
         metroSamplePath = settings->getValue ("metroSample");
 
         std::unique_ptr<XmlElement> savedAudio (settings->getXmlValue ("audioDeviceState"));
@@ -2563,24 +2563,6 @@ private:
         add (String::fromUTF8 ("\xe2\x9f\xb2"), gr ("Restore last session"), act ([this] { restoreLastSession(); }), hasSessionBackup());
         add (String::fromUTF8 ("\xe2\x96\xad"), gr ("Rec Audio folder\xe2\x80\xa6"), act ([this] { chooseTapeFolder(); }));
 
-        {
-            LoopsView::MenuEntry m; m.glyph = "v"; m.symbol = (int) Symbol::Speaker; m.text = gr ("Master volume");
-            const float pos = engine.masterPos.load();
-            const float steps[4] { 1.0f, 0.85f, 0.7f, 0.5f };
-            for (int i = 0; i < 4; ++i)
-            {
-                LoopsView::MenuEntry sj; sj.text = String ((int) (steps[i] * 100)) + "%"; sj.checked = std::abs (pos - steps[i]) < 0.05f;
-                const float v = steps[i];
-                sj.fn = [this, v] { engine.masterPos = v; saveNow(); };
-                m.sub.push_back (std::move (sj));
-            }
-            { LoopsView::MenuEntry sj; sj.text = gr ("Assign knob (MIDI learn)");
-              sj.fn = [this] { engine.cancelLearns(); engine.masterLearn = 1; setMessage (gr ("Move the knob for the master volume")); }; m.sub.push_back (std::move (sj)); }
-            { LoopsView::MenuEntry sj; sj.text = gr ("Remove assignment"); sj.enabled = engine.masterCc.load() != 0;
-              sj.fn = [this] { engine.masterCc = 0; saveNow(); }; m.sub.push_back (std::move (sj)); }
-            items.push_back (std::move (m));
-        }
-
         add (String::fromUTF8 ("\xe2\x88\x9e"), "Ableton Link" + (LinkBridge::isAvailable() ? String() : gr (" (not included in this build)")),
              act ([this]
              {
@@ -2644,7 +2626,6 @@ private:
                 if (deviceManager.isMidiInputDeviceEnabled (d.identifier)) names.add (d.name);
             r.push_back ({ "MIDI", names.isEmpty() ? gr ("none") : names.joinIntoString (", ") });
         }
-        r.push_back ({ "Master", String ((int) std::lround (engine.masterPos.load() * 100.0f)) + "%" });
         r.push_back ({ "Link", engine.isLinkEnabled() ? "on" : "off" });
         {
             auto folder = engine.recorder.getFolder().getFullPathName();
@@ -2728,9 +2709,10 @@ private:
     //==========================================================================
     void refreshSmartTile()
     {
-        motionTile.setIconColour (orbRecArmed ? hobby::kRed : hobby::kIconGrey);
-        smartTile.setIconColour (settingsScreen.isSmartDirect() ? hobby::kOn : hobby::kIconGrey);
-        followTile.setIconColour (settingsScreen.isFollowDirect() || engine.followOn.load() != 0 ? hobby::kOn : hobby::kIconGrey);
+        const Colour white (0xfff3f4f6), dim = hobby::kIconGrey.withAlpha (0.4f);
+        motionTile.setIconColour (orbRecArmed ? hobby::kRed : dim);
+        smartTile.setIconColour (settingsScreen.isSmartDirect() ? white : dim);
+        followTile.setIconColour (settingsScreen.isFollowDirect() || engine.followOn.load() != 0 ? white : dim);
     }
 
     void openSettingsScreen()
@@ -3738,12 +3720,10 @@ private:
         settings->setValue ("tapeFolder", engine.recorder.getFolder().getFullPathName());
         settings->setValue ("metroLevel", (double) engine.metroLevel.load());
         settings->setValue ("favPlugins", favPlugins.joinIntoString ("\n"));
-        settings->setValue ("masterPos", (double) engine.masterPos.load());
         settings->setValue ("followRoot", engine.followRoot.load());
         settings->setValue ("followType", engine.followType.load());
         settings->setValue ("smartOn", engine.smartOn.load());
         settings->setValue ("smartAccept", (double) engine.smartAccept.load());
-        settings->setValue ("masterCc", engine.masterCc.load());
         settings->setValue ("metroChannel", engine.metroChannel.load());
         settings->setValue ("metroSample", metroSamplePath);
         settings->setValue ("link", engine.isLinkEnabled());
@@ -3889,24 +3869,25 @@ private:
         const bool hasMfx = valid && engine.getMidiFx (sel) != nullptr;
         const int nfx = valid ? engine.numFx (sel) : 0;
         // πράσινο = υπάρχει (block / VST / MIDI FX / FX στο επιλεγμένο block), άσπρο = δεν υπάρχει
-        const Colour tileWhite (0xfff3f4f6);
-        blockTile.setIconColour (hobby::kOn);   // πάντα ένα απλό πράσινο τετράγωνο
-        vstTile.setIconColour (valid ? hobby::kOn : tileWhite);
+        const Colour tileWhite (0xfff3f4f6), dimGrey = hobby::kIconGrey.withAlpha (0.4f);
+        const float blink = (std::fmod (t, 0.8) < 0.4) ? 1.0f : 0.0f;
+        blockTile.setIconColour (valid ? tileWhite : dimGrey);   // άσπρο = λειτουργεί, απαλό γκρι = σβηστό
+        vstTile.setIconColour (valid ? tileWhite : dimGrey);
         paletteTile.setCameraOn (valid && engine.getPlugin (sel) != nullptr && engine.smartType[(size_t) sel].load() != 6);
-        mfxTile.setIconColour (hasMfx ? hobby::kOn : tileWhite);
+        mfxTile.setIconColour (hasMfx ? tileWhite : dimGrey);
         mfxTile.setDots (hasMfx ? 1 : 0);
-        fxTile.setIconColour (nfx > 0 ? hobby::kOn : tileWhite);
+        fxTile.setIconColour (nfx > 0 ? tileWhite : dimGrey);
         fxTile.setDots (jmin (nfx, 3));
 
         const int hold = valid ? engine.holdMode[(size_t) sel].load() : 0;
         chordTile.setDots (0);
         chordTile.setIconColour (hold == 3 ? hobby::mix (hobby::kIconGrey, Colour (0xffe8883a), hobby::pulse (t * 1.5))
-                                           : hold == 4 ? Colour (0xffe8883a) : hobby::kIconGrey);
+                                           : hold == 4 ? Colour (0xffe8883a) : dimGrey);
         chordTile.setTooltip (gr ("AL (selected block): press = Capture (play a chord, then a free key: the key becomes a key switch, orange, and you can make several assignments) / press again = AL plays / again = Off. Now: ")
                               + (hold == 3 ? "Capture" : hold == 4 ? "AL" : "Off"));
 
         holdTile.setDots (hold);
-        holdTile.setIconColour (hold == 0 ? hobby::kIconGrey : hobby::kOn);
+        holdTile.setIconColour (hold == 0 ? dimGrey : tileWhite);
         holdTile.setTooltip (gr ("Hold (selected block): press = Off / LM Mono Latch (one note) / LP Poly Latch (chord). Now: ")
                              + (hold == 0 ? "Off" : hold == 1 ? "LM" : hold == 2 ? "LP" : hold == 3 ? "AL Capture" : "AL"));
 
@@ -3915,32 +3896,32 @@ private:
         const int taps = engine.tapsMuteOut.load();
 
         const int recBlock = valid ? sel + 1 : 0;
-        Colour recColour = hobby::kIconGrey;
+        Colour recColour = dimGrey;
         bool recFilled = false;
-        if (loop == flow::loopRec)       { recColour = hobby::mix (hobby::kIconGrey, hobby::kRed, hobby::pulse (t * 1.5)); recFilled = true; }
-        else if (loop == flow::loopPlay) { recColour = hobby::kOn; recFilled = true; }
-        else if (loop == flow::loopOver) { recColour = hobby::mix (hobby::kIconGrey, hobby::kPeach, hobby::pulse (t * 1.5)); recFilled = true; }
+        if (loop == flow::loopRec)       { recColour = hobby::mix (dimGrey, hobby::kRed, 0.5f + 0.5f * hobby::pulse (t * 1.5)); recFilled = true; }
+        else if (loop == flow::loopPlay) { recColour = tileWhite; recFilled = true; }
+        else if (loop == flow::loopOver) { recColour = hobby::kPeach; recFilled = true; }
         recTile.setNumber (recBlock, recFilled);
         recTile.setIconColour (recColour);
 
-        undoTile.setIconColour (engine.tapsDelOut.load() > 0 ? hobby::kCoral : loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
+        undoTile.setIconColour (engine.tapsDelOut.load() > 0 ? hobby::kRed : loop != flow::loopOff ? tileWhite : dimGrey);
 
         {
             const bool selStopped = valid && engine.loopStoppedOut[(size_t) selected].load() != 0;
             stopTile.setSymbol (selStopped ? Symbol::Play : Symbol::Stop);
-            stopTile.setIconColour (selStopped ? hobby::kPeach : loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
+            stopTile.setIconColour (selStopped ? hobby::mix (hobby::kPeach, tileWhite, blink) : loop != flow::loopOff ? tileWhite : dimGrey);
         }
         juce::ignoreUnused (mute, taps);
 
         tapeTile.setSymbol (engine.loopsStopped.load() != 0 ? Symbol::Stop : Symbol::Play);
-        tapeTile.setIconColour (engine.loopsStopped.load() != 0 ? hobby::kPeach : hobby::kBlue);
+        tapeTile.setIconColour (engine.loopsStopped.load() != 0 ? hobby::mix (hobby::kPeach, tileWhite, blink) : loop != flow::loopOff ? hobby::kBlue : dimGrey);
 
         {
             // ο μετρονόμος αναβοσβήνει σε κάθε beat όταν ο ήχος του είναι ανοιχτός
             const double ph = engine.beatPosOut.load();
             const float flash = jlimit (0.0f, 1.0f, 1.0f - (float) (ph - std::floor (ph)) * 4.0f);
             refreshSmartTile();
-            metroTile.setIconColour (engine.metroOn.load() ? hobby::mix (hobby::kIconGrey, hobby::kOn, 0.3f + 0.7f * flash) : hobby::kIconGrey);
+            metroTile.setIconColour (engine.metroOn.load() ? hobby::mix (dimGrey, tileWhite, 0.3f + 0.7f * flash) : dimGrey);
         }
 
         // κεφαλίδα πάνελ
@@ -4170,7 +4151,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.75.0"; }
+    const String getApplicationVersion() override { return "0.76.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
