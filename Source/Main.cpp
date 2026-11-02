@@ -4046,7 +4046,7 @@ private:
         if (dirty && Time::getMillisecondCounter() - lastSaveMs > 400)
             saveSettings (false);
 
-        if (++stateTicks >= 600)
+        if (++stateTicks >= 3600)   // ~2 λεπτά: η αποθήκευση με states (32 MB) κοστίζει ~0.5 s στο UI
         {
             stateTicks = 0;
             saveSettings (true);
