@@ -1051,6 +1051,9 @@ private:
         const int mc = engine.midiCount.load() + engine.loopEvtCount.load();
         const uint32 now = Time::getMillisecondCounter();
         if (mc != pumpMc) { pumpMc = mc; pumpBurstUntil = now + 1200; }
+        // όσο παίζει ή γράφεται λούπα σε special block, τα φώτα ξαναγράφονται συνεχώς (το plugin του μπορεί να ανάβει τα δικά του)
+        for (int sb : { engine.specialBlock.load(), engine.specialBlock2.load() })
+            if (sb >= 0 && sb < flow::numBlocks && engine.loopStateOut[(size_t) sb].load() != flow::loopOff) { pumpBurstUntil = now + 300; break; }
         if (now < pumpBurstUntil || now - pumpLast >= 100)
         {
             pumpLast = now;
