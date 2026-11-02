@@ -2711,6 +2711,7 @@ private:
     {
         const Colour white (0xfff3f4f6), dim = hobby::kIconGrey.withAlpha (0.4f);
         motionTile.setIconColour (orbRecArmed ? hobby::kRed : dim);
+        folderTile.setIconColour (settingsScreen.isVisible() ? white : dim);
         smartTile.setIconColour (settingsScreen.isSmartDirect() ? white : dim);
         followTile.setIconColour (settingsScreen.isFollowDirect() || engine.followOn.load() != 0 ? white : dim);
     }

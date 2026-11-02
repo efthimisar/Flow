@@ -552,9 +552,9 @@ void PaletteTile::paint (juce::Graphics& g)
     const juce::Colour tileWhite (0xfff3f4f6);
     const juce::Colour dim = hobby::kIconGrey.withAlpha (0.4f);
     const float cy = 25.5f;
-    drawSymbol (g, Symbol::Dice,   { r.getX() + r.getWidth() * 0.25f, cy + (downHalf == 1 ? 1.0f : 0.0f) }, 22.0f, diceOn ? hobby::kOn : dim);
+    drawSymbol (g, Symbol::Dice,   { r.getX() + r.getWidth() * 0.25f, cy + (downHalf == 1 ? 1.0f : 0.0f) }, 22.0f, diceOn ? tileWhite : dim);
     drawSymbol (g, Symbol::Camera, { r.getX() + r.getWidth() * 0.75f, cy + (downHalf == 2 ? 1.0f : 0.0f) }, 22.0f,
-                flash ? hobby::kOn : (camOn ? tileWhite : dim));
+                flash ? hobby::kPeach : (camOn ? tileWhite : dim));
 }
 
 // ---------------------------------------------------------- τετράγωνο κουμπί τιμής
