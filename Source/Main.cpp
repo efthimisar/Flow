@@ -1040,9 +1040,11 @@ private:
                 lightsPump.f = [this] { pumpLights(); };
                 lightsPump.startTimer (5);
             }
+            else lightsRetryAt = Time::getMillisecondCounter() + 2000;
         }
         else
         {
+            lightsRetryAt = 0;
             lightsPump.stopTimer();
             { const ScopedLock sl (lightsLock); keyLights.stop(); }
             flow::flowLog ("key lights: off");
@@ -1117,8 +1119,35 @@ private:
                 lightsPump.stopTimer();
                 { const ScopedLock sl (lightsLock); keyLights.stop(); }
                 lightsWanted = true;
+                lightsRetryAt = Time::getMillisecondCounter() + 2000;   // θα ξαναδοκιμάσει μόνο του (π.χ. όταν το Maschine αφήσει το πληκτρολόγιο)
                 updateToolLamps();
             }
+        }
+    }
+
+    uint32 lightsRetryAt = 0;
+    int lightsRetryCount = 0;
+
+    void retryLightsIfNeeded()
+    {
+        if (! lightsWanted || keyLights.isOn() || lightsRetryAt == 0) return;
+        if ((int32) (Time::getMillisecondCounter() - lightsRetryAt) < 0) return;
+        bool ok;
+        { const ScopedLock sl (lightsLock); ok = keyLights.start(); }
+        if (ok)
+        {
+            flow::flowLog ("key lights: reconnected after " + String (lightsRetryCount) + " tries");
+            lightsRetryAt = 0; lightsRetryCount = 0;
+            lastLights.fill (0xff);
+            updateLights (true);
+            lightsPump.f = [this] { pumpLights(); };
+            lightsPump.startTimer (5);
+            updateToolLamps();
+        }
+        else
+        {
+            ++lightsRetryCount;
+            lightsRetryAt = Time::getMillisecondCounter() + 2000;
         }
     }
 
@@ -4052,6 +4081,7 @@ private:
             saveSettings (true);
         }
 
+        retryLightsIfNeeded();
         refreshAll();
     }
 
