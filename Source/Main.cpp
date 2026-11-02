@@ -3,6 +3,7 @@
 
 #include "Views.h"
 #include "KeyLights.h"
+#include "WindowSnap.h"
 #include <algorithm>
 #include "AudioPanel.h"
 #include "SettingsScreen.h"
@@ -743,6 +744,19 @@ private:
                    .getChildFile (File::createLegalFileName (pluginName) + ".png");
     }
     std::map<String, Image> thumbCache;
+    // μαύρη (ή σχεδόν μαύρη) εικόνα = αποτυχημένο στιγμιότυπο
+    static bool isBlankImage (const Image& im)
+    {
+        if (! im.isValid()) return true;
+        double sum = 0.0; int n = 0;
+        for (int y = 2; y < im.getHeight(); y += 4)
+            for (int x = 2; x < im.getWidth(); x += 4)
+            {
+                const auto c = im.getPixelAt (x, y);
+                sum += (double) (c.getRed() + c.getGreen() + c.getBlue()) / 3.0; ++n;
+            }
+        return n == 0 || sum / (double) n < 10.0;
+    }
     Image thumbFor (const String& name)
     {
         auto it = thumbCache.find (name);
@@ -750,25 +764,49 @@ private:
         Image im;
         const auto f = thumbFile (name);
         if (f.existsAsFile()) im = ImageFileFormat::loadFrom (f);
+        if (isBlankImage (im)) im = Image();   // παλιά μαύρα αρχεία αγνοούνται (και ξαναγράφονται)
         thumbCache[name] = im;
         return im;
     }
-    void saveThumbOf (AudioPluginInstance* p)
+    void saveThumbOf (AudioPluginInstance* p, int attempt = 0)
     {
         auto it = pluginWindows.find (p);
         if (it == pluginWindows.end() || it->second == nullptr || ! it->second->isShowing()) return;
         const auto f = thumbFile (p->getName());
-        if (f.existsAsFile()) return;   // μία φορά ανά plugin
+        if (f.existsAsFile() && ! isBlankImage (ImageFileFormat::loadFrom (f))) return;   // μία φορά ανά plugin
         auto* content = it->second->getContentComponent();
         if (content == nullptr || content->getWidth() < 40 || content->getHeight() < 40) return;
-        Image full = content->createComponentSnapshot (content->getLocalBounds(), true, 1.0f);
-        if (! full.isValid()) return;
-        const int side = jmin (full.getWidth(), full.getHeight());
-        Image sq = full.getClippedImage ({ (full.getWidth() - side) / 2, 0, side, side }).rescaled (96, 96, Graphics::highResamplingQuality);
+
+        // 1) στιγμιότυπο του παραθύρου από το σύστημα (βλέπει το native GUI του plugin)· 2) αλλιώς της JUCE
+        Image full;
+        {
+            Image win = flowCaptureWindow (it->second->getName());
+            if (win.isValid() && it->second->getWidth() > 0)
+            {
+                const float sc = (float) win.getWidth() / (float) it->second->getWidth();
+                const int ch = jmin (win.getHeight(), (int) std::lround ((float) content->getHeight() * sc));
+                full = win.getClippedImage ({ 0, win.getHeight() - ch, win.getWidth(), ch });   // το περιεχόμενο είναι κάτω από τη γραμμή τίτλου
+            }
+        }
+        if (isBlankImage (full)) full = content->createComponentSnapshot (content->getLocalBounds(), true, 1.0f);
+
+        if (isBlankImage (full))   // το GUI δεν έχει ζωγραφιστεί ακόμη: ξαναπροσπαθεί λίγο αργότερα
+        {
+            if (attempt < 4)
+                Timer::callAfterDelay (3000, [safe = SafePointer<MainComponent> (this), p, attempt] { if (safe != nullptr) safe->saveThumbOf (p, attempt + 1); });
+            flow::flowLog ("thumb: blank snapshot of " + p->getName() + " (try " + String (attempt) + ")");
+            return;
+        }
+        const int tw = 144, th = 96;   // 3:2, όπως η θέση στη λίστα
+        const float want = (float) tw / (float) th;
+        int cw = full.getWidth(), chh = (int) std::lround ((float) cw / want);
+        if (chh > full.getHeight()) { chh = full.getHeight(); cw = (int) std::lround ((float) chh * want); }
+        Image sq = full.getClippedImage ({ (full.getWidth() - cw) / 2, 0, cw, chh }).rescaled (tw, th, Graphics::highResamplingQuality);
         f.getParentDirectory().createDirectory();
         FileOutputStream os (f);
         if (os.openedOk()) { os.setPosition (0); os.truncate(); PNGImageFormat().writeImageToStream (sq, os); }
         thumbCache.erase (p->getName());
+        flow::flowLog ("thumb: saved " + p->getName());
     }
 
     String windowTitle (AudioPluginInstance* p) const
