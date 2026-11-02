@@ -232,6 +232,7 @@ namespace flow
         std::atomic<int> afterFirst { 0 };      // μετά το πρώτο loop: 0 = Play, 1 = Overdub
         std::atomic<int> statCalls { 0 }, statOver { 0 }, statOverFull { 0 };   // μετρήσεις callback ήχου (διαβάζονται κάθε λίγα δευτερόλεπτα από το Main)
         std::atomic<float> statMaxCb { 0.0f }, statMaxLock { 0.0f }, statBudget { 0.0f };
+        std::atomic<int> loopEvtCount { 0 };    // νότες που παίζουν οι λούπες (για τα φώτα του hardware)
         std::atomic<int> midiCount { 0 };       // μετρά τα μηνύματα MIDI που έρχονται (για την ένδειξη στην κεφαλίδα)
         std::atomic<int> tapActiveOut { 0 };
         std::atomic<uint32_t> ctlHeld { 0 };   // πατημένα πλήκτρα ελέγχου (bit 0 = A0)
@@ -2876,6 +2877,7 @@ namespace flow
                         break;
 
                     case Kind::LoopEvt:
+                        ++loopEvtCount;   // η λούπα παίζει νότες: το Komplete Kontrol plugin γράφει φώτα, το Flow τα ξαναστέλνει
                         if (a.rawLoop)
                         {
                             const int st = a.note & 0xF0, ch = a.note & 0x0F;

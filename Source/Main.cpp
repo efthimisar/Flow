@@ -1011,7 +1011,7 @@ private:
     uint32 pumpBurstUntil = 0, pumpLast = 0;
     void pumpLights()
     {
-        const int mc = engine.midiCount.load();
+        const int mc = engine.midiCount.load() + engine.loopEvtCount.load();
         const uint32 now = Time::getMillisecondCounter();
         if (mc != pumpMc) { pumpMc = mc; pumpBurstUntil = now + 1200; }
         if (now < pumpBurstUntil || now - pumpLast >= 100)
