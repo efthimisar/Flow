@@ -35,7 +35,7 @@ public:
           chordTile (Symbol::Chord, typeface),
           recTile (Symbol::PadRecord, typeface),
           undoTile (Symbol::Cancel, typeface),
-          stopTile (Symbol::Stop, typeface),
+          stopTile (Symbol::Undo, typeface),
           tapeTile (Symbol::Tape, typeface),
           metroTile (Symbol::Tempo, typeface),
           folderTile (Symbol::Menu, typeface),
@@ -73,8 +73,8 @@ public:
         folderTile.setTooltip (gr ("Settings: sets, audio and MIDI, master volume, Rec Audio folder, Link, Panic"));
         recTile.setTooltip ("Rec MIDI loop: " + gr ("records the loop of the selected block (the number inside the circle). Press again = end. If the block already has a loop, it does nothing: use re-record or delete. Right-click: quantize and pedal"));
         undoTile.setTooltip (gr ("Delete loop: deletes the loop of the selected block. Pedal: presses = block number (two presses = block 2)"));
-        stopTile.setTooltip ("Rec MIDI loop: " + gr ("Play / Stop of all loops. They restart in sync. Right-click: mute pedal"));
-        tapeTile.setTooltip ("Rec Audio: " + gr ("stop or new take (master and stems per block, in a zip)"));
+        stopTile.setTooltip ("Rec MIDI loop: " + gr ("overdub on the loop of the selected block (up to 2 layers). Press again to end it. Right-click: mute pedal"));
+        tapeTile.setTooltip (gr ("Play / Stop of all loops. They restart in sync. Rec Audio: key A#0"));
         metroTile.setTooltip (gr ("Metronome (M key). Plays in mono on a separate output. Right-click: sound, output, key/pedal"));
 
         addAndMakeVisible (loopsView);
@@ -116,12 +116,12 @@ public:
             if (learnClick (flow::ctlRec)) return;
             const int b = engine.recTarget (false);
             if (b < 0) return;
-            if (engine.loopStateOut[(size_t) b].load() == flow::loopPlay && engine.loopLayersOut[(size_t) b].load() >= flow::maxOverdubLayers) return;   // μέχρι 2 στρώματα (overdub): μετά σβήσιμο
+            if (engine.loopStateOut[(size_t) b].load() == flow::loopPlay) return;   // το block έχει ήδη λούπα: overdub (↻) ή σβήσιμο
             engine.pressMain (b);
         };
         undoTile.onClick = [this] { if (learnClick (flow::ctlUndo)) return; if (isActive (selected)) engine.pressUndo (selected); };
-        stopTile.onClick = [this] { if (learnClick (flow::ctlStop)) return; engine.pressPlayStop(); };
-        tapeTile.onClick = [this] { if (learnClick (flow::ctlTape)) return; engine.recorder.pressButton(); };
+        stopTile.onClick = [this] { if (learnClick (flow::ctlStop)) return; if (isActive (selected)) engine.pressOverdub (selected); };
+        tapeTile.onClick = [this] { if (learnClick (flow::ctlTape)) return; engine.pressPlayStop(); };
         // μετρονόμος: 1ο πάτημα = ανοίγει η λωρίδα (tempo, ένταση, έξοδος), 2ο = ξεκινά ο ήχος και αναβοσβήνει, 3ο = σταματά. Το επόμενο ξαναρχίζει τον κύκλο.
         metroTile.onClick = [this]
         {
@@ -3755,7 +3755,7 @@ private:
     //==========================================================================
     static const char* controlName (int i)
     {
-        static const char* const names[flow::numControls] = { "Hold", "Rec MIDI loop", "Delete loop", "Play/Stop loops", "Rec Audio", "Metronome", "Panic", "Previous scene", "Next scene", "Mute", "Special block on/off" };
+        static const char* const names[flow::numControls] = { "Hold", "Rec MIDI loop", "Delete loop", "Overdub", "Play/Stop loops", "Metronome", "Panic", "Previous scene", "Next scene", "Mute", "Special block on/off" };
         return names[i];
     }
 
@@ -3859,17 +3859,11 @@ private:
 
         undoTile.setIconColour (engine.tapsDelOut.load() > 0 ? hobby::kCoral : loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
 
-        stopTile.setSymbol (engine.loopsStopped.load() != 0 ? Symbol::Play : Symbol::Stop);
-        stopTile.setIconColour (engine.loopsStopped.load() != 0 ? hobby::kPeach : loop != flow::loopOff ? hobby::kBlue : hobby::kIconGrey);
+        stopTile.setIconColour (loop == flow::loopOver ? hobby::mix (hobby::kIconGrey, hobby::kPeach, hobby::pulse (t * 1.5)) : loop == flow::loopPlay ? hobby::kBlue : hobby::kIconGrey);
         juce::ignoreUnused (mute, taps);
 
-        switch (engine.recorder.getState())
-        {
-            case RecorderEngine::State::Recording: tapeTile.setIconColour (hobby::kRed); break;
-            case RecorderEngine::State::Stopped:   tapeTile.setIconColour (engine.recorder.isTapeFull() ? hobby::kCoral : hobby::kPeach); break;
-            case RecorderEngine::State::Error:     tapeTile.setIconColour (hobby::kCoral); break;
-            default:                               tapeTile.setIconColour (hobby::kIconGrey); break;
-        }
+        tapeTile.setSymbol (engine.loopsStopped.load() != 0 ? Symbol::Play : Symbol::Stop);
+        tapeTile.setIconColour (engine.loopsStopped.load() != 0 ? hobby::kPeach : hobby::kBlue);
 
         {
             // ο μετρονόμος αναβοσβήνει σε κάθε beat όταν ο ήχος του είναι ανοιχτός

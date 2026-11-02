@@ -277,6 +277,7 @@ namespace flow
         void pressMute (int b) { ++cmdMute[(size_t) b]; }
         void pressPlayStop()   { loopsStopped = loopsStopped.load() != 0 ? 0 : 1; ++changeCount; }   // Play/Stop όλων των λουπών (ξαναπαίζουν συγχρονισμένες)
         std::atomic<int> loopsStopped { 0 };
+        void pressOverdub (int b) { if (b >= 0) rerecReq[(size_t) b] = 1; }   // overdub (μέχρι 2 στρώματα) ή κλείσιμό του
         void pressReRec (int b) { if (b >= 0) rerecReq[(size_t) b] = 1; }   // ξαναγράφω: σβήνει τη λούπα του block και ξεκινά νέα εγγραφή
         void tapFromUi()       { ++tapRequest; }
         void panic()           { ++panicCount; }
@@ -1622,10 +1623,10 @@ namespace flow
                         case ctlHold:  if (ok) { const int h = holdMode[(size_t) sel].load(); holdMode[(size_t) sel] = h >= 3 ? 0 : (h + 1) % 3; ++changeCount; } break;
                         case ctlRec:   { const int t = recTarget (true); if (t >= 0) ++cmdMain[(size_t) t]; } break;
                         case ctlUndo:  { const int t = recTarget (true); if (t >= 0) pressUndo (t); } break;     // ✕ σβήσιμο λούπας, όπως το κουμπί της οθόνης
-                        case ctlStop:  pressPlayStop(); break;    // Play/Stop των λουπών, όπως το κουμπί της οθόνης
+                        case ctlStop:  { const int t = recTarget (true); if (t >= 0) pressOverdub (t); } break;    // overdub, όπως το κουμπί της οθόνης
                         case ctlMute:  ++pedalMute; break;
                         case ctlSpecial: break;   // αντικαταστάθηκε από το shift (sustain CC64)
-                        case ctlTape:  recorder.pressButton(); break;
+                        case ctlTape:  pressPlayStop(); break;    // Play/Stop όλων των λουπών (το Rec Audio μένει στο πλήκτρο A#0)
                         case ctlMetro: break;   // ο μετρονόμος αφαιρέθηκε
                         case ctlPanic: ++panicCount; break;
                         case ctlScenePrev: sceneRequest = -2; break;
@@ -2235,15 +2236,7 @@ namespace flow
                     else B.stopAt = prev + beatsPerBar;
                     break;
                 }
-                case loopPlay:
-                    if (B.nLayers < maxOverdubLayers)   // overdub: μέχρι 2 στρώματα συνολικά. Ξεκινά στο πάτημα, κλείνει όταν συμπληρωθεί ένας κύκλος της λούπας ή με νέο πάτημα
-                    {
-                        B.recStart = beat;
-                        B.rec.clear();
-                        B.recOpen.reset();
-                        B.loopState = loopOver;
-                    }
-                    break;
+                case loopPlay: break;   // η λούπα παίζει: overdub με το ↻ (4ο πετάλι)
                 case loopOver: finishOverdub (B, beat); break;
                 default: break;
             }
@@ -2648,11 +2641,16 @@ namespace flow
                 finishRecording (B, t);
             }
 
-            if (rerecReq[(size_t) b].exchange (0) != 0)
+            if (rerecReq[(size_t) b].exchange (0) != 0)   // κουμπί / 4ο πετάλι: overdub
             {
-                loopUndo (B);
-                B.hist.clear(); B.autoReady = false; B.lastDetect = 0; B.autoPaused = false;
-                loopMain (B, beat0);
+                if (B.loopState == loopPlay && B.nLayers > 0 && B.nLayers < maxOverdubLayers)
+                {
+                    B.recStart = beat0;
+                    B.rec.clear();
+                    B.recOpen.reset();
+                    B.loopState = loopOver;
+                }
+                else if (B.loopState == loopOver) finishOverdub (B, beat0);
             }
 
             for (int cm = cmdMain[(size_t) b].load(); B.seenMain != cm; )
