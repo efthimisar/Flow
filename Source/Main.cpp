@@ -737,6 +737,41 @@ private:
         String posKey;
     };
 
+    // μικρογραφίες plugin: αποθηκεύονται όταν ανοίγει το παράθυρό του (Music/Flow/thumbs) και φαίνονται στη λίστα VST
+    static File thumbFile (const String& pluginName)
+    {
+        return File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("thumbs")
+                   .getChildFile (File::createLegalFileName (pluginName) + ".png");
+    }
+    std::map<String, Image> thumbCache;
+    Image thumbFor (const String& name)
+    {
+        auto it = thumbCache.find (name);
+        if (it != thumbCache.end()) return it->second;
+        Image im;
+        const auto f = thumbFile (name);
+        if (f.existsAsFile()) im = ImageFileFormat::loadFrom (f);
+        thumbCache[name] = im;
+        return im;
+    }
+    void saveThumbOf (AudioPluginInstance* p)
+    {
+        auto it = pluginWindows.find (p);
+        if (it == pluginWindows.end() || it->second == nullptr || ! it->second->isShowing()) return;
+        const auto f = thumbFile (p->getName());
+        if (f.existsAsFile()) return;   // μία φορά ανά plugin
+        auto* content = it->second->getContentComponent();
+        if (content == nullptr || content->getWidth() < 40 || content->getHeight() < 40) return;
+        Image full = content->createComponentSnapshot (content->getLocalBounds(), true, 1.0f);
+        if (! full.isValid()) return;
+        const int side = jmin (full.getWidth(), full.getHeight());
+        Image sq = full.getClippedImage ({ (full.getWidth() - side) / 2, 0, side, side }).rescaled (96, 96, Graphics::highResamplingQuality);
+        f.getParentDirectory().createDirectory();
+        FileOutputStream os (f);
+        if (os.openedOk()) { os.setPosition (0); os.truncate(); PNGImageFormat().writeImageToStream (sq, os); }
+        thumbCache.erase (p->getName());
+    }
+
     String windowTitle (AudioPluginInstance* p) const
     {
         const String name = p->getName();
@@ -860,6 +895,7 @@ private:
         if (auto* top = getTopLevelComponent()) lastTopBounds = top->getBounds();
         flow::flowLog ("dock: opened at " + String (lastWinPos.x) + "," + String (lastWinPos.y) + " (Flow " + String (lastTopBounds.getX()) + "," + String (lastTopBounds.getY()) + " " + String (lastTopBounds.getWidth()) + "x" + String (lastTopBounds.getHeight()) + ")");
         pluginWindows[p] = std::move (w);
+        Timer::callAfterDelay (2500, [safe = SafePointer<MainComponent> (this), p] { if (safe != nullptr) safe->saveThumbOf (p); });
     }
 
     // κουμπί: ανοίγει το παράθυρο του plugin που δείχνει το πάνελ. Αν είναι ήδη ανοιχτό: το κλείνει (closeIfOpen) ή το φέρνει μπροστά.
@@ -1903,6 +1939,7 @@ private:
         const String kt = kind == 0 ? "VST" : kind == 1 ? "FX" : "MIDI FX";
         const String ks = kind == 0 ? "instruments" : "effects";
 
+        loopsView.getList().thumbFn = [this] (const String& n) { return thumbFor (n); };
         loopsView.getList().open (kt, ks, kc, names, formats,
                                   [safe = SafePointer<MainComponent> (this), list, chosen] (int i)
                                   {

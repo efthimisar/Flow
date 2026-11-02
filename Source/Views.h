@@ -120,6 +120,8 @@ public:
 
     void close() { setVisible (false); }
 
+    std::function<Image (const String&)> thumbFn;   // μικρογραφία plugin (null Image = δεν υπάρχει ακόμα)
+
     void paint (Graphics& g) override
     {
         const int w = getWidth();
@@ -193,9 +195,20 @@ public:
                     if (favChanged) favChanged (favs);
                     repaint();
                 } });
+                {   // μικρογραφία του plugin (από το παράθυρό του, όταν το έχεις ανοίξει μία φορά)· αλλιώς το αρχικό γράμμα
+                    const Rectangle<float> tr (rr.getX() + 36.0f, rr.getY() + 3.0f, rr.getHeight() - 6.0f, rr.getHeight() - 6.0f);
+                    g.setColour (Colour (0xff1f1c1a)); g.fillRoundedRectangle (tr, 5.0f);
+                    Image im = thumbFn ? thumbFn (items[idx]) : Image();
+                    if (im.isValid()) g.drawImage (im, tr.reduced (1.0f), RectanglePlacement::centred);
+                    else
+                    {
+                        g.setColour (hobby::kIconGrey.withAlpha (0.55f)); g.setFont (hobby::makeFont (typeface, 15.0f).boldened());
+                        g.drawText (items[idx].substring (0, 1).toUpperCase(), tr, Justification::centred, false);
+                    }
+                }
                 g.setColour (hobby::kText);
                 g.setFont (hobby::makeFont (typeface, 15.0f));
-                g.drawText (items[idx], rr.withTrimmedLeft (38.0f).withTrimmedRight (60.0f), Justification::centredLeft, true);
+                g.drawText (items[idx], rr.withTrimmedLeft (36.0f + rr.getHeight() + 4.0f).withTrimmedRight (60.0f), Justification::centredLeft, true);
                 g.setColour (hobby::kIconGrey.withAlpha (0.6f));
                 g.setFont (hobby::makeFont (typeface, 11.0f));
                 g.drawText (fmts[idx], rr.withTrimmedRight (12.0f), Justification::centredRight, false);
