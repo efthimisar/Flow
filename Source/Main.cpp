@@ -3894,6 +3894,7 @@ private:
             setMessage (gr ("Press a free key or pedal for: ") + controlName (i));
         else
             setMessage (gr ("Press the pedal for: ") + controlName (i));
+        messageTicks = 450;   // 15 δευτερόλεπτα για να προλάβεις να φτάσεις στο πετάλι (πριν ήταν 2)
     }
 
     void setMessage (const String& m) { message = m; messageTicks = 60; }

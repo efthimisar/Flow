@@ -1545,7 +1545,8 @@ namespace flow
             }
 
             // ποτενσιόμετρα: learn (πρώτο CC που κινείται) και κανονική λειτουργία (η τιμή περνά στο UI, το plugin δεν παίρνει το CC)
-            if (kind == 2)
+            // (όσο περιμένει ανάθεση κουμπιού, το CC δεν το καταναλώνει knob που είχε το ίδιο CC)
+            if (kind == 2 && mapLearnTarget.load() < 0)
             {
                 const float kv = (float) msg.getControllerValue() / 127.0f;
                 if (masterLearn.load() != 0)
@@ -1589,6 +1590,9 @@ namespace flow
                     if (mapCode[(size_t) i].load() == code) mapCode[(size_t) i] = 0;
                 for (int b = 0; b < numBlocks; ++b)
                     if (volMap[(size_t) b].load() == code) volMap[(size_t) b] = 0;
+                for (int k = 0; k < 8; ++k)
+                    if (knobCc[(size_t) k].load() == code) knobCc[(size_t) k] = 0;
+                if (masterCc.load() == code) masterCc = 0;
 
                 mapCode[(size_t) target] = code;
                 pedalSetDown (code, true);   // το πάτημα της ανάθεσης δεν δίνει τη λειτουργία: μόνο το επόμενο
