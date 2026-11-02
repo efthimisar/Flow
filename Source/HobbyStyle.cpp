@@ -425,7 +425,7 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
         {
             juce::Path p;
             const float ys[3] { -7.0f, 0.0f, 7.0f }, ks[3] { -3.0f, 4.0f, -1.0f };
-            for (int i = 0; i < 3; ++i)
+            for (int i = 1; i < 2; ++i)   // μόνο η κεντρική γραμμή με τον κύκλο
             {
                 p.startNewSubPath (-10.0f, ys[i]); p.lineTo (ks[i] - 3.4f, ys[i]);
                 p.startNewSubPath (ks[i] + 3.4f, ys[i]); p.lineTo (10.0f, ys[i]);
