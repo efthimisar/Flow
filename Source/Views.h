@@ -1732,7 +1732,7 @@ public:
     std::function<void (int)> onToggleSilent;   // κυκλάκι ♪: το live του block μένει σιωπηλό όσο παίζει η λούπα του
     std::function<void (int, int)> onChordType;   // (block, +1 / -1 / 0 = maj ή νέα τονική)
     std::function<void (int, float)> onVolume;
-    std::function<void (int, int, bool)> onSpecialZone;   // ειδικό block: νέα ζώνη από σύρσιμο (lo, hi, τέλος σύρσιμου)
+    std::function<void (int, int, int, bool)> onSpecialZone;   // (block, lo, hi, τέλος)   // ειδικό block: νέα ζώνη από σύρσιμο (lo, hi, τέλος σύρσιμου)
     std::function<void (int, int)> onTranspose;   // (block, +1 / -1 / 0 = μηδενισμός)
 
     Colour keyLight (int b) const { return engine.blockOff[(size_t) b].load() != 0 ? Colour (0xff7a7168) : blockLight (b); }
@@ -1847,15 +1847,17 @@ public:
             g.fillRect (sx - 1.0f, keysY, 2.0f, 56.0f);
 
         // ειδικό block: άσπρη λωρίδα πάνω από τα πλήκτρα της ζώνης του, και λευκό περίγραμμα στο πρώτο και στο τελευταίο πλήκτρο
-        specialRect = {}; menuBg = {};
+        specialRects[0] = specialRects[1] = {}; menuBg = {};
+        for (int spi = 0; spi < 2; ++spi)
         {
-            const int sb = engine.specialBlock.load();
+            const int sb = spi == 0 ? engine.specialBlock.load() : engine.specialBlock2.load();
             if (sb >= 0 && engine.active[(size_t) sb].load() != 0 && engine.zoneState[(size_t) sb].load() == 0)
             {
                 const int a = engine.lo[(size_t) sb].load(), c = engine.hi[(size_t) sb].load();
                 if (a >= flow::lowestNote && c <= flow::highestNote && a <= c)
                 {
                     const float al = engine.blockOff[(size_t) sb].load() != 0 ? 0.3f : (sb == sel ? 1.0f : 0.8f);
+                    auto& specialRect = specialRects[(size_t) spi];
                     specialRect = { noteL[(size_t) a], keysY - 13.0f, noteR[(size_t) c] - noteL[(size_t) a], 8.0f };
                     auto& ss = spans[(size_t) sb];   // το ειδικό block έχει δικό του κυκλάκι ★ (και τις λειτουργίες του) αριστερά στη λωρίδα
                     ss.used = true; ss.l = specialRect.getX(); ss.r = specialRect.getRight();
@@ -1900,7 +1902,7 @@ public:
             if (! s.used) continue;
 
             const float width = s.r - s.l;
-            const bool isSpecial = b == engine.specialBlock.load();
+            const bool isSpecial = engine.isSp (b);
             const Colour col = isSpecial ? Colours::white.withMultipliedAlpha (engine.blockOff[(size_t) b].load() != 0 ? 0.4f : 1.0f)
                                          : (b == sel ? Colour (0xfffaf8f4) : keyLight (b));   // το επιλεγμένο block (και όταν επιλέγεται αυτόματα από το παίξιμο) είναι λευκό
             const float alpha = b == sel ? 1.0f : 0.7f;
@@ -2154,10 +2156,13 @@ public:
                 for (const auto* r : { &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &silentRect[(size_t) b], &swapRect[(size_t) b], &spRect[(size_t) b], &mfRect[(size_t) b], &fRect[(size_t) b], &redoRect[(size_t) b] })
                     if (r->expanded (2.0f).contains (p)) { onCircle = true; break; }
 
-        if (! onCircle && ! inMenu && ! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
+        for (int spi = 0; spi < 2 && ! onCircle && ! inMenu; ++spi)
         {
-            const int sb = engine.specialBlock.load();
+            const auto& specialRect = specialRects[(size_t) spi];
+            if (specialRect.isEmpty() || ! specialRect.expanded (3.0f, 4.0f).contains (p)) continue;
+            const int sb = spi == 0 ? engine.specialBlock.load() : engine.specialBlock2.load();
             if (e.mods.isPopupMenu()) { if (onVolumeMenu) onVolumeMenu (sb); return; }
+            spWhich = sb;
             spLo0 = engine.lo[(size_t) sb].load(); spHi0 = engine.hi[(size_t) sb].load();
             spStartNote = noteAtX (p.x);
             spMoved = false;
@@ -2170,7 +2175,7 @@ public:
             const auto& s = spans[(size_t) b];
             if (inMenu && b != expanded) continue;   // πάνω στο ανοιχτό μενού ακούει μόνο το block του
             if (! s.used || (! (inMenu && b == expanded) && (p.x < s.l || p.x > s.r || p.y < labelY - 2.0f || p.y > keysY + 56.0f))) continue;
-            if (b == engine.specialBlock.load() && p.y >= keysY - 13.0f) continue;   // κάτω από τα κυκλάκια το ειδικό block δεν παίρνει κλικ (τα πλήκτρα ανήκουν στα κανονικά blocks)
+            if (engine.isSp (b) && p.y >= keysY - 13.0f) continue;   // κάτω από τα κυκλάκια το ειδικό block δεν παίρνει κλικ (τα πλήκτρα ανήκουν στα κανονικά blocks)
 
             const bool onBar = barRect[(size_t) b].expanded (0.0f, 6.0f).contains (p);
             const bool onTr = trRect[(size_t) b].expanded (2.0f).contains (p);
@@ -2223,10 +2228,10 @@ public:
                 a = jlimit (flow::lowestNote, flow::highestNote - w, spLo0 + (n - spStartNote));
                 c = a + w;
             }
-            if (a != engine.lo[(size_t) engine.specialBlock.load()].load() || c != engine.hi[(size_t) engine.specialBlock.load()].load())
+            if (spWhich >= 0 && (a != engine.lo[(size_t) spWhich].load() || c != engine.hi[(size_t) spWhich].load()))
             {
                 spMoved = true;
-                onSpecialZone (a, c, false);
+                onSpecialZone (spWhich, a, c, false);
             }
         }
     }
@@ -2236,8 +2241,8 @@ public:
         dragBlock = -1;
         if (spMode > 0)
         {
-            const int sb = engine.specialBlock.load();
-            if (spMoved) { if (onSpecialZone && sb >= 0) onSpecialZone (engine.lo[(size_t) sb].load(), engine.hi[(size_t) sb].load(), true); }
+            const int sb = spWhich;
+            if (spMoved) { if (onSpecialZone && sb >= 0) onSpecialZone (sb, engine.lo[(size_t) sb].load(), engine.hi[(size_t) sb].load(), true); }
             else if (onSelect && sb >= 0) onSelect (sb);
             spMode = 0;
         }
@@ -2323,8 +2328,9 @@ private:
     int dragBlock = -1;
     std::array<float, 128> noteL {}, noteR {};
     std::array<int, 52> whiteNote {};
-    Rectangle<float> specialRect, menuBg;   // menuBg: φόντο του ανοιχτού μενού λειτουργιών ενός block
-    int spMode = 0, spLo0 = 0, spHi0 = 0, spStartNote = 0;
+    std::array<Rectangle<float>, 2> specialRects;
+    Rectangle<float> menuBg;   // menuBg: φόντο του ανοιχτού μενού λειτουργιών ενός block
+    int spMode = 0, spLo0 = 0, spHi0 = 0, spStartNote = 0, spWhich = -1;
     bool spMoved = false;
 };
 

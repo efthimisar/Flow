@@ -244,7 +244,9 @@ namespace flow
         std::atomic<juce::uint32> lastVolMoveMs { 0 };
         std::atomic<int> volMoveDirty { 0 };
         std::atomic<int> shiftHeld { 0 };       // sustain CC64 πατημένο: το ειδικό block παίρνει τα πλήκτρα της ζώνης του όσο το κρατάς
-        std::atomic<int> specialBlock { -1 };   // ειδικό block: πάνω από τα άλλα, παίζει στη ζώνη του όσο κρατιέται το sustain, έχει λούπα και εφέ (-1 = κανένα)
+        std::atomic<int> specialBlock { -1 }, specialBlock2 { -1 };   // δύο ειδικά block (το καθένα με δική του ζώνη)
+        bool isSp (int b) const { return b >= 0 && (b == specialBlock.load() || b == specialBlock2.load()); }
+        //   // ειδικό block: πάνω από τα άλλα, παίζει στη ζώνη του όσο κρατιέται το sustain, έχει λούπα και εφέ (-1 = κανένα)
         std::atomic<int> mfBlock { -1 };        // MF (master flow): το block που ορίζει τις συγχορδίες που ακολουθούν τα άλλα στο Follow (-1 = όλα τα πλήκτρα)
         std::atomic<float> metroLevel { 0.8f };
         std::atomic<int> metroChannel { 2 };      // έξοδος 3 (0-based 2)
@@ -368,7 +370,7 @@ namespace flow
         bool noteBelongsToMf (int n) const
         {
             const int mf = mfBlock.load();
-            if (mf >= 0 && mf == specialBlock.load())
+            if (mf >= 0 && isSp (mf))
                 return mf < numBlocks && active[(size_t) mf].load() != 0 && zoneState[(size_t) mf].load() == 0
                        && n >= lo[(size_t) mf].load() && n <= hi[(size_t) mf].load();
             return blockForNote (n) == mf;
@@ -377,13 +379,17 @@ namespace flow
         {
             if (! ignorePedal && shiftHeld.load() != 0 && n >= firstPlayNote)
             {
-                const int sb = specialBlock.load();
-                if (sb >= 0 && sb < numBlocks && active[(size_t) sb].load() != 0 && blockOff[(size_t) sb].load() == 0
-                    && zoneState[(size_t) sb].load() == 0 && n >= lo[(size_t) sb].load() && n <= hi[(size_t) sb].load()) return sb;   // μόνο στη ζώνη του
+                int spBest = -1, spSeq = -1;
+                for (int sb : { specialBlock.load(), specialBlock2.load() })
+                    if (sb >= 0 && sb < numBlocks && active[(size_t) sb].load() != 0 && blockOff[(size_t) sb].load() == 0
+                        && zoneState[(size_t) sb].load() == 0 && n >= lo[(size_t) sb].load() && n <= hi[(size_t) sb].load()   // μόνο στη ζώνη του
+                        && zoneSeq[(size_t) sb].load() > spSeq)
+                    { spBest = sb; spSeq = zoneSeq[(size_t) sb].load(); }
+                if (spBest >= 0) return spBest;
             }
             int best = -1, bestSeq = -1;
             for (int b = 0; b < numBlocks; ++b)
-                if (b != specialBlock.load() && active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
+                if (! isSp (b) && active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
                     && zoneSeq[b].load() > bestSeq)
                 {
                     best = b;
@@ -1356,8 +1362,8 @@ namespace flow
 
                 if (msg.isController() && msg.getControllerNumber() == 64)   // sustain = shift για το ειδικό block (momentary)
                 {
-                    const int sb = specialBlock.load();
-                    const bool has = sb >= 0 && sb < numBlocks && active[(size_t) sb].load() != 0;
+                    const bool has = (specialBlock.load() >= 0 && specialBlock.load() < numBlocks && active[(size_t) specialBlock.load()].load() != 0)
+                                  || (specialBlock2.load() >= 0 && specialBlock2.load() < numBlocks && active[(size_t) specialBlock2.load()].load() != 0);
                     if (has || shiftHeld.load() != 0)
                     {
                         shiftHeld = (has && msg.getControllerValue() >= 64) ? 1 : 0;
@@ -1859,7 +1865,7 @@ namespace flow
             }
         }
 
-        bool isSpecialIdx (int b) const { return b == specialBlock.load(); }
+        bool isSpecialIdx (int b) const { return isSp (b); }
 
         void offAll (Block& B, int b, int pos)
         {

@@ -217,10 +217,9 @@ public:
             dirty = true;
         };
         keyboardView.onVolumeMenu = [this] (int b) { showVolumeMenu (b); };
-        keyboardView.onSpecialZone = [this] (int a, int c, bool fin)
+        keyboardView.onSpecialZone = [this] (int sb, int a, int c, bool fin)
         {
-            const int sb = engine.specialBlock.load();
-            if (sb < 0) return;
+            if (! engine.isSp (sb)) return;
             engine.setZone (sb, a, c);
             if (fin) saveNow();
             keyboardView.repaint();
@@ -1088,13 +1087,13 @@ private:
             }
         }
 
-        const int sb = engine.specialBlock.load();
-        if (sb >= 0 && isActive (sb) && engine.blockOff[(size_t) sb].load() == 0 && engine.zoneState[(size_t) sb].load() == 0)
-            for (int n : { engine.lo[(size_t) sb].load(), engine.hi[(size_t) sb].load() })
-            {
-                const int idx = n - first;
-                if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);   // άσπρο
-            }
+        for (int sb : { engine.specialBlock.load(), engine.specialBlock2.load() })
+            if (sb >= 0 && isActive (sb) && engine.blockOff[(size_t) sb].load() == 0 && engine.zoneState[(size_t) sb].load() == 0)
+                for (int n : { engine.lo[(size_t) sb].load(), engine.hi[(size_t) sb].load() })
+                {
+                    const int idx = n - first;
+                    if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);   // άσπρο
+                }
 
         for (int n : { flow::tapKeyNote, flow::recAudioKeyNote, flow::followKeyNote })   // πλήκτρα ελέγχου (tap tempo, Rec Audio, Follow): άσπρα και στο hardware
         {
@@ -2293,6 +2292,7 @@ private:
         old.reset();
 
         if (engine.specialBlock.load() == block) engine.specialBlock = -1;
+        if (engine.specialBlock2.load() == block) engine.specialBlock2 = -1;
         if (engine.mfBlock.load() == block) engine.mfBlock = -1;
         engine.liveSilent[(size_t) block] = 1;
         engine.holdMode[(size_t) block] = 0;
@@ -2324,10 +2324,10 @@ private:
         auto& en = engine;
         const int s = selected;
         if (en.specialBlock.load() == s) en.specialBlock = -1;
-        else
-        {
-            en.specialBlock = s;
-        }
+        else if (en.specialBlock2.load() == s) en.specialBlock2 = -1;
+        else if (en.specialBlock.load() < 0) en.specialBlock = s;
+        else if (en.specialBlock2.load() < 0) en.specialBlock2 = s;
+        else { setMessage (gr ("Two special blocks are already set. Turn one off first")); return; }
         saveNow();
         refreshAll();
         keyboardView.repaint();
@@ -3075,7 +3075,7 @@ private:
             e->setAttribute ("stype", engine.smartType[(size_t) b].load());
             e->setAttribute ("nofollow", engine.followBlock[(size_t) b].load() == 0 ? 1 : 0);
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
-            e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : 0);
+            e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : engine.specialBlock2.load() == b ? 2 : 0);
             e->setAttribute ("mf", engine.mfBlock.load() == b ? 1 : 0);
             e->setAttribute ("lsilent", engine.liveSilent[(size_t) b].load());
             e->setAttribute ("chord", engine.chordMode[(size_t) b].load());
@@ -3260,7 +3260,7 @@ private:
             }
         }
 
-        engine.specialBlock = -1;
+        engine.specialBlock = -1; engine.specialBlock2 = -1;
         engine.mfBlock = -1;
         for (auto* e : root.getChildWithTagNameIterator ("Block"))
         {
@@ -3303,7 +3303,7 @@ private:
                                                                               : (engine.smartType[(size_t) slot].load() == 6 ? 0 : 1);
             engine.smartResetApp (slot);
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
-            if (e->getIntAttribute ("special", 0) != 0) engine.specialBlock = slot;
+            { const int spv = e->getIntAttribute ("special", 0); if (spv == 1) engine.specialBlock = slot; else if (spv >= 2) engine.specialBlock2 = slot; }
             if (e->getIntAttribute ("mf", 0) != 0) engine.mfBlock = slot;
             engine.liveSilent[(size_t) slot] = jlimit (0, 1, e->getIntAttribute ("lsilent", 1));
             engine.chordMode[(size_t) slot]  = 0;   // το Chord δεν χρησιμοποιείται πια
