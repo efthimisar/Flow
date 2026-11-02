@@ -348,6 +348,15 @@ namespace flow
         }
 
         // ποιο block παίζει το πλήκτρο n (-1 = κανένα). Αν επικαλύπτονται ζώνες, κερδίζει η πιο πρόσφατη.
+        // MF: οι νότες του master block. Για το ειδικό block (SP) μετράει η ζώνη του και χωρίς πετάλι, ώστε οι συγχορδίες του να οδηγούν τα άλλα block
+        bool noteBelongsToMf (int n) const
+        {
+            const int mf = mfBlock.load();
+            if (mf >= 0 && mf == specialBlock.load())
+                return mf < numBlocks && active[(size_t) mf].load() != 0 && zoneState[(size_t) mf].load() == 0
+                       && n >= lo[(size_t) mf].load() && n <= hi[(size_t) mf].load();
+            return blockForNote (n) == mf;
+        }
         int blockForNote (int n, bool ignorePedal = false) const   // ignorePedal: για τα φωτάκια, να μην αλλάζουν με το sustain
         {
             if (! ignorePedal && shiftHeld.load() != 0 && n >= firstPlayNote)
@@ -990,7 +999,7 @@ namespace flow
             for (int n = 0; n < 128; ++n)
             {
                 const bool p = n < 64 ? ((lo >> n) & 1u) != 0 : ((hi >> (n - 64)) & 1u) != 0;
-                if (p && (mfBlock.load() < 0 || blockForNote (n) == mfBlock.load())) { mask |= 1 << (n % 12); if (lowest < 0) lowest = n; }   // με MF: μόνο οι νότες του MF block
+                if (p && (mfBlock.load() < 0 || noteBelongsToMf (n))) { mask |= 1 << (n % 12); if (lowest < 0) lowest = n; }   // με MF: μόνο οι νότες του MF block
             }
             if (std::bitset<12> ((unsigned) mask).count() < 3) return;
             const int root = lowest % 12;
