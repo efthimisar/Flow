@@ -797,7 +797,7 @@ private:
             flow::flowLog ("thumb: blank snapshot of " + p->getName() + " (try " + String (attempt) + ")");
             return;
         }
-        const int tw = 144, th = 96;   // 3:2, όπως η θέση στη λίστα
+        const int tw = 288, th = 192;   // 3:2, όπως η θέση στη λίστα
         const float want = (float) tw / (float) th;
         int cw = full.getWidth(), chh = (int) std::lround ((float) cw / want);
         if (chh > full.getHeight()) { chh = full.getHeight(); cw = (int) std::lround ((float) chh * want); }

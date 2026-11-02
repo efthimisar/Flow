@@ -198,7 +198,7 @@ public:
                 {   // μικρογραφία του plugin (από το παράθυρό του, όταν το έχεις ανοίξει μία φορά)· αλλιώς το αρχικό γράμμα
                     const Rectangle<float> tr (rr.getX() + 36.0f, rr.getY() + 4.0f, (rr.getHeight() - 8.0f) * 1.5f, rr.getHeight() - 8.0f);
                     Image im = thumbFn ? thumbFn (items[idx]) : Image();
-                    if (im.isValid()) g.drawImage (im, tr, RectanglePlacement::centred);
+                    if (im.isValid()) { g.setColour (Colours::white); g.setImageResamplingQuality (Graphics::highResamplingQuality); g.drawImage (im, tr, RectanglePlacement::centred); }   // πλήρης αδιαφάνεια (πριν κληρονομούσε το 40% του γκρι του f)
                     else
                     {
                         g.setColour (hobby::kIconGrey.withAlpha (0.55f)); g.setFont (hobby::makeFont (typeface, 15.0f).boldened());
