@@ -1236,7 +1236,7 @@ public:
             else
             {
                 g.setFont (hobby::makeFont (typeface, 20.0f * s).boldened());
-                g.setColour (recLoop ? hobby::kRed : dimC);
+                g.setColour (recLoop ? hobby::kRed.withAlpha (0.25f + 0.75f * decay * decay * (barStart ? 1.0f : 0.8f)) : dimC);   // το «Rec» αναβοσβήνει με το tempo όσο γράφεται η λούπα
                 g.drawText (! valid ? String ("-") : recLoop ? String (over ? "Overdub" : "Rec") : String ("ready"), Rectangle<float> (cx - r, cy - 16.0f * s, 2.0f * r, 32.0f * s), Justification::centred, false);
             }
             g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 12.0f * s).boldened());
