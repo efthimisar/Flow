@@ -52,6 +52,8 @@ public:
         std::function<bool()> linkAvailable, linkGet;
         std::function<void()> linkToggle;
         std::function<void()> panicNow, panicAssign, panicRemove;
+        std::function<void()> scanPlugins;   // νέα σάρωση plugins
+        std::function<bool()> scanBusy;
         std::function<juce::String()> panicCodeText;   // κενό = δεν έχει ανατεθεί
         std::function<juce::String()> orbFolderText;
         std::function<void()> chooseOrbFolder;
@@ -309,6 +311,19 @@ private:
             case 16: g.setFont (font (28.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x86\xbb"), Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 14: g.setFont (font (24.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x87\x84"), Rectangle<float> (c.x - 22.0f, c.y - 16.0f, 44.0f, 32.0f), Justification::centred, false); break;
             case 17: g.setFont (font (26.0f, true)); g.drawText ("?", Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
+            case 18:   // σάρωση: κυκλικό βέλος γύρω από μεγεθυντικό φακό
+            {
+                Path a; a.addCentredArc (c.x, c.y, 12.0f, 12.0f, 0.0f, MathConstants<float>::pi * 0.35f, MathConstants<float>::pi * 1.75f, true);
+                g.strokePath (a, st);
+                const float ax = c.x + 12.0f * std::cos (MathConstants<float>::pi * 0.35f - MathConstants<float>::halfPi), ay = c.y + 12.0f * std::sin (MathConstants<float>::pi * 0.35f - MathConstants<float>::halfPi);
+                juce::ignoreUnused (ax, ay);
+                Path h2; h2.startNewSubPath (c.x + 12.0f, c.y - 1.0f); h2.lineTo (c.x + 12.0f, c.y - 8.0f); h2.startNewSubPath (c.x + 12.0f, c.y - 1.0f); h2.lineTo (c.x + 5.0f, c.y - 1.0f);
+                g.strokePath (h2, st);
+                g.drawEllipse (c.x - 5.5f, c.y - 5.5f, 9.0f, 9.0f, 2.0f);
+                Path m; m.startNewSubPath (c.x + 1.5f, c.y + 1.5f); m.lineTo (c.x + 6.0f, c.y + 6.0f);
+                g.strokePath (m, st);
+                break;
+            }
             case 15: g.drawEllipse (c.x - 11.0f, c.y - 11.0f, 22.0f, 22.0f, 2.2f); g.fillEllipse (c.x - 3.0f, c.y - 3.0f, 6.0f, 6.0f); break;
             default: break;
         }
@@ -336,6 +351,7 @@ private:
             { 6, "Ableton Link", linkOn, ! linkAv, [this, linkAv] { if (linkAv && host.linkToggle) host.linkToggle(); } },
             { 17, "Help", host.helpGet && host.helpGet(), false, [this] { if (host.helpToggle) host.helpToggle(); repaint(); } },
             { 7, "Panic", false, false, [this] { showPage (Panic); } },
+            { 18, "Scan plugins", host.scanBusy && host.scanBusy(), false, [this] { if (host.scanPlugins) host.scanPlugins(); repaint(); } },
         };
         (void) hasSet;
         // κύκλοι στη μέση· το περιεχόμενο του επιλεγμένου ανοίγει αριστερά και δεξιά

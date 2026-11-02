@@ -2829,6 +2829,8 @@ private:
         h.recFolder = [this] { return engine.recorder.getFolder(); };
         h.setRecFolder = [this] (const File& f) { f.createDirectory(); engine.recorder.setFolder (f); saveNow(); };
         h.chooseRecFolder = [this] { chooseTapeFolder(); };
+        h.scanPlugins = [this] { if (scanning) return; knownPlugins.clear(); startPluginScan(); };
+        h.scanBusy = [this] { return scanning; };
         h.masterGet = [this] { return engine.masterPos.load(); };
         h.masterSet = [this] (float v) { engine.masterPos = v; };
         h.masterCcText = [this]() -> String { const int c = engine.masterCc.load(); return c != 0 ? pedalCodeText (c) : String(); };
