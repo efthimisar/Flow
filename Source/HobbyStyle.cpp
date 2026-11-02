@@ -60,10 +60,17 @@ namespace hobby
         for (int pass = 0; pass < 3; ++pass)
         {
             const float ox = pass == 0 ? 1.0f : pass == 1 ? -0.8f : 0.0f, oy = pass == 0 ? 1.5f : pass == 1 ? -0.8f : 0.0f;
-            const juce::Rectangle<float> r (x + ox, kBrandY + oy, 120.0f, 16.0f);
             g.setColour (pass == 0 ? juce::Colours::white.withAlpha (0.9f)
                                    : pass == 1 ? juce::Colour (0xffcdc1b4) : juce::Colour (0xff968a7e));   // όπως το + και το M
-            g.drawText (text, r, juce::Justification::centredLeft, false);
+            float cx = x + ox;   // γράμμα-γράμμα, με +1.5 px απόσταση
+            for (int i = 0; i < text.length(); ++i)
+            {
+                const auto ch = text.substring (i, i + 1);
+                juce::GlyphArrangement ga; ga.addLineOfText (f, ch, 0.0f, 0.0f);
+                const float cw = ga.getBoundingBox (0, -1, true).getWidth();
+                g.drawText (ch, juce::Rectangle<float> (cx, kBrandY + oy, cw + 4.0f, 16.0f), juce::Justification::centredLeft, false);
+                cx += cw + 1.5f;
+            }
         }
     }
 
