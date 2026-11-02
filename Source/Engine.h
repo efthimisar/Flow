@@ -37,6 +37,7 @@ namespace flow
 
     enum LoopState { loopOff = 0, loopRec = 1, loopPlay = 2, loopOver = 3 };
     constexpr int maxLayers = 32;
+    constexpr int maxOverdubLayers = 2;   // όριο overdub: 2 στρώματα ανά λούπα
     // κουμπιά που ανατίθενται σε πετάλι ή πλήκτρο (MIDI learn)
     enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, ctlMetro, ctlPanic, ctlScenePrev, ctlSceneNext, ctlMute, ctlSpecial, numControls };
 
@@ -274,6 +275,8 @@ namespace flow
         void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
         void pressStop (int b) { ++cmdStop[(size_t) b]; }
         void pressMute (int b) { ++cmdMute[(size_t) b]; }
+        void pressPlayStop()   { loopsStopped = loopsStopped.load() != 0 ? 0 : 1; ++changeCount; }   // Play/Stop όλων των λουπών (ξαναπαίζουν συγχρονισμένες)
+        std::atomic<int> loopsStopped { 0 };
         void pressReRec (int b) { if (b >= 0) rerecReq[(size_t) b] = 1; }   // ξαναγράφω: σβήνει τη λούπα του block και ξεκινά νέα εγγραφή
         void tapFromUi()       { ++tapRequest; }
         void panic()           { ++panicCount; }
@@ -1619,7 +1622,7 @@ namespace flow
                         case ctlHold:  if (ok) { const int h = holdMode[(size_t) sel].load(); holdMode[(size_t) sel] = h >= 3 ? 0 : (h + 1) % 3; ++changeCount; } break;
                         case ctlRec:   { const int t = recTarget (true); if (t >= 0) ++cmdMain[(size_t) t]; } break;
                         case ctlUndo:  { const int t = recTarget (true); if (t >= 0) pressUndo (t); } break;     // ✕ σβήσιμο λούπας, όπως το κουμπί της οθόνης
-                        case ctlStop:  { const int t = recTarget (true); if (t >= 0) pressReRec (t); } break;    // ξαναγράφω, όπως το κουμπί της οθόνης
+                        case ctlStop:  pressPlayStop(); break;    // Play/Stop των λουπών, όπως το κουμπί της οθόνης
                         case ctlMute:  ++pedalMute; break;
                         case ctlSpecial: break;   // αντικαταστάθηκε από το shift (sustain CC64)
                         case ctlTape:  recorder.pressButton(); break;
@@ -2200,7 +2203,7 @@ namespace flow
         // κάθε layer έχει δικό του ελεύθερο μήκος: αν είναι μεγαλύτερο από το loop, το loop μεγαλώνει και τα άλλα επαναλαμβάνονται
         void finishOverdub (Block& B, double beatNow)
         {
-            commitLayer (B, beatNow, quantizedLength (std::max (0.0, beatNow - B.recStart)));
+            commitLayer (B, beatNow, B.loopBeats);   // το στρώμα έχει πάντα το μήκος της λούπας
             B.loopState = loopPlay;
         }
 
@@ -2233,12 +2236,9 @@ namespace flow
                     break;
                 }
                 case loopPlay:
-                    if (false)   // μία λούπα ανά block: δεν υπάρχει overdub
+                    if (B.nLayers < maxOverdubLayers)   // overdub: μέχρι 2 στρώματα συνολικά. Ξεκινά στο πάτημα, κλείνει όταν συμπληρωθεί ένας κύκλος της λούπας ή με νέο πάτημα
                     {
-                        const int sq2 = startQ.load();
-                        B.recStart = sq2 == 1 ? std::floor (beat + 1.0e-9)
-                                   : sq2 == 2 ? std::floor (beat / beatsPerBar + 1.0e-9) * beatsPerBar
-                                              : beat;
+                        B.recStart = beat;
                         B.rec.clear();
                         B.recOpen.reset();
                         B.loopState = loopOver;
@@ -2679,11 +2679,15 @@ namespace flow
                 }
             }
             B.seenStop = cmdStop[(size_t) b].load();
+            {   // Play/Stop όλων των λουπών: σταματούν με κομμένες νότες και ξαναμπαίνουν στη φάση τους
+                const bool gs = loopsStopped.load() != 0;
+                if (gs != B.stopped) { B.stopped = gs; if (gs) cutLoopNotes (B); }
+            }
             juce::ignoreUnused (tapWindow);
 
             if (B.loopState == loopRec && (beat0 - B.recStart) >= maxLoopBars * beatsPerBar)
                 finishRecording (B, beat0);
-            else if (B.loopState == loopOver && (beat0 - B.recStart) >= maxLoopBars * beatsPerBar)
+            else if (B.loopState == loopOver && (beat0 - B.recStart) >= std::min ((double) maxLoopBars * beatsPerBar, B.loopBeats))
                 finishOverdub (B, beat0);
 
             // ---- collect everything that happens in this block
