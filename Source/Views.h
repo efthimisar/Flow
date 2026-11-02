@@ -1181,7 +1181,7 @@ public:
             const double bt = std::floor (jmax (0.0, now) + 1.0e-9), frac = jmax (0.0, now - bt);
             const bool barStart = std::fmod (bt, flow::beatsPerBar) < 1.0e-6;
             const float decay = jlimit (0.0f, 1.0f, 1.0f - (float) frac * 2.8f);
-            const float pulse = (valid && (playing || recLoop)) ? decay * decay * (barStart ? 0.9f : 0.35f) : 0.0f;
+            const float pulse = (valid && st == flow::loopOff) ? decay * decay * (barStart ? 0.9f : 0.35f) : 0.0f;   // αναβοσβήνει με το tempo πριν την εγγραφή της λούπας, όχι μετά
 
             Path track; track.addCentredArc (cx, cy, r, r, 0.0f, 0.0f, MathConstants<float>::twoPi, true);
             g.setColour (trackC.interpolatedWith (Colour (0xfff0ebe2), pulse * 0.45f));
