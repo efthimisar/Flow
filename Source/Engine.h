@@ -173,7 +173,7 @@ namespace flow
         std::atomic<int> knobLearnSlot { -1 }, knobLearnedSlot { -1 };
         // master: ένταση (θέση 0..1, κέρδος = θέση²), ασφαλιστικός limiter, CC για ένταση
         std::atomic<float> masterPos { 1.0f };
-        std::atomic<int> limiterOn { 1 }, masterCc { 0 }, masterLearn { 0 }, masterLearned { 0 };
+        std::atomic<int> limiterOn { 0 }, masterCc { 0 }, masterLearn { 0 }, masterLearned { 0 };
         // Follow: οι λούπες των block που το έχουν ανάψει ακολουθούν τη συγχορδία που παίζεις (μεταφορά με κλίμακα)
         std::atomic<int> followOn { 0 };                                  // γενικός διακόπτης (πλήκτρο B7 / οθόνη Follow)
         std::atomic<int> followRoot { 9 }, followType { 1 };             // κλίμακα των λουπών που ηχογράφησες: ρίζα 0..11, τύπος 0..5
@@ -348,9 +348,9 @@ namespace flow
         }
 
         // ποιο block παίζει το πλήκτρο n (-1 = κανένα). Αν επικαλύπτονται ζώνες, κερδίζει η πιο πρόσφατη.
-        int blockForNote (int n) const
+        int blockForNote (int n, bool ignorePedal = false) const   // ignorePedal: για τα φωτάκια, να μην αλλάζουν με το sustain
         {
-            if (shiftHeld.load() != 0 && n >= firstPlayNote)
+            if (! ignorePedal && shiftHeld.load() != 0 && n >= firstPlayNote)
             {
                 const int sb = specialBlock.load();
                 if (sb >= 0 && sb < numBlocks && active[(size_t) sb].load() != 0 && blockOff[(size_t) sb].load() == 0

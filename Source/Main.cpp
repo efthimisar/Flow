@@ -183,13 +183,14 @@ public:
         {
             engine.smartType[(size_t) b] = (engine.smartType[(size_t) b].load() + 1) % 8;
             if (engine.smartType[(size_t) b].load() == 6) engine.followBlock[(size_t) b] = 0;   // Drums: δεν ακολουθούν (μπορείς να το ξανανάψεις στις ρυθμίσεις)
-            engine.smartResetApp (b);
+            engine.smartResetApp (b); rememberSmartType (b, engine.smartType[(size_t) b].load());
             saveNow(); loopsView.repaint();
         };
         loopsView.onFollowToggle = [this] { engine.toggleFollow(); saveNow(); refreshSmartTile(); loopsView.repaint(); };
         loopsView.getTempoBox().onChange = [this] { dirty = true; };
         keyboardView.onSelect = [this] (int b) { selectBlock (b); };
         keyboardView.onRedoZone = [this] (int b) { selectBlock (b); engine.startZone (b); refreshAll(); };   // ⟲ στη σειρά του block: ξαναορίζει τη ζώνη
+        keyboardView.onToggleFollowBlock = [this] (int b) { engine.followBlock[(size_t) b] = engine.followBlock[(size_t) b].load() != 0 ? 0 : 1; saveNow(); keyboardView.repaint(); };
         keyboardView.onToggleMf = [this] (int b) { engine.mfBlock = engine.mfBlock.load() == b ? -1 : b; saveNow(); refreshAll(); keyboardView.repaint(); };
         keyboardView.onHold = [this] (int b) { selectBlock (b); cycleHold (b); };
         keyboardView.onRemoveBlock = [this] (int b) { removeBlock (b); };
@@ -287,7 +288,6 @@ public:
         favPlugins.addLines (settings->getValue ("favPlugins"));
         favPlugins.removeEmptyStrings();
         engine.masterPos = (float) jlimit (0.0, 1.0, settings->getDoubleValue ("masterPos", 1.0));
-        engine.limiterOn = settings->getIntValue ("limiterOn", 1) != 0 ? 1 : 0;
         engine.followSetScale (settings->getIntValue ("followRoot", 9), settings->getIntValue ("followType", 1));
         engine.smartOn = settings->getIntValue ("smartOn", 0) != 0 ? 1 : 0;
         engine.smartAccept = jlimit (0.0f, 1.0f, (float) settings->getDoubleValue ("smartAccept", 0.6));
@@ -716,6 +716,22 @@ private:
 
         void closeButtonPressed() override { owner.closePluginWindowAsync (plugin); }
 
+        // δεύτερη οθόνη: το παράθυρο μένει στο κέντρο της οθόνης ενώ το plugin αλλάζει μέγεθος (τα πρώτα δευτερόλεπτα)
+        void keepCentredOn (Point<int> centre) { centreOn = centre; centreUntil = Time::getMillisecondCounter() + 4000; }
+        void resized() override
+        {
+            DocumentWindow::resized();
+            if (centreUntil != 0 && Time::getMillisecondCounter() < centreUntil && ! inRecentre)
+            {
+                inRecentre = true;
+                setCentrePosition (centreOn);
+                inRecentre = false;
+            }
+        }
+        Point<int> centreOn;
+        uint32 centreUntil = 0;
+        bool inRecentre = false;
+
         MainComponent& owner;
         AudioPluginInstance* plugin;
         String posKey;
@@ -819,6 +835,7 @@ private:
                 cx = jlimit (area.getX(), jmax (area.getX(), area.getRight()  - w->getWidth()),  cx);
                 cy = jlimit (area.getY(), jmax (area.getY(), area.getBottom() - w->getHeight()), cy);
                 w->setTopLeftPosition (cx, cy);
+                w->keepCentredOn (area.getCentre());
                 flow::flowLog ("openWindowFor: secondary display at " + String (cx) + "," + String (cy));
             }
             else
@@ -838,6 +855,7 @@ private:
         }
         w->setVisible (true);
         w->toFront (true);
+        if (w->centreUntil != 0) w->setCentrePosition (w->centreOn);
         lastWinPos = w->getPosition();
         if (auto* top = getTopLevelComponent()) lastTopBounds = top->getBounds();
         flow::flowLog ("dock: opened at " + String (lastWinPos.x) + "," + String (lastWinPos.y) + " (Flow " + String (lastTopBounds.getX()) + "," + String (lastTopBounds.getY()) + " " + String (lastTopBounds.getWidth()) + "x" + String (lastTopBounds.getHeight()) + ")");
@@ -1015,7 +1033,7 @@ private:
         {
             const int idx = n - first;
             if (idx < 0 || idx >= count || idx >= 88) continue;
-            const int b = engine.blockForNote (n);
+            const int b = engine.blockForNote (n, true);
             if (b < 0) continue;
             if (engine.blockOff[(size_t) b].load() != 0) continue;
             buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? (blockHue (b) == 3 ? 2 : 3) : 1);   // κίτρινο (3) στη φωτεινότητα 3 φαίνεται λευκό στο MK2
@@ -2022,12 +2040,26 @@ private:
             });
     }
 
+    // ο τύπος ήχου που διάλεξες για ένα όργανο (π.χ. Serum 2) θυμάται και μπαίνει μόνος του όταν το ξαναφορτώσεις
+    int rememberedSmartType (const String& plugin) const
+    {
+        auto* settings = const_cast<juce::ApplicationProperties&> (properties).getUserSettings();
+        if (plugin.isEmpty() || settings == nullptr) return 0;
+        return jlimit (0, 7, settings->getIntValue ("stype:" + plugin, 0));
+    }
+    void rememberSmartType (int b, int t)
+    {
+        auto* settings = properties.getUserSettings();
+        if (settings == nullptr) return;
+        if (auto* pl = engine.getPlugin (b)) settings->setValue ("stype:" + pl->getName(), jlimit (0, 7, t));
+    }
     void pluginLoaded (int block, const String& token, std::unique_ptr<AudioPluginInstance> instance, const String& error,
                        const MemoryBlock& state, bool userLoad, bool captureZone, std::function<void()> after)
     {
         setLoading (token, false);
         loadingSlots.removeFirstMatchingValue (block);
         --pendingLoads;
+        const String instName = instance != nullptr ? instance->getName() : String();
         logLoadTime (token, instance != nullptr ? instance->getName() : String ("(failed)"));
 
         if (instance == nullptr)
@@ -2045,7 +2077,7 @@ private:
             engine.holdMode[(size_t) block] = 0;
             engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
             engine.curveMode[(size_t) block] = 0;
-            engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block); for (int oc = 0; oc < 4; ++oc) { orbAutoPat[(size_t) block][(size_t) oc] = -1; orbSettle[(size_t) block][(size_t) oc] = false; }
+            engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = rememberedSmartType (instName); if (engine.smartType[(size_t) block].load() == 6) engine.followBlock[(size_t) block] = 0; engine.smartResetApp (block); for (int oc = 0; oc < 4; ++oc) { orbAutoPat[(size_t) block][(size_t) oc] = -1; orbSettle[(size_t) block][(size_t) oc] = false; }
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
             engine.transpose[(size_t) block] = 0;
@@ -2475,8 +2507,6 @@ private:
                 sj.fn = [this, v] { engine.masterPos = v; saveNow(); };
                 m.sub.push_back (std::move (sj));
             }
-            { LoopsView::MenuEntry sj; sj.text = gr ("Safety limiter"); sj.checked = engine.limiterOn.load() != 0;
-              sj.fn = [this] { engine.limiterOn = engine.limiterOn.load() != 0 ? 0 : 1; saveNow(); }; m.sub.push_back (std::move (sj)); }
             { LoopsView::MenuEntry sj; sj.text = gr ("Assign knob (MIDI learn)");
               sj.fn = [this] { engine.cancelLearns(); engine.masterLearn = 1; setMessage (gr ("Move the knob for the master volume")); }; m.sub.push_back (std::move (sj)); }
             { LoopsView::MenuEntry sj; sj.text = gr ("Remove assignment"); sj.enabled = engine.masterCc.load() != 0;
@@ -2547,7 +2577,7 @@ private:
                 if (deviceManager.isMidiInputDeviceEnabled (d.identifier)) names.add (d.name);
             r.push_back ({ "MIDI", names.isEmpty() ? gr ("none") : names.joinIntoString (", ") });
         }
-        r.push_back ({ "Master", String ((int) std::lround (engine.masterPos.load() * 100.0f)) + "%  \xc2\xb7  limiter " + (engine.limiterOn.load() != 0 ? "on" : "off") });
+        r.push_back ({ "Master", String ((int) std::lround (engine.masterPos.load() * 100.0f)) + "%" });
         r.push_back ({ "Link", engine.isLinkEnabled() ? "on" : "off" });
         {
             auto folder = engine.recorder.getFolder().getFullPathName();
@@ -2710,8 +2740,6 @@ private:
         h.chooseRecFolder = [this] { chooseTapeFolder(); };
         h.masterGet = [this] { return engine.masterPos.load(); };
         h.masterSet = [this] (float v) { engine.masterPos = v; };
-        h.limiterGet = [this] { return engine.limiterOn.load() != 0; };
-        h.limiterSet = [this] (bool on) { engine.limiterOn = on ? 1 : 0; };
         h.masterCcText = [this]() -> String { const int c = engine.masterCc.load(); return c != 0 ? pedalCodeText (c) : String(); };
         h.masterAssign = [this] { engine.cancelLearns(); engine.masterLearn = 1; setMessage (gr ("Move the knob for the master volume")); };
         h.masterRemove = [this] { engine.masterCc = 0; saveNow(); };
@@ -2799,6 +2827,7 @@ private:
             engine.smartType[(size_t) b] = jlimit (0, 7, t);
             if (jlimit (0, 7, t) == 6) engine.followBlock[(size_t) b] = 0;   // Drums: αποκλείονται από το Follow
             engine.smartResetApp (b);   // νέος τύπος: καθαρή αρχή
+            rememberSmartType (b, t);
             saveNow();
         };
         h.windowSizeGet = [this] { return windowSizeMode; };
@@ -3643,7 +3672,6 @@ private:
         settings->setValue ("metroLevel", (double) engine.metroLevel.load());
         settings->setValue ("favPlugins", favPlugins.joinIntoString ("\n"));
         settings->setValue ("masterPos", (double) engine.masterPos.load());
-        settings->setValue ("limiterOn", engine.limiterOn.load());
         settings->setValue ("followRoot", engine.followRoot.load());
         settings->setValue ("followType", engine.followType.load());
         settings->setValue ("smartOn", engine.smartOn.load());
@@ -4075,7 +4103,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.73.0"; }
+    const String getApplicationVersion() override { return "0.74.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

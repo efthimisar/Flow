@@ -1174,7 +1174,7 @@ public:
             g.setColour (trackC.interpolatedWith (Colour (0xfff0ebe2), pulse * 0.45f));
             g.strokePath (track, PathStrokeType (lw));
             g.setColour (hobby::kScreen);
-            for (int i = 0; i < axisBars; ++i)   // ένα σημάδι ανά μέτρο
+            for (int i = 0; i < 1; ++i)   // μία μόνο εγκοπή, στην αρχή πάνω
             {
                 const float a = MathConstants<float>::twoPi * (float) i / (float) axisBars;
                 const float dx = std::sin (a), dy = -std::cos (a);
@@ -1365,7 +1365,7 @@ public:
             String msg;
             if (! valid) msg = "";
             else if (! on) msg = "Smart off";
-            else if (type == 0) msg = "Pick a sound type";
+            else if (type == 0) msg = "";
             else if (corr.isNotEmpty()) msg = corr;
             else msg = applied ? "Correcting" : "In range";
             g.setColour (corr.isNotEmpty() ? amber : dimC); g.setFont (hobby::makeFont (typeface, 12.0f * s).boldened());
@@ -1715,7 +1715,7 @@ public:
     std::function<void (int)> onSelect, onRedoZone, onCurve, onVolumeMenu, onHold;
     std::function<void (int)> onRemoveBlock;
     std::function<void (int)> onToggleOff;   // (δεν χρησιμοποιείται πια από τον αριθμό)
-    std::function<void (int)> onSwapInstrument, onToggleSpecialBlock, onToggleMf;   // ⇄ και SP στη σειρά του block
+    std::function<void (int)> onSwapInstrument, onToggleSpecialBlock, onToggleMf, onToggleFollowBlock;   // ⇄ και SP στη σειρά του block
     std::function<void (int)> onToggleSilent;   // κυκλάκι ♪: το live του block μένει σιωπηλό όσο παίζει η λούπα του
     std::function<void (int, int)> onChordType;   // (block, +1 / -1 / 0 = maj ή νέα τονική)
     std::function<void (int, float)> onVolume;
@@ -1882,7 +1882,7 @@ public:
             if (b < 0) continue;
             auto& s = spans[(size_t) b];
             silentRect[(size_t) b] = {};
-            for (auto* r : { &numRect[(size_t) b], &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &barRect[(size_t) b], &xRect[(size_t) b], &swapRect[(size_t) b], &spRect[(size_t) b], &mfRect[(size_t) b], &redoRect[(size_t) b] })
+            for (auto* r : { &numRect[(size_t) b], &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &barRect[(size_t) b], &xRect[(size_t) b], &swapRect[(size_t) b], &spRect[(size_t) b], &mfRect[(size_t) b], &fRect[(size_t) b], &redoRect[(size_t) b] })
                 *r = {};
             if (! s.used) continue;
 
@@ -1898,8 +1898,8 @@ public:
             // κλικ στον αριθμό ανοίγει τις υπόλοιπες λειτουργίες: hold, καμπύλη, transpose, ♪ (live σιωπηλό όσο παίζει λούπα), ✕
             const bool open = b == expanded;
             const bool showChord = false;   // το Chord δεν χρησιμοποιείται πια: δεν υπάρχει κυκλάκι
-            const bool showCurve = open, showHold = open, showTr = open, showSilent = open && ! isSpecial, showX = open, showSwap = open, showSp = open, showMf = open, showRedo = open;
-            const int shown = 1 + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showSilent ? 1 : 0) + (showSwap ? 1 : 0) + (showSp ? 1 : 0) + (showMf ? 1 : 0) + (showRedo ? 1 : 0) + (showX ? 1 : 0);
+            const bool showCurve = open, showHold = open, showTr = open, showSilent = open && ! isSpecial, showX = open, showSwap = open, showSp = open, showMf = open, showF = open, showRedo = open;
+            const int shown = 1 + (showHold ? 1 : 0) + (showCurve ? 1 : 0) + (showTr ? 1 : 0) + (showSilent ? 1 : 0) + (showSwap ? 1 : 0) + (showSp ? 1 : 0) + (showMf ? 1 : 0) + (showF ? 1 : 0) + (showRedo ? 1 : 0) + (showX ? 1 : 0);
             const float total = (float) shown * D + (float) (shown - 1) * gap;
             float x = isSpecial ? s.l : s.l + (width - total) * 0.5f;   // το ειδικό block: τα κυκλάκια τέρμα αριστερά στη λωρίδα του
             if (open)
@@ -2038,6 +2038,20 @@ public:
                 x += D + gap;
             }
 
+            if (showF)       // f: το block ακολουθεί το Follow (αναμμένο) ή μένει έξω (σβηστό)
+            {
+                fRect[(size_t) b] = { x, cy, D, D };
+                const auto fr = fRect[(size_t) b];
+                const bool fOn = engine.followBlock[(size_t) b].load() != 0;
+                if (open) { g.setColour (hobby::kScreen); g.fillEllipse (fr); }
+                g.setColour (col.withMultipliedAlpha (alpha * (fOn ? 0.4f : 0.16f)));
+                g.fillEllipse (fr);
+                g.setColour (col.withMultipliedAlpha (fOn ? alpha : 0.7f));
+                g.setFont (hobby::makeFont (typeface, 11.0f));
+                g.drawText ("f", fr, Justification::centred, false);
+                x += D + gap;
+            }
+
             if (showRedo)    // ⟲: ξαναορίζει τη ζώνη του block
             {
                 redoRect[(size_t) b] = { x, cy, D, D };
@@ -2113,6 +2127,7 @@ public:
             if (swapRect[(size_t) b].expanded (2.0f).contains (p))   { if (onSwapInstrument) onSwapInstrument (b); repaint(); return; }
             if (spRect[(size_t) b].expanded (2.0f).contains (p))     { if (onToggleSpecialBlock) onToggleSpecialBlock (b); repaint(); return; }
             if (mfRect[(size_t) b].expanded (2.0f).contains (p))     { if (onToggleMf) onToggleMf (b); repaint(); return; }
+            if (fRect[(size_t) b].expanded (2.0f).contains (p))      { if (onToggleFollowBlock) onToggleFollowBlock (b); repaint(); return; }
             if (redoRect[(size_t) b].expanded (2.0f).contains (p))   { if (onRedoZone) onRedoZone (b); repaint(); return; }
             if (silentRect[(size_t) b].expanded (2.0f).contains (p)) { if (onToggleSilent) onToggleSilent (b); repaint(); return; }
             if (holdRect[(size_t) b].expanded (2.0f).contains (p))   { if (onHold) onHold (b); return; }
@@ -2123,7 +2138,7 @@ public:
         bool onCircle = false;   // κλικ σε κυκλάκι κανονικού block μένει στο block, ακόμα κι αν η λωρίδα του ειδικού περνά από πάνω
         for (int b = 0; b < flow::numBlocks && ! onCircle; ++b)
             if (spans[(size_t) b].used)
-                for (const auto* r : { &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &silentRect[(size_t) b], &swapRect[(size_t) b], &spRect[(size_t) b], &mfRect[(size_t) b], &redoRect[(size_t) b] })
+                for (const auto* r : { &holdRect[(size_t) b], &curveRect[(size_t) b], &trRect[(size_t) b], &chordRect[(size_t) b], &silentRect[(size_t) b], &swapRect[(size_t) b], &spRect[(size_t) b], &mfRect[(size_t) b], &fRect[(size_t) b], &redoRect[(size_t) b] })
                     if (r->expanded (2.0f).contains (p)) { onCircle = true; break; }
 
         if (! onCircle && ! inMenu && ! specialRect.isEmpty() && specialRect.expanded (3.0f, 4.0f).contains (p))
@@ -2288,7 +2303,7 @@ private:
     int expanded = -1;
     int lastSelSeen = -2;
     std::array<Rectangle<float>, flow::numBlocks> silentRect;
-    std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect, xRect, swapRect, spRect, mfRect, redoRect;
+    std::array<Rectangle<float>, flow::numBlocks> numRect, holdRect, curveRect, trRect, chordRect, barRect, xRect, swapRect, spRect, mfRect, fRect, redoRect;
     int armedBlock = -1;
     uint32 armedUntil = 0;
     float kw = 1.0f, labelY = 46.0f, keysY = 77.0f;

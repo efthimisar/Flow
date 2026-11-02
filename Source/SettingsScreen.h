@@ -47,8 +47,6 @@ public:
         std::function<void()> chooseRecFolder;
         std::function<float()> masterGet;
         std::function<void (float)> masterSet;
-        std::function<bool()> limiterGet;
-        std::function<void (bool)> limiterSet;
         std::function<juce::String()> masterCcText;   // κενό = δεν έχει ανατεθεί
         std::function<void()> masterAssign, masterRemove;
         std::function<bool()> linkAvailable, linkGet;
@@ -116,7 +114,7 @@ public:
     void open()
     {
         direct = false;
-        page = Home; loadScroll = 0; saved = false; waitPanic = false;
+        page = Home; selTile = -1; loadScroll = 0; saved = false; waitPanic = false;
         nameEditor.setVisible (false);
         setVisible (true); toFront (false);
         startTimerHz (12);
@@ -323,20 +321,20 @@ private:
         const bool linkOn = host.linkGet && host.linkGet();
         const bool hasSet = host.currentSetName && host.currentSetName().isNotEmpty() && host.currentSetName() != juce::String::fromUTF8 ("\xe2\x80\x93");
         std::vector<Tile> tiles {
-            { 0, "Audio & MIDI", false, false, [this] { if (host.openAudio) host.openAudio(); } },
-            { 15, "Orb knobs", false, false, {}, true, 13 },
-            { 12, "Follow", host.followOnGet && host.followOnGet() != 0, false, {}, true, 12 },
-            { 11, "Smart master", host.smartOnGet && host.smartOnGet() != 0, false, {}, true, 11 },
             { 1, "Sets", false, false, [this] { showPage (Sets); } },
-            { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
-            { 4, "Rec Audio folder", false, false, [this] { showPage (RecFolder); } },
-            { 5, "Master Output", false, false, [this] { showPage (Master); } },
-            { 6, "Ableton Link", linkOn, ! linkAv, [this, linkAv] { if (linkAv && host.linkToggle) host.linkToggle(); } },
-            { 7, "Panic", false, false, [this] { showPage (Panic); } },
             { 9, "Loop recording", false, false, [this] { showPage (LoopRec); } },
+            { 12, "Follow", host.followOnGet && host.followOnGet() != 0, false, [this] { if (host.followOnSet) host.followOnSet ((host.followOnGet && host.followOnGet() != 0) ? 0 : 1); repaint(); } },
+            { 15, "Orb knobs", false, false, {}, true, 13 },
+            { 11, "Smart master", host.smartOnGet && host.smartOnGet() != 0, false, {}, true, 11 },
+            { 4, "Rec Audio folder", false, false, [this] { showPage (RecFolder); } },
             { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
             { 8, "Window size", false, false, [this] { showPage (WindowSize); } },
+            { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
+            { 0, "Audio & MIDI", false, false, [this] { if (host.openAudio) host.openAudio(); } },
+            { 5, "Master Output", false, false, [this] { showPage (Master); } },
+            { 6, "Ableton Link", linkOn, ! linkAv, [this, linkAv] { if (linkAv && host.linkToggle) host.linkToggle(); } },
             { 17, "Help", host.helpGet && host.helpGet(), false, [this] { if (host.helpToggle) host.helpToggle(); repaint(); } },
+            { 7, "Panic", false, false, [this] { showPage (Panic); } },
         };
         (void) hasSet;
         // κύκλοι στη μέση· το περιεχόμενο του επιλεγμένου ανοίγει αριστερά και δεξιά
@@ -367,13 +365,15 @@ private:
             hits.push_back ({ r.expanded (4), t.card ? std::function<void()> ([this, id = t.cardId] { selTile = id; repaint(); }) : t.fn });
         }
         const Rectangle<int> L (40, 44, cardW, H - 44 - 24), R (W - 40 - cardW, 44, cardW, H - 44 - 24);
-        for (auto c : { L, R })
+        std::vector<Rectangle<int>> shown;
+        if (selTile == 11) shown = { R };
+        else if (selTile == 13) shown = { L, R };
+        for (auto c : shown)
         {
             g.setColour (card()); g.fillRoundedRectangle (c.toFloat(), 18.0f);
             g.setColour (lineC()); g.drawRoundedRectangle (c.toFloat().reduced (0.5f), 18.0f, 1.0f);
         }
         if (selTile == 11) cardsSmart (g, L, R);
-        else if (selTile == 12) cardsFollow (g, L, R);
         else if (selTile == 13) cardsOrb (g, L, R);
     }
 
@@ -399,27 +399,7 @@ private:
         using namespace juce;
         const bool on = host.smartOnGet && host.smartOnGet() != 0;
         const float acc = host.smartAcceptGet ? host.smartAcceptGet() : 0.6f;
-        auto c = cardHeader (g, L, "Smart master");
-        const int w2 = (c.getWidth() - 8) / 2;
-        g.setColour (dim()); g.setFont (font (12.0f)); g.drawText ("Mode", c.getX(), c.getY(), c.getWidth(), 16, Justification::centredLeft, false);
-        smallPill (g, { c.getX(), c.getY() + 20, w2, 34 }, "Off", ! on, [this] { if (host.smartOnSet) host.smartOnSet (0); repaint(); });
-        smallPill (g, { c.getX() + w2 + 8, c.getY() + 20, w2, 34 }, "On (Auto)", on, [this] { if (host.smartOnSet) host.smartOnSet (1); repaint(); });
-        g.setColour (dim()); g.drawText ("Accept corrections (drag the dial)", c.getX(), c.getY() + 76, c.getWidth(), 16, Justification::centredLeft, false);
-        const int D = jlimit (70, 120, c.getHeight() - 150);
-        dialRect = { c.getCentreX() - D / 2, c.getY() + 100, D, D };
-        {
-            Path tr, vp; const float cx = (float) dialRect.getCentreX(), cy = (float) dialRect.getCentreY(), r = (float) D * 0.5f - 6.0f;
-            const float st0 = degreesToRadians (-135.0f), full = degreesToRadians (270.0f);
-            tr.addCentredArc (cx, cy, r, r, 0.0f, st0, st0 + full, true);
-            vp.addCentredArc (cx, cy, r, r, 0.0f, st0, st0 + full * jmax (0.003f, acc), true);
-            g.setColour (Colour (0xff3c3835)); g.strokePath (tr, PathStrokeType (7.0f, PathStrokeType::curved, PathStrokeType::rounded));
-            g.setColour (hobby::kOn); g.strokePath (vp, PathStrokeType (7.0f, PathStrokeType::curved, PathStrokeType::rounded));
-            g.setColour (txt()); g.setFont (font (20.0f, true));
-            g.drawText (String ((int) std::round (acc * 100.0f)) + "%", dialRect, Justification::centred, false);
-        }
-        g.setColour (dim()); g.setFont (font (11.0f));
-        g.drawFittedText ("0 % = measure only", c.getX(), dialRect.getBottom() + 4, c.getWidth(), 16, Justification::centred, 1);
-
+        (void) L;
         // δεξιά: ανά block
         auto rc = cardHeader (g, R, "Per block");
         const auto blocks = host.smartBlocks ? host.smartBlocks() : std::vector<SmartBlock>();
@@ -865,14 +845,13 @@ private:
     void paintMaster (juce::Graphics& g)
     {
         using namespace juce;
-        const Rectangle<int> r (40, 74, 340, 64);
-        const bool on = host.limiterGet && host.limiterGet();
-        g.setColour (hov (r) ? Colour (0xff36322f) : card()); g.fillRoundedRectangle (r.toFloat(), 14.0f);
-        g.setColour (lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 14.0f, 1.0f);
-        g.setColour (txt()); g.setFont (font (15.0f, true)); g.drawText ("Safety limiter", r.getX() + 22, r.getY() + 12, 200, 20, Justification::centredLeft, false);
-        g.setColour (dim()); g.setFont (font (11.0f)); g.drawText ("protects against loud peaks", r.getX() + 22, r.getY() + 34, 220, 16, Justification::centredLeft, false);
-        toggleSwitch (g, { (float) r.getRight() - 64.0f, (float) r.getY() + 20.0f, 42.0f, 24.0f }, on);
-        hits.push_back ({ r, [this, on] { if (host.limiterSet) host.limiterSet (! on); if (onChanged) onChanged(); repaint(); } });
+        const String cc = host.masterCcText ? host.masterCcText() : String();
+        g.setColour (dim()); g.setFont (font (12.0f, true));
+        g.drawText ("Master volume knob", 40, 74, 300, 16, Justification::centredLeft, false);
+        pill (g, { 40, 96, 260, 46 }, cc.isEmpty() ? "Assign knob (MIDI learn)" : "Knob: " + cc, cc.isNotEmpty(), true, [this] { if (host.masterAssign) host.masterAssign(); });
+        if (cc.isNotEmpty())
+            pill (g, { 40, 152, 260, 40 }, "Remove assignment", false, true, [this] { if (host.masterRemove) host.masterRemove(); repaint(); });
+        note (g, "Move the knob on your keyboard after pressing Assign.", getHeight() - 28);
     }
 
     // ---------- panic ----------
@@ -1240,7 +1219,7 @@ private:
     float dialV0 = 0.0f;
     Page page = Home;
     int loadScroll = 0, loadMaxScroll = 0;
-    int selTile = 11;
+    int selTile = -1;   // -1: sto anoigma fainontai mono ta tiles
     juce::String delArmed; juce::uint32 delArmedAt = 0;   // ✕ διαγραφής set: οπλισμένο για 3 δλ
     bool saved = false, waitPanic = false;
     juce::String ccAtAssign;
