@@ -179,6 +179,7 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         mouse = e.getPosition();
+        mouseHeld = true; repaint();
         dialDrag = (page == Smart || (page == Home && selTile == 11)) && dialRect.contains (mouse) && host.smartAcceptSet != nullptr;
         dialY0 = e.getPosition().y; dialV0 = host.smartAcceptGet ? host.smartAcceptGet() : 0.0f; dialMoved = false;
     }
@@ -192,6 +193,7 @@ public:
     }
     void mouseUp (const juce::MouseEvent& e) override
     {
+        mouseHeld = false; repaint();
         if (dialDrag) { dialDrag = false; if (dialMoved) return; }
         for (int i = (int) hits.size(); --i >= 0;)
             if (hits[(size_t) i].r.contains (e.getPosition()))
@@ -291,7 +293,7 @@ private:
             case 4: drawSymbol (g, Symbol::Folder, c, 30.0f, col); break;
             case 5: drawSymbol (g, Symbol::Speaker, c, 30.0f, col); break;
             case 6: g.setFont (font (30.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x88\x9e"), Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
-            case 7: g.setColour (Colour (0xfff26b6b)); g.setFont (font (30.0f, true)); g.drawText ("!", Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
+            case 7: g.setColour (col); g.setFont (font (30.0f, true)); g.drawText ("!", Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 9: g.setFont (font (22.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x96\xb6|"), Rectangle<float> (c.x - 24.0f, c.y - 16.0f, 48.0f, 32.0f), Justification::centred, false); break;
             case 10: g.setFont (font (28.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x97\x8e"), Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 8: drawSymbol (g, Symbol::Window, c, 30.0f, col); break;
@@ -357,7 +359,8 @@ private:
             g.fillEllipse (r.toFloat());
             g.setColour (isSel || t.hot ? Colour (0xfff3f4f6) : lineC());
             g.drawEllipse (r.toFloat().reduced (1.0f), isSel ? 2.4f : t.hot ? 2.0f : 1.2f);
-            const Colour ink = t.dimmed ? dim().withAlpha (0.5f) : (t.hot || isSel || h) ? Colour (0xfff3f4f6) : dim();
+            Colour ink = t.dimmed ? dim().withAlpha (0.5f) : (t.hot || isSel || h) ? Colour (0xfff3f4f6) : dim();
+            if (t.icon == 7 && mouseHeld && h) ink = Colour (0xfff26b6b);   // Panic: στιγμιαία κόκκινο όταν πατιέται
             drawIcon (g, t.icon, { (float) ccx, (float) ccy }, ink);
             g.setColour (isSel ? txt() : t.dimmed ? dim().withAlpha (0.6f) : dim()); g.setFont (font (11.0f, true));
             g.drawText (t.title, ccx - pitch / 2, r.getBottom() + 3, pitch, 16, Justification::centred, true);
@@ -1210,6 +1213,7 @@ private:
     juce::TextEditor nameEditor;
     std::vector<Hit> hits;
     juce::Point<int> mouse { -1, -1 };
+    bool mouseHeld = false;   // κουμπί ποντικιού πατημένο (το Panic γίνεται κόκκινο όσο πατιέται)
     bool direct = false;
     juce::Rectangle<int> dialRect;
     bool dialDrag = false, dialMoved = false;
