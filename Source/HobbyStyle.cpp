@@ -370,14 +370,15 @@ void drawSymbol (juce::Graphics& g, Symbol sym, juce::Point<float> c, float size
             stroke (p, 2.0f);
             break;
         }
-        case Symbol::Thru:
+        case Symbol::Thru:   // MIDI FX: αλυσίδα, τρεις κουκκίδες ενωμένες με τόξα
         {
             juce::Path p;
-            p.startNewSubPath (-10.0f, 0.0f); p.lineTo (-4.0f, 0.0f);
-            p.startNewSubPath (4.0f, 0.0f);   p.lineTo (10.0f, 0.0f);
-            p.startNewSubPath (7.0f, -3.0f);  p.lineTo (10.0f, 0.0f); p.lineTo (7.0f, 3.0f);
-            p.addRoundedRectangle (-4.0f, -5.0f, 8.0f, 10.0f, 2.0f);
-            stroke (p, 1.7f);
+            for (float x : { -9.0f, 0.0f, 9.0f }) p.addEllipse (x - 1.8f, 3.2f, 3.6f, 3.6f);
+            p.startNewSubPath (-9.0f, 2.0f); p.quadraticTo (-4.5f, -9.0f, -0.8f, 1.2f);
+            p.startNewSubPath (-3.2f, 0.6f); p.lineTo (-0.8f, 1.2f); p.lineTo (-1.6f, -1.4f);
+            p.startNewSubPath (0.0f, 2.0f);  p.quadraticTo (4.5f, -9.0f, 8.2f, 1.2f);
+            p.startNewSubPath (5.8f, 0.6f);  p.lineTo (8.2f, 1.2f);  p.lineTo (7.4f, -1.4f);
+            stroke (p, 1.6f);
             break;
         }
         case Symbol::Chord:

@@ -1060,9 +1060,10 @@ private:
                 if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);   // άσπρο
             }
 
-        {   // tap tempo (το τελευταίο πλήκτρο δεξιά): κόκκινο και στο hardware
-            const int idx = flow::highestNote - first;
-            if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = lightByte (0, 3);
+        for (int n : { flow::tapKeyNote, flow::recAudioKeyNote, flow::followKeyNote })   // πλήκτρα ελέγχου (tap tempo, Rec Audio, Follow): άσπρα και στο hardware
+        {
+            const int idx = n - first;
+            if (idx >= 0 && idx < count && idx < 88) buf[(size_t) idx] = (uint8_t) (17 * 4 + 3);
         }
 
         if (force || buf != lastLights || ++lightsTick >= 4)

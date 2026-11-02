@@ -103,7 +103,7 @@ namespace hobby
                 const float v = j == 0 ? v0 : v1;
                 // χρώμα του block με τονικές διαφορές: ο εξωτερικός δακτύλιος (μπάσα) πιο σκούρος, ο εσωτερικός (πρίμα) πιο φωτεινός· μέσα στο ζεύγος η χαμηλή ζώνη λίγο φωτεινότερη
                 static const float tone[6] { 0.62f, 0.50f, 0.95f, 0.80f, 1.30f, 1.12f };
-                const juce::Colour c = (limited && v > lm) ? kSmartOver : blockC.withMultipliedBrightness (tone[k]);
+                const juce::Colour c = (limited && v > lm) ? kSmartOver : (v < 0.004f ? juce::Colour (0xff6f6962) : blockC.withMultipliedBrightness (tone[k]));   // χωρίς ήχο (άνοιγμα): γκρι, χωρίς χρώμα block
                 for (int i = 0; i < nt; ++i)
                 {
                     const float al = 0.5f * std::pow (1.0f - (float) (i + 1) / (float) nt, 1.8f) * dim;

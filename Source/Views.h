@@ -2085,7 +2085,7 @@ public:
             barRect[(size_t) b] = bar;
             g.setColour (Colour (0xff3a3430));
             g.fillRoundedRectangle (bar, 1.5f);
-            g.setColour (engine.blockOff[(size_t) b].load() != 0 ? Colour (0xff7a7168) : Colour (0xfff2c14e));
+            g.setColour (engine.blockOff[(size_t) b].load() != 0 ? Colour (0xff6a635c) : Colour (0xff9a948b));   // γκρι
             g.fillRoundedRectangle (bar.withWidth (jmax (0.0f, bar.getWidth() * engine.gainOut[(size_t) b].load())), 1.5f);
         }
     }
@@ -2372,11 +2372,17 @@ public:
         if (canAdd)
         {
             plusRect = { x, y, D, D };
-            g.setColour (Colour (0xffd9d0c4));
-            g.fillEllipse (plusRect);
-            g.setColour (Colour (0xff6b625a));
-            g.fillRect (plusRect.getCentreX() - 5.0f, plusRect.getCentreY() - 0.9f, 10.0f, 1.8f);
-            g.fillRect (plusRect.getCentreX() - 0.9f, plusRect.getCentreY() - 5.0f, 1.8f, 10.0f);
+            // ανάγλυφο «+», χωρίς κύκλο
+            const float pcx = plusRect.getCentreX(), pcy = plusRect.getCentreY();
+            auto plusAt = [&] (float dx, float dy, Colour c)
+            {
+                g.setColour (c);
+                g.fillRect (pcx + dx - 6.0f, pcy + dy - 1.0f, 12.0f, 2.0f);
+                g.fillRect (pcx + dx - 1.0f, pcy + dy - 6.0f, 2.0f, 12.0f);
+            };
+            plusAt (1.0f, 1.5f, Colours::white.withAlpha (0.9f));
+            plusAt (-0.8f, -0.8f, Colour (0xffcdc1b4));
+            plusAt (0.0f, 0.0f, Colour (0xff968a7e));
             x += D;
         }
 
@@ -2386,7 +2392,12 @@ public:
         x += 13.0f;
 
         masterRect = { x, y, D, D };
-        disc (masterRect, masterMode ? hobby::kPeach.darker (0.3f) : hobby::kPeach.withAlpha (0.55f), "M", masterMode ? Colours::white : Colour (0xff8a4f1c));
+        {   // ανάγλυφο «M», χωρίς κύκλο (σκούρο όταν είναι ενεργό το master FX)
+            g.setFont (hobby::makeFont (typeface, 17.0f).boldened());
+            g.setColour (Colours::white.withAlpha (0.9f)); g.drawText ("M", masterRect.translated (1.0f, 1.5f), Justification::centred, false);
+            g.setColour (Colour (0xffcdc1b4)); g.drawText ("M", masterRect.translated (-0.8f, -0.8f), Justification::centred, false);
+            g.setColour (masterMode ? hobby::kPeach.darker (0.5f) : Colour (0xff968a7e)); g.drawText ("M", masterRect, Justification::centred, false);
+        }
     }
 
     // μόνο τα κυκλάκια, το + και το M πιάνουν κλικ: το υπόλοιπο (π, Flow) περνά στο πάνω παράθυρο

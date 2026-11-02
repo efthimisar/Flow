@@ -367,7 +367,6 @@ private:
         const Rectangle<int> L (40, 44, cardW, H - 44 - 24), R (W - 40 - cardW, 44, cardW, H - 44 - 24);
         std::vector<Rectangle<int>> shown;
         if (selTile == 11) shown = { R };
-        else if (selTile == 13) shown = { L, R };
         for (auto c : shown)
         {
             g.setColour (card()); g.fillRoundedRectangle (c.toFloat(), 18.0f);
@@ -520,39 +519,39 @@ private:
         using namespace juce;
         const auto ks = host.orbKnobs ? host.orbKnobs() : std::vector<OrbKnob>();
         if (ks.size() < 16) return;
-        for (int side = 0; side < 2; ++side)
+        const int gap = 12;
+        const int ch = (L.getHeight() - gap) / 2;
+        for (int cc = 0; cc < 4; ++cc)
         {
-            auto c = cardHeader (g, side == 0 ? L : R, side == 0 ? "Orb rings 1-2" : "Orb rings 3-4");
-            const int rowH = jmax (22, jmin (28, (c.getHeight() - 40) / 8));
-            int y = c.getY();
-            for (int cc = side * 2; cc < side * 2 + 2; ++cc)
+            const auto& side = cc < 2 ? L : R;
+            const Rectangle<int> cr (side.getX(), side.getY() + (cc % 2) * (ch + gap), side.getWidth(), ch);
+            g.setColour (card()); g.fillRoundedRectangle (cr.toFloat(), 16.0f);
+            g.setColour (lineC()); g.drawRoundedRectangle (cr.toFloat().reduced (0.5f), 16.0f, 1.0f);
+            g.setColour (Colour (0xff9a948b)); g.drawEllipse ((float) cr.getX() + 16.0f, (float) cr.getY() + 15.0f, 13.0f, 13.0f, 2.2f);
+            g.setColour (txt()); g.setFont (font (14.0f, true)); g.drawText ("Ring " + String (cc + 1), cr.getX() + 38, cr.getY() + 11, 120, 20, Justification::centredLeft, false);
+            const int rowH = jlimit (22, 30, (ch - 46 - 8) / 4);
+            int y = cr.getY() + 40;
+            for (int r = 0; r < 4; ++r)
             {
-                g.setColour (Colour (0xff9a948b)); g.drawEllipse ((float) c.getX(), (float) y + 3.0f, 12.0f, 12.0f, 2.2f);
-                g.setColour (dim()); g.setFont (font (12.0f, true)); g.drawText ("Ring " + String (cc + 1), c.getX() + 20, y, 100, 18, Justification::centredLeft, false);
-                y += 20;
-                for (int r = 0; r < 4; ++r)
+                const int slot = cc * 4 + r;
+                const Rectangle<int> row (cr.getX() + 14, y, cr.getWidth() - 28, rowH - 4);
+                const auto& k = ks[(size_t) slot];
+                g.setColour (hov (row) ? Colour (0xff423d39) : Colour (0xff36322f)); g.fillRoundedRectangle (row.toFloat(), 8.0f);
+                g.setFont (font (12.0f));
+                if (k.bound)
                 {
-                    const int slot = cc * 4 + r;
-                    const Rectangle<int> row (c.getX(), y, c.getWidth(), rowH - 3);
-                    const auto& k = ks[(size_t) slot];
-                    g.setColour (hov (row) ? Colour (0xff423d39) : Colour (0xff36322f)); g.fillRoundedRectangle (row.toFloat(), 8.0f);
-                    g.setFont (font (12.0f));
-                    if (k.bound)
-                    {
-                        g.setColour (txt()); g.drawText (k.name, row.withTrimmedLeft (8).withTrimmedRight (74), Justification::centredLeft, true);
-                        g.setColour (dim()); g.drawText (String (roundToInt (jlimit (0.0f, 1.0f, k.value) * 100.0f)) + "%", row.withTrimmedRight (30), Justification::centredRight, false);
-                        g.setColour (hov (row) ? hobby::kRed : dim()); g.drawText (String::fromUTF8 ("\xe2\x9c\x95"), row.withTrimmedRight (8), Justification::centredRight, false);
-                        hits.push_back ({ row, [this, slot] { if (host.orbClear) host.orbClear (slot); repaint(); } });
-                    }
-                    else
-                    {
-                        const bool lrn = host.orbLearnSlot && host.orbLearnSlot() == slot;
-                        g.setColour (lrn ? Colour (0xffe8e2d8) : dim().withAlpha (0.7f)); g.drawText (lrn ? String ("Move a parameter in a plugin window") : String::fromUTF8 ("+  learn"), row.withTrimmedLeft (10), Justification::centredLeft, true);
-                        hits.push_back ({ row, [this, slot] { if (host.orbAssign) host.orbAssign (slot); repaint(); } });
-                    }
-                    y += rowH;
+                    g.setColour (txt()); g.drawText (k.name, row.withTrimmedLeft (8).withTrimmedRight (74), Justification::centredLeft, true);
+                    g.setColour (dim()); g.drawText (String (roundToInt (jlimit (0.0f, 1.0f, k.value) * 100.0f)) + "%", row.withTrimmedRight (30), Justification::centredRight, false);
+                    g.setColour (hov (row) ? hobby::kRed : dim()); g.drawText (String::fromUTF8 ("\xe2\x9c\x95"), row.withTrimmedRight (8), Justification::centredRight, false);
+                    hits.push_back ({ row, [this, slot] { if (host.orbClear) host.orbClear (slot); repaint(); } });
                 }
-                y += 6;
+                else
+                {
+                    const bool lrn = host.orbLearnSlot && host.orbLearnSlot() == slot;
+                    g.setColour (lrn ? Colour (0xffe8e2d8) : dim().withAlpha (0.7f)); g.drawText (lrn ? String ("Move a parameter in a plugin window") : String::fromUTF8 ("+  learn"), row.withTrimmedLeft (10), Justification::centredLeft, true);
+                    hits.push_back ({ row, [this, slot] { if (host.orbAssign) host.orbAssign (slot); repaint(); } });
+                }
+                y += rowH;
             }
         }
     }

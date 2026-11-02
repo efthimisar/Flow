@@ -43,6 +43,7 @@ juce_add_gui_app(Flow
     COMPANY_NAME "Prisma Audio"
     BUNDLE_ID com.prismaaudio.flow
     VERSION 0.74.0
+    PLIST_TO_MERGE "<plist><dict><key>CFBundleDisplayName</key><string>flow</string></dict></plist>"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon.png")
 
 juce_add_binary_data(FlowResources SOURCES Resources/Carlito-Bold.ttf)
