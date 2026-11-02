@@ -4098,7 +4098,7 @@ private:
         }
         const int cc = engine.changeCount.load();
         if (cc != lastChange) { lastChange = cc; dirty = true; }
-        if (dirty && Time::getMillisecondCounter() - lastSaveMs > 400)
+        if (dirty && Time::getMillisecondCounter() - lastSaveMs > 5000)   // κάθε αποθήκευση γράφει ~15 MB (~160 ms στο UI): όχι πιο συχνά από ανά 5 s
             saveSettings (false);
 
         if (++stateTicks >= 3600)   // ~2 λεπτά: η αποθήκευση με states (32 MB) κοστίζει ~0.5 s στο UI
