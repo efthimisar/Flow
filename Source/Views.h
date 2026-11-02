@@ -101,7 +101,7 @@ public:
         setVisible (false);
     }
 
-    void resized() override { search.setBounds (jmax (260, getWidth() - 124 - 14 - 190 - 10), 8, 190, 28); }
+    void resized() override { const int sw = 260; search.setBounds ((getWidth() - sw) / 2, 8, sw, 28); }   // το search στη μέση
 
     void open (const String& t, const String& s, Colour c, StringArray names, StringArray formats,
                std::function<void (int)> pick, std::function<void()> rescan, std::function<void()> file,
@@ -109,7 +109,7 @@ public:
     {
         title = t; sub = s; colour = c; items = names; fmts = formats;
         onPick = pick; onRescan = rescan; onFile = file;
-        keys = pluginKeys; favs = favourites; favChanged = favChangedFn; showAll = false;
+        keys = pluginKeys; favs = favourites; favChanged = favChangedFn; showAll = ! anyFavForTitle();   // ανοίγει στα favorites, αν υπάρχουν· αλλιώς σε όλα
         scroll = 0;
         search.clear();
         setVisible (true);
@@ -129,13 +129,26 @@ public:
         g.setColour (hobby::kScreen);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 12.0f);
 
-        g.setFont (hobby::makeFont (typeface, 17.0f));
-        g.setColour (colour);
-        g.drawText (title, 26, 8, 200, 28, Justification::centredLeft, false);
-        g.setFont (hobby::makeFont (typeface, 14.0f));
-        g.setColour (hobby::kIconGrey);
-        g.drawText (sub + String::fromUTF8 (anyFavForTitle() ? (showAll ? "  \xc2\xb7  all" : "  \xc2\xb7  favorites") : "  \xc2\xb7  mark favorites with f"),
-                    26 + (int) std::ceil (textWidth (hobby::makeFont (typeface, 17.0f), title)) + 12, 8, 300, 28, Justification::centredLeft, true);
+        // αριστερά: «VST  instruments · favorites». Πάτημα στο instruments = όλα, στο favorites = μόνο τα favorites
+        {
+            const auto tf = hobby::makeFont (typeface, 17.0f), sf = hobby::makeFont (typeface, 15.0f);
+            const Colour white (0xfff3f4f6);
+            float x = 26.0f;
+            const float tw = std::ceil (textWidth (tf, title)), iw = std::ceil (textWidth (sf, sub)), fw = std::ceil (textWidth (sf, String ("favorites")));
+            g.setFont (tf); g.setColour (white);
+            g.drawText (title, Rectangle<float> (x, 8.0f, tw + 4.0f, 28.0f), Justification::centredLeft, false);
+            x += tw + 14.0f;
+            const Rectangle<float> ir (x, 8.0f, iw + 4.0f, 28.0f);
+            g.setFont (sf); g.setColour (showAll ? white : hobby::kIconGrey.withAlpha (0.7f));
+            g.drawText (sub, ir, Justification::centredLeft, false);
+            hot.push_back ({ ir.expanded (6.0f), [this] { showAll = true; scroll = 0; repaint(); } });
+            x += iw + 12.0f;
+            g.setColour (hobby::kIconGrey.withAlpha (0.5f)); g.drawText (String::fromUTF8 ("\xc2\xb7"), Rectangle<float> (x - 8.0f, 8.0f, 8.0f, 28.0f), Justification::centred, false);
+            const Rectangle<float> fr2 (x, 8.0f, fw + 4.0f, 28.0f);
+            g.setColour (! showAll ? white : hobby::kIconGrey.withAlpha (0.7f));
+            g.drawText ("favorites", fr2, Justification::centredLeft, false);
+            hot.push_back ({ fr2.expanded (6.0f), [this] { showAll = false; scroll = 0; repaint(); } });
+        }
 
         auto lamp = [&] (float cx, const String& glyph, Colour c, std::function<void()> fn)
         {
@@ -147,11 +160,7 @@ public:
             g.drawText (glyph, r, Justification::centred, false);
             hot.push_back ({ r.expanded (4.0f), fn });
         };
-        lamp ((float) w - 34.0f, String::fromUTF8 ("\xe2\x9c\x95"), hobby::kRed, [this] { close(); });
-        lamp ((float) w - 64.0f, String::fromUTF8 ("\xe2\x80\xa6"), hobby::kOn, [this] { if (onFile) onFile(); close(); });
-        lamp ((float) w - 94.0f, String::fromUTF8 ("\xe2\x86\xbb"), hobby::kOn, [this] { if (onRescan) onRescan(); close(); });
-        // ≡ = όλη η λίστα (πάτημα ξανά = μόνο τα favorites με f). Αν δεν υπάρχουν favorites, φαίνονται όλα
-        lamp ((float) w - 124.0f, String::fromUTF8 ("\xe2\x89\xa1"), showAll ? hobby::kOn : hobby::kIconGrey, [this] { showAll = ! showAll; scroll = 0; repaint(); });
+        lamp ((float) w - 34.0f, String::fromUTF8 ("\xe2\x9c\x95"), hobby::kIconGrey, [this] { close(); });
 
         const int cols = w >= 640 ? 2 : 1;
         const float gapX = 20.0f, left = 26.0f, rowH = 76.0f, top = 58.0f;
@@ -161,7 +170,7 @@ public:
         const String q = search.getText().trim();
         bool anyFav = false;
         for (int i = 0; i < items.size() && ! anyFav; ++i) anyFav = i < keys.size() && favs.contains (keys[i]);
-        const bool onlyFavs = ! showAll && anyFav && q.isEmpty();   // η αναζήτηση ψάχνει πάντα σε όλα
+        const bool onlyFavs = ! showAll && q.isEmpty();   // η αναζήτηση ψάχνει πάντα σε όλα
         for (int i = 0; i < items.size(); ++i)
         {
             if (! q.isEmpty()) { if (items[i].containsIgnoreCase (q)) vis.push_back (i); }
@@ -213,6 +222,12 @@ public:
                 g.drawText (fmts[idx], rr.withTrimmedRight (12.0f), Justification::centredRight, false);
                 hot.push_back ({ rr, [this, idx] { if (onPick) onPick (idx); close(); } });
             }
+
+        if (total == 0)
+        {
+            g.setFont (hobby::makeFont (typeface, 15.0f)); g.setColour (hobby::kIconGrey.withAlpha (0.7f));
+            g.drawText (q.isEmpty() ? String ("No favorites yet: press f next to a plugin") : String ("No results"), Rectangle<float> (0.0f, top + 30.0f, (float) w, 24.0f), Justification::centred, false);
+        }
 
         if (totalRows > rowsVisible)   // λεπτή μπάρα κύλισης δεξιά
         {
