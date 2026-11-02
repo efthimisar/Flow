@@ -275,7 +275,18 @@ namespace flow
         void pressUndo (int b) { ++cmdUndo[(size_t) b]; }
         void pressStop (int b) { ++cmdStop[(size_t) b]; }
         void pressMute (int b) { ++cmdMute[(size_t) b]; }
-        void pressPlayStop()   { loopsStopped = loopsStopped.load() != 0 ? 0 : 1; ++changeCount; }   // Play/Stop όλων των λουπών (ξαναπαίζουν συγχρονισμένες)
+        // Play όλων των λουπών με ένα πάτημα, γρήγορο διπλό πάτημα = Stop όλων (ξαναπαίζουν συγχρονισμένες στη φάση τους)
+        void pressPlayStop()
+        {
+            const auto now = juce::Time::getMillisecondCounter();
+            const bool quick = now - lastPlayPressMs < (juce::uint32) tapMs.load();
+            lastPlayPressMs = now;
+            loopsStopped = quick ? 1 : 0;
+            if (! quick) ++playAllGen;   // το Play ξαναπαίζει και τις λούπες που είχαν σταματήσει μεμονωμένα
+            ++changeCount;
+        }
+        juce::uint32 lastPlayPressMs = 0;
+        std::atomic<int> playAllGen { 0 };
         std::atomic<int> loopsStopped { 0 };
         void pressOverdub (int b) { if (b >= 0) rerecReq[(size_t) b] = 1; }   // overdub (μέχρι 2 στρώματα) ή κλείσιμό του
         void pressReRec (int b) { if (b >= 0) rerecReq[(size_t) b] = 1; }   // ξαναγράφω: σβήνει τη λούπα του block και ξεκινά νέα εγγραφή
@@ -903,7 +914,8 @@ namespace flow
             int nLayers = 0;
             unsigned muteMask = 0;
             int seenMain = 0, seenUndo = 0, seenStop = 0, seenMute = 0, seenPanic = 0, taps = 0;
-            bool stopped = false, stopTapValid = false, mfxLogged = false;
+            bool stopped = false, stopTapValid = false, mfxLogged = false, userStopped = false;
+            int undoTaps = 0, seenPlayAll = 0; int64_t undoLastT = 0;
             int64_t lastStopTap = 0;
             unsigned loopSusMask = 0, loopBendMask = 0;
             int64_t lastTap = 0;
@@ -942,7 +954,7 @@ namespace flow
                 loopState = loopOff; recStart = 0.0; loopBeats = 0.0; loopAnchor = 0.0;
                 rec.clear();
                 for (auto& l : layerEv) l.clear();
-                nLayers = 0; muteMask = 0; taps = 0; lastTap = 0; stopped = false; stopTapValid = false; loopSusMask = 0; loopBendMask = 0;
+                nLayers = 0; muteMask = 0; taps = 0; lastTap = 0; stopped = false; userStopped = false; undoTaps = 0; stopTapValid = false; loopSusMask = 0; loopBendMask = 0;
                 out.clear();
             }
         };
@@ -1623,7 +1635,7 @@ namespace flow
                         case ctlHold:  if (ok) { const int h = holdMode[(size_t) sel].load(); holdMode[(size_t) sel] = h >= 3 ? 0 : (h + 1) % 3; ++changeCount; } break;
                         case ctlRec:   { const int t = recTarget (true); if (t >= 0) ++cmdMain[(size_t) t]; } break;
                         case ctlUndo:  { const int t = recTarget (true); if (t >= 0) pressUndo (t); } break;     // ✕ σβήσιμο λούπας, όπως το κουμπί της οθόνης
-                        case ctlStop:  { const int t = recTarget (true); if (t >= 0) pressOverdub (t); } break;    // overdub, όπως το κουμπί της οθόνης
+                        case ctlStop:  { const int t = recTarget (true); if (t >= 0) pressStop (t); } break;    // στοπ / play της λούπας του block, όπως το κουμπί της οθόνης
                         case ctlMute:  ++pedalMute; break;
                         case ctlSpecial: break;   // αντικαταστάθηκε από το shift (sustain CC64)
                         case ctlTape:  pressPlayStop(); break;    // Play/Stop όλων των λουπών (το Rec Audio μένει στο πλήκτρο A#0)
@@ -2236,7 +2248,15 @@ namespace flow
                     else B.stopAt = prev + beatsPerBar;
                     break;
                 }
-                case loopPlay: break;   // η λούπα παίζει: overdub με το ↻ (4ο πετάλι)
+                case loopPlay:
+                    if (B.nLayers < maxOverdubLayers)   // overdub: μέχρι 2 στρώματα. Κλείνει όταν συμπληρωθεί ένας κύκλος ή με νέο πάτημα
+                    {
+                        B.recStart = beat;
+                        B.rec.clear();
+                        B.recOpen.reset();
+                        B.loopState = loopOver;
+                    }
+                    break;
                 case loopOver: finishOverdub (B, beat); break;
                 default: break;
             }
@@ -2641,17 +2661,7 @@ namespace flow
                 finishRecording (B, t);
             }
 
-            if (rerecReq[(size_t) b].exchange (0) != 0)   // κουμπί / 4ο πετάλι: overdub
-            {
-                if (B.loopState == loopPlay && B.nLayers > 0 && B.nLayers < maxOverdubLayers)
-                {
-                    B.recStart = beat0;
-                    B.rec.clear();
-                    B.recOpen.reset();
-                    B.loopState = loopOver;
-                }
-                else if (B.loopState == loopOver) finishOverdub (B, beat0);
-            }
+            rerecReq[(size_t) b] = 0;
 
             for (int cm = cmdMain[(size_t) b].load(); B.seenMain != cm; )
             {
@@ -2660,11 +2670,38 @@ namespace flow
                 loopMain (B, beat0);
             }
 
-            for (int cu = cmdUndo[(size_t) b].load(); B.seenUndo != cu; )
-            {
-                ++B.seenUndo;
-                loopUndo (B);    // σβήσιμο της λούπας του block
-                B.hist.clear(); B.autoReady = false; B.autoPaused = true;
+            {   // ✕: ένα πάτημα = σβήσιμο της λούπας, γρήγορο διπλό πάτημα = σβήσιμο μόνο του overdub (του τελευταίου στρώματος)
+                const int64_t uwin = (int64_t) (sr * 0.001 * (double) tapMs.load());
+                for (int cu = cmdUndo[(size_t) b].load(); B.seenUndo != cu; )
+                {
+                    ++B.seenUndo;
+                    if (gs - B.undoLastT > uwin) B.undoTaps = 0;
+                    ++B.undoTaps;
+                    B.undoLastT = gs;
+                }
+                if (B.undoTaps > 0 && gs - B.undoLastT > uwin)
+                {
+                    if (B.undoTaps >= 2 && B.loopState == loopPlay && B.nLayers > 1)
+                    {
+                        cutLoopNotes (B);
+                        --B.nLayers;
+                        B.layerEv[(size_t) B.nLayers].clear();
+                        B.layerBeats[(size_t) B.nLayers] = 0.0;
+                        B.muteMask &= ~(1u << B.nLayers);
+                        B.loopBeats = 0.0;
+                        for (int l = 0; l < B.nLayers; ++l) B.loopBeats = std::max (B.loopBeats, B.layerBeats[(size_t) l]);
+                    }
+                    else if (B.loopState == loopOver)   // σβήσιμο όσο γράφεται overdub: το αναιρεί, η λούπα συνεχίζει
+                    {
+                        B.rec.clear(); B.recOpen.reset(); B.loopState = loopPlay;
+                    }
+                    else
+                    {
+                        loopUndo (B);    // σβήσιμο της λούπας του block
+                        B.hist.clear(); B.autoReady = false; B.autoPaused = true;
+                    }
+                    B.undoTaps = 0;
+                }
             }
 
             for (int cm = cmdMute[(size_t) b].load(); B.seenMute != cm; )
@@ -2676,10 +2713,11 @@ namespace flow
                     cutLoopNotes (B);
                 }
             }
-            B.seenStop = cmdStop[(size_t) b].load();
-            {   // Play/Stop όλων των λουπών: σταματούν με κομμένες νότες και ξαναμπαίνουν στη φάση τους
-                const bool gs = loopsStopped.load() != 0;
-                if (gs != B.stopped) { B.stopped = gs; if (gs) cutLoopNotes (B); }
+            if (B.seenPlayAll != playAllGen.load()) { B.seenPlayAll = playAllGen.load(); B.userStopped = false; }
+            for (int cs = cmdStop[(size_t) b].load(); B.seenStop != cs; ) { ++B.seenStop; B.userStopped = ! B.userStopped; }   // στοπ / play της λούπας του block
+            {   // σταματούν με κομμένες νότες και ξαναμπαίνουν στη φάση τους (κουμπί του block ή Play/Stop όλων)
+                const bool st = B.userStopped || loopsStopped.load() != 0;
+                if (st != B.stopped) { B.stopped = st; if (st) cutLoopNotes (B); }
             }
             juce::ignoreUnused (tapWindow);
 
