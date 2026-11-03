@@ -277,6 +277,14 @@ public:
     int getSelK() const { return selK; }
     String getSearchText() const { return search.getText().trim(); }
 
+    void encoderStep (int delta)   // γραμμική μετακίνηση κατά delta plugins (σειρά ανάγνωσης)
+    {
+        std::vector<int> vis; int cols, rows; buildVis (vis, cols, rows);
+        const int total = (int) vis.size(); if (total == 0) return;
+        selK = jlimit (0, total - 1, selK + delta);
+        keepSelVisible (cols, rows, total);
+    }
+
     void encoderRows (int delta)
     {
         std::vector<int> vis; int cols, rows; buildVis (vis, cols, rows);

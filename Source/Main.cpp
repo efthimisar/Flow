@@ -1075,7 +1075,7 @@ private:
         const bool listOpen = list.isVisible();
         if (ctl == 100)   // περιστροφή: + = δεξιά
         {
-            if (listOpen) list.encoderRows (v > 0 ? 1 : -1);
+            if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
             return;
         }
         if (v == 0) return;   // μόνο πάτημα
@@ -1086,8 +1086,8 @@ private:
                 case 1: list.encoderPush(); return;                 // πάτημα encoder
                 case 2: list.encoderShowAll (true); return;         // πάνω = instruments
                 case 3: list.encoderShowAll (false); return;        // κάτω = favorites
-                case 4: list.encoderCols (-1); return;              // αριστερά
-                case 5: list.encoderCols (1); return;               // δεξιά
+                case 4: list.encoderStep (-5); return;              // αριστερά = 5 πίσω (γρήγορη μετακίνηση)
+                case 5: list.encoderStep (5); return;               // δεξιά = 5 μπροστά
                 default: break;
             }
         }
@@ -1196,35 +1196,30 @@ private:
                 else { gl.setColour (thumbBg); gl.fillRect (full); }   // δεν υπάρχει ακόμη thumbnail: απλό σκούρο πλαίσιο
             }
 
-            // δεξιά: κεφαλίδα και πλακίδια στο ίδιο πλέγμα (στήλες) με την οθόνη του Flow· 4 γραμμές ορατές
+            // δεξιά: λωρίδα που κυλά — το επιλεγμένο plugin μένει στη μέση (μεγάλο), γύρω του τα γειτονικά αχνότερα (2 πάνω, 2 κάτω)
             {
-                gRt.setFont (hobby::makeFont (typeface, 16.0f));
-                gRt.setColour (list.getShowAll() ? white : dim); gRt.drawText ("instruments", Rectangle<int> (16, 12, 110, 24), Justification::centredLeft);
-                gRt.setColour (grey.withAlpha (0.5f)); gRt.drawText (String::fromUTF8 ("\xc2\xb7"), Rectangle<int> (126, 12, 14, 24), Justification::centred);
-                gRt.setColour (! list.getShowAll() ? white : dim); gRt.drawText ("favorites", Rectangle<int> (140, 12, 110, 24), Justification::centredLeft);
-                const int rowsShown = 4;
-                const int selRow = selK / cols;
-                if (selRow < s88Scroll) s88Scroll = selRow;
-                else if (selRow >= s88Scroll + rowsShown) s88Scroll = selRow - rowsShown + 1;
-                const int totalRows = (total + cols - 1) / cols;
-                s88Scroll = jlimit (0, jmax (0, totalRows - rowsShown), s88Scroll);
-                const float gapX = 8.0f, tw = ((float) KeyScreens::width - 24.0f - gapX * (float) (cols - 1)) / (float) cols, th = 50.0f;
-                for (int r = 0; r < rowsShown; ++r)
-                    for (int c = 0; c < cols; ++c)
-                    {
-                        const int k = (r + s88Scroll) * cols + c;
-                        if (k >= total) continue;
-                        const int idx = vis[(size_t) k];
-                        const Rectangle<float> rr (12.0f + (float) c * (tw + gapX), 44.0f + (float) r * 55.0f, tw, th);
-                        gRt.setColour (card); gRt.fillRoundedRectangle (rr, 6.0f);
-                        if (k == selK) { gRt.setColour (white); gRt.drawRoundedRectangle (rr.reduced (1.0f), 6.0f, 2.0f); }
-                        const Rectangle<float> ir (rr.getX() + 6.0f, rr.getY() + 7.0f, 54.0f, 36.0f);
-                        Image im = list.thumbFn ? list.thumbFn (items[idx]) : Image();
-                        if (im.isValid()) { gRt.setColour (Colours::white); gRt.setImageResamplingQuality (Graphics::highResamplingQuality); gRt.drawImage (im, ir, RectanglePlacement::centred); }
-                        else { gRt.setColour (thumbBg); gRt.fillRoundedRectangle (ir, 3.0f); }
-                        gRt.setColour (white); gRt.setFont (hobby::makeFont (typeface, cols > 1 ? 14.0f : 18.0f));
-                        gRt.drawText (items[idx], rr.withTrimmedLeft (68.0f).withTrimmedRight (6.0f).toNearestInt(), Justification::centredLeft, true);
-                    }
+                const int hts[5] = { 30, 40, 84, 40, 30 }, ys[5] = { 8, 44, 92, 184, 228 };
+                for (int slot = 0; slot < 5; ++slot)
+                {
+                    const int off = slot - 2, k = selK + off;
+                    if (k < 0 || k >= total) continue;
+                    const int idx = vis[(size_t) k];
+                    const bool sel = off == 0;
+                    const float h = (float) hts[slot], y = (float) ys[slot];
+                    const Rectangle<float> rr (sel ? 12.0f : 24.0f, y, sel ? 456.0f : 432.0f, h);
+                    gRt.setColour (card); gRt.fillRoundedRectangle (rr, sel ? 8.0f : 6.0f);
+                    if (sel) { gRt.setColour (white); gRt.drawRoundedRectangle (rr.reduced (1.0f), 8.0f, 2.0f); }
+                    const float ih = h - (sel ? 10.0f : 8.0f), iw = ih * 1.5f;
+                    const Rectangle<float> ir (rr.getX() + (sel ? 10.0f : 10.0f), rr.getY() + (h - ih) * 0.5f, iw, ih);
+                    Image im = list.thumbFn ? list.thumbFn (items[idx]) : Image();
+                    if (im.isValid()) { gRt.setColour (Colours::white.withAlpha (sel ? 1.0f : 0.55f)); gRt.setImageResamplingQuality (Graphics::highResamplingQuality); gRt.drawImage (im, ir, RectanglePlacement::centred); }
+                    else { gRt.setColour (thumbBg); gRt.fillRoundedRectangle (ir, 3.0f); }
+                    gRt.setColour (sel ? white : dim);
+                    gRt.setFont (hobby::makeFont (typeface, sel ? 26.0f : 16.0f));
+                    gRt.drawText (items[idx], Rectangle<int> ((int) (ir.getRight() + 16.0f), (int) rr.getY(), (int) (rr.getRight() - ir.getRight() - 24.0f), (int) h), Justification::centredLeft, true);
+                }
+                gRt.setColour (dim); gRt.setFont (hobby::makeFont (typeface, 11.0f));   // μικρή ένδειξη όψης (πάνω/κάτω κλίση του encoder)
+                gRt.drawText (list.getShowAll() ? "instruments" : "favorites", Rectangle<int> (KeyScreens::width - 130, 262, 120, 10), Justification::centredRight);
             }
         }
         std::vector<uint8_t> buf;
