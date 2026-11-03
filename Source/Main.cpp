@@ -1146,8 +1146,200 @@ private:
         }
     }
 
-    // ---- Περιεχόμενο των οθονών του S88: λίστα plugins (αριστερά thumbnail + όνομα, δεξιά πλακίδια με το ίδιο πλέγμα και δείκτη επιλογής όπως στην οθόνη του Flow)
+    // ---- Οθόνες λούπας του S88 (όταν η λίστα plugins είναι κλειστή): αριστερά ο κύκλος του επιλεγμένου block, δεξιά οι λωρίδες των blocks. Ίδια λογική και χρώματα με τις αντίστοιχες οθόνες του Flow (Views.h)
+    void drawS88Circle (Graphics& g)
+    {
+        const float W = (float) KeyScreens::width, H = (float) KeyScreens::height;
+        const int sel = selected;
+        const bool valid = isActive (sel);
+        const Colour trackC (0xff3a3430), dimC (0xff6a6c73), txtC (0xfff3f4f6), notchC (0xff262220);
+        const float cx = W * 0.5f, cy = H * 0.5f + 4.0f, r = 78.0f, lw = 15.0f;
+        const int axisBars = jmax (1, engine.axisBarsOut.load());
+        const double axisBeats = (double) axisBars * flow::beatsPerBar;
+        const double now = engine.beatPosOut.load();
+        const int st = valid ? engine.loopStateOut[(size_t) sel].load() : (int) flow::loopOff;
+        const double L = valid ? jmax (0.0, engine.loopBeatsOut[(size_t) sel].load()) : 0.0;
+        const int layers = valid ? engine.loopLayersOut[(size_t) sel].load() : 0;
+        const bool playing = st == flow::loopPlay || st == flow::loopOver;
+        const bool recLoop = st == flow::loopRec, over = st == flow::loopOver;
+        const bool muted = valid && (engine.blockOff[(size_t) sel].load() != 0 || engine.loopStoppedOut[(size_t) sel].load() != 0);
+        const Colour base = ! valid ? trackC : muted ? Colour (0xff4a4a52) : recLoop ? hobby::kRed : over ? Colour (0xffe8883a) : blockLight (sel);
+        const double bt = std::floor (jmax (0.0, now) + 1.0e-9), frac = jmax (0.0, now - bt);
+        const bool barStart = std::fmod (bt, flow::beatsPerBar) < 1.0e-6;
+        const float decay = jlimit (0.0f, 1.0f, 1.0f - (float) frac * 2.8f);
+        const float pulse = (valid && st == flow::loopOff) ? decay * decay * (barStart ? 0.9f : 0.35f) : 0.0f;   // αναβοσβήνει με το tempo πριν την εγγραφή της λούπας
+
+        Path track; track.addCentredArc (cx, cy, r, r, 0.0f, 0.0f, MathConstants<float>::twoPi, true);
+        g.setColour (trackC.interpolatedWith (Colour (0xfff0ebe2), pulse * 0.45f));
+        g.strokePath (track, PathStrokeType (lw));
+        g.setColour (notchC);
+        g.drawLine (cx, cy - r - lw * 0.5f - 1.0f, cx, cy - r + lw * 0.5f + 1.0f, 2.0f);   // μία εγκοπή στην αρχή πάνω
+
+        double span = 0.0;
+        if (playing) span = jmin (axisBeats, jmax (0.25, L));
+        else if (recLoop) span = jmin (axisBeats, jmax (0.0, now - engine.recStartBeatOut[(size_t) sel].load()));
+        if (span > 0.0)
+        {
+            const float f = (float) (span / axisBeats);
+            Path arc; arc.addCentredArc (cx, cy, r, r, 0.0f, 0.0f, MathConstants<float>::twoPi * jmin (0.9999f, f), true);
+            g.setColour (base.interpolatedWith (Colours::white, pulse));
+            g.strokePath (arc, PathStrokeType (lw));
+            for (double k = span; playing && k < axisBeats - 1.0e-6; k += span)   // επανάληψη μέσα στον άξονα: αχνά τμήματα
+            {
+                const float a0 = MathConstants<float>::twoPi * (float) (k / axisBeats);
+                const float a1 = MathConstants<float>::twoPi * (float) (jmin (axisBeats, k + span) / axisBeats);
+                Path rp; rp.addCentredArc (cx, cy, r, r, 0.0f, a0, jmin (a1, a0 + MathConstants<float>::twoPi * 0.9999f), true);
+                g.setColour (base.withAlpha (0.28f));
+                g.strokePath (rp, PathStrokeType (lw));
+            }
+        }
+        if (valid && (playing || recLoop))   // playhead
+        {
+            const double headBeats = (playing && L > 0.0) ? jmin (axisBeats, jmax (0.25, L)) : axisBeats;
+            const float a = MathConstants<float>::twoPi * (float) (std::fmod (jmax (0.0, now - (playing ? engine.loopAnchorOut[(size_t) sel].load() : engine.recStartBeatOut[(size_t) sel].load())), headBeats) / axisBeats);
+            const float dx = std::sin (a), dy = -std::cos (a);
+            g.setColour (Colours::white);
+            g.drawLine (cx + dx * (r - lw * 0.5f - 5.0f), cy + dy * (r - lw * 0.5f - 5.0f), cx + dx * (r + lw * 0.5f + 5.0f), cy + dy * (r + lw * 0.5f + 5.0f), 3.0f);
+        }
+        // κέντρο: μήκος και στρώματα, ή Rec / ready
+        if (playing && L > 0.0)
+        {
+            const int bars = jmax (1, (int) std::lround (L / flow::beatsPerBar));
+            g.setColour (txtC); g.setFont (hobby::makeFont (typeface, 28.0f).boldened());
+            g.drawText (String (bars) + (bars == 1 ? " bar" : " bars"), Rectangle<float> (cx - r, cy - 30.0f, 2.0f * r, 34.0f), Justification::centred, false);
+            g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 15.0f));
+            g.drawText (String (layers) + (layers == 1 ? " layer" : " layers"), Rectangle<float> (cx - r, cy + 8.0f, 2.0f * r, 22.0f), Justification::centred, false);
+        }
+        else
+        {
+            g.setFont (hobby::makeFont (typeface, 24.0f).boldened());
+            g.setColour (recLoop ? hobby::kRed.withAlpha (0.25f + 0.75f * decay * decay * (barStart ? 1.0f : 0.8f)) : dimC);   // το «Rec» αναβοσβήνει με το tempo όσο γράφεται η λούπα
+            g.drawText (! valid ? String ("-") : recLoop ? String (over ? "Overdub" : "Rec") : String ("ready"), Rectangle<float> (cx - r, cy - 18.0f, 2.0f * r, 36.0f), Justification::centred, false);
+        }
+        g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 14.0f).boldened());
+        if (valid) g.drawText ("Block " + String (sel + 1), Rectangle<float> (0.0f, 12.0f, W, 20.0f), Justification::centred, false);
+        g.setFont (hobby::makeFont (typeface, 13.0f));
+        g.drawText ("axis " + String (axisBars) + " bars", Rectangle<float> (0.0f, H - 36.0f, W, 16.0f), Justification::centred, false);
+        if (recLoop || over)
+        {
+            g.setColour (over ? hobby::kPeach : hobby::kRed);
+            g.drawText (over ? "Overdub (Rec MIDI loop)" : "Rec MIDI loop", Rectangle<float> (0.0f, H - 20.0f, W, 16.0f), Justification::centred, false);
+        }
+    }
+
+    void drawS88Lanes (Graphics& g)
+    {
+        const float W = (float) KeyScreens::width, H = (float) KeyScreens::height;
+        const auto list = activeBlocks (engine);
+        const int count = list.size();
+        if (count == 0)
+        {
+            g.setColour (Colour (0xff6a6c73)); g.setFont (hobby::makeFont (typeface, 20.0f));
+            g.drawText ("No blocks", Rectangle<int> (0, 0, KeyScreens::width, KeyScreens::height), Justification::centred);
+            return;
+        }
+        const int axisBars = jmax (1, engine.axisBarsOut.load());
+        const double axisBeats = (double) axisBars * flow::beatsPerBar;
+        const double now = engine.beatPosOut.load();
+        const double cycA = engine.cycleAnchorOut.load();
+        const float nameX = 10.0f, laneX = 150.0f, laneW = W - 12.0f - laneX;
+        const int top = 16;
+        const int step = jmin (30, (KeyScreens::height - top - 8) / count);
+        const int laneH = jmax (6, step - 5);
+        const float corner = jmin (6.0f, (float) laneH * 0.3f);
+
+        double cycleBeats = 0.0;   // ο μεγαλύτερος κύκλος λούπας που παίζει
+        int recording = -1;
+        for (int b = 0; b < flow::numBlocks; ++b)
+        {
+            if (engine.active[(size_t) b].load() == 0) continue;
+            const int st = engine.loopStateOut[(size_t) b].load();
+            if (st == flow::loopPlay || st == flow::loopOver) cycleBeats = jmax (cycleBeats, engine.loopBeatsOut[(size_t) b].load());
+            if (recording < 0 && (st == flow::loopRec || st == flow::loopOver)) recording = b;
+        }
+        const int gridBottom = top + count * step + 2;
+        for (int i = 0; i < count; ++i)
+        {
+            g.setColour (Colour (0xff2d2926));
+            g.fillRoundedRectangle (laneX, (float) (top + i * step), laneW, (float) laneH, corner);
+        }
+        for (int i = 0; i <= axisBars; ++i)
+        {
+            const float x = laneX + laneW * (float) i / (float) axisBars;
+            g.setColour (hobby::kGridLine.brighter (i % 4 == 0 ? 0.15f : 0.0f));
+            g.fillRect (x - 0.5f, (float) (top - 6), 1.0f, (float) (gridBottom - top + 6));
+        }
+        for (int i = 0; i < count; ++i)
+        {
+            const int b = list[i].getIntValue();
+            const float y = (float) (top + i * step), lh = (float) laneH;
+            const int state = engine.loopStateOut[(size_t) b].load();
+            if (state == flow::loopPlay || state == flow::loopOver)
+            {
+                const double L = jmax (0.25, engine.loopBeatsOut[(size_t) b].load());
+                const int layers = engine.loopLayersOut[(size_t) b].load();
+                const unsigned allMask = layers <= 0 ? 0u : (layers >= 32 ? 0xffffffffu : ((1u << layers) - 1u));
+                const bool allMuted = (layers > 0 && ((unsigned) engine.loopMuteOut[(size_t) b].load() & allMask) == allMask) || engine.loopStoppedOut[(size_t) b].load() != 0;
+                const double drawEnd = jmin (axisBeats, jmax (L, cycleBeats));
+                double s0 = std::fmod (engine.loopAnchorOut[(size_t) b].load() - cycA, L);
+                if (s0 < 0.0) s0 += L;
+                for (double k0 = s0 - L; k0 < drawEnd - 1.0e-6; k0 += L)
+                {
+                    const double k = jmax (0.0, k0), len = jmin (k0 + L, drawEnd) - k;
+                    if (len <= 1.0e-6) continue;
+                    const Rectangle<float> seg (laneX + laneW * (float) (k / axisBeats) + 0.002f * laneW, y, laneW * (float) (len / axisBeats) - 0.004f * laneW, lh);
+                    const bool dimSeg = allMuted || engine.blockOff[(size_t) b].load() != 0;
+                    const Colour segCol = dimSeg ? Colour (0xff3a3d46) : blockLight (b);
+                    if (! dimSeg)
+                    {
+                        g.setColour (segCol.withAlpha (0.10f));
+                        g.fillRoundedRectangle (seg.expanded (3.0f), corner + 3.0f);
+                        g.setGradientFill (ColourGradient (segCol, seg.getX(), 0.0f, segCol.interpolatedWith (Colour (0xff262220), 0.3f), seg.getRight(), 0.0f, false));
+                    }
+                    else g.setColour (segCol);
+                    g.fillRoundedRectangle (seg, corner);
+                    if (state == flow::loopOver) { g.setColour (hobby::kPeach); g.drawRoundedRectangle (seg.expanded (1.0f), corner + 1.0f, 1.5f); }
+                }
+            }
+            else if (state == flow::loopRec)
+            {
+                const double start = engine.recStartBeatOut[(size_t) b].load();
+                const double elapsed = jlimit (0.0, axisBeats, now - start);
+                if (elapsed > 0.0)
+                {
+                    const double p0 = std::fmod (start, 2.0 * flow::beatsPerBar);
+                    auto piece = [&] (double from, double len)
+                    {
+                        const float x = laneX + laneW * (float) (from / axisBeats), ww = laneW * (float) (len / axisBeats);
+                        g.setColour (hobby::kRed.withAlpha (0.35f)); g.fillRoundedRectangle (x - 2.0f, y - 2.0f, ww + 4.0f, lh + 4.0f, corner + 1.0f);
+                        g.setColour (hobby::kCoral); g.fillRoundedRectangle (x, y, jmax (2.0f, ww), lh, corner);
+                    };
+                    const double firstLen = jmin (elapsed, axisBeats - p0);
+                    piece (p0, firstLen);
+                    if (elapsed > firstLen) piece (0.0, elapsed - firstLen);
+                }
+            }
+            // αριστερά της λωρίδας: αριθμός και όνομα του plugin
+            const bool hasLoop = state != flow::loopOff;
+            g.setFont (hobby::makeFont (typeface, jlimit (11.0f, 16.0f, (float) laneH * 0.62f)));
+            g.setColour (hasLoop ? blockLight (b) : blockLight (b).withAlpha (0.55f));
+            g.drawText (String (b + 1), Rectangle<float> (nameX, y, 18.0f, lh), Justification::centredLeft, false);
+            g.setColour (hasLoop ? Colour (0xfff3f4f6) : Colour (0xff8a8c93));
+            auto* pl = engine.getPlugin (b);
+            g.drawText (pl != nullptr ? pl->getName() : String(), Rectangle<float> (nameX + 20.0f, y, laneX - nameX - 26.0f, lh), Justification::centredLeft, true);
+        }
+        bool anyLoop = recording >= 0;
+        for (int i = 0; i < count && ! anyLoop; ++i)
+            if (engine.loopStateOut[(size_t) list[i].getIntValue()].load() != flow::loopOff) anyLoop = true;
+        const double headBeats = (recording < 0 && cycleBeats > 0.0) ? jmin (axisBeats, cycleBeats) : axisBeats;
+        const float hx = laneX + (anyLoop ? laneW * (float) (std::fmod (jmax (0.0, now - cycA), headBeats) / axisBeats) : 0.0f);
+        g.setColour (anyLoop ? Colours::white : Colours::white.withAlpha (0.25f));
+        g.fillRect (hx - 1.0f, (float) (top - 8), 2.0f, (float) (gridBottom - top + 8));
+    }
+
+    // ---- Περιεχόμενο των οθονών του S88: λίστα plugins ανοιχτή = αριστερά thumbnail + δεξιά λωρίδα που κυλά· κλειστή = οθόνες λούπας (πιο πάνω)
     String s88Sig;
+    uint32 s88LastMs = 0;
     int s88Scroll = 0;
 
     void updateS88Screens()
@@ -1157,25 +1349,33 @@ private:
         const bool open = list.isVisible();
         list.alwaysShowSel = true;
         std::vector<int> vis; int cols = 1, rows = 1;
-        String sig = "I";
         if (open)
         {
             list.buildVis (vis, cols, rows);
-            sig = "L" + String (list.getSelK()) + "/" + String ((int) vis.size()) + "/" + String ((int) list.getShowAll()) + "/" + list.getSearchText() + "/" + String (cols);
+            const String sig = "L" + String (list.getSelK()) + "/" + String ((int) vis.size()) + "/" + String ((int) list.getShowAll()) + "/" + list.getSearchText() + "/" + String (cols);
+            if (sig == s88Sig) return;
+            s88Sig = sig;
         }
-        if (sig == s88Sig) return;
-        s88Sig = sig;
+        else
+        {
+            const uint32 ms = Time::getMillisecondCounter();   // οθόνες λούπας: κινούνται (playhead, αναβοσβήματα), ξανασχεδιάζονται ~11 φορές το δευτερόλεπτο
+            if (s88Sig == "P" && ms - s88LastMs < 90) return;
+            s88LastMs = ms; s88Sig = "P";
+        }
 
         const Colour bg (0xff262220), card (0xff2d2926), thumbBg (0xff3a3430), white (0xfff3f4f6), grey (0xffb7bbc6), dim (0xff6a6c73);
         Image L (Image::RGB, KeyScreens::width, KeyScreens::height, true), R (Image::RGB, KeyScreens::width, KeyScreens::height, true);
         Graphics gl (L), gRt (R);
         gl.fillAll (bg); gRt.fillAll (bg);
 
-        if (! open || vis.empty())
+        if (! open)
         {
-            gl.setColour (dim); gl.setFont (hobby::makeFont (typeface, 56.0f));
-            gl.drawText ("flow", Rectangle<int> (0, 0, KeyScreens::width, KeyScreens::height), Justification::centred);
-            if (open) { gRt.setColour (dim); gRt.setFont (hobby::makeFont (typeface, 20.0f)); gRt.drawText ("No results", Rectangle<int> (0, 0, KeyScreens::width, KeyScreens::height), Justification::centred); }
+            drawS88Circle (gl);
+            drawS88Lanes (gRt);
+        }
+        else if (vis.empty())
+        {
+            gRt.setColour (dim); gRt.setFont (hobby::makeFont (typeface, 20.0f)); gRt.drawText ("No results", Rectangle<int> (0, 0, KeyScreens::width, KeyScreens::height), Justification::centred);
         }
         else
         {
