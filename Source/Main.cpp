@@ -1155,7 +1155,7 @@ private:
         const int sel = selected;
         const bool valid = isActive (sel);
         const Colour trackC (0xff3a3430), dimC (0xff6a6c73), txtC (0xfff3f4f6), notchC (0xff262220);
-        const float cx = W * 0.5f, cy = H * 0.5f + 4.0f, r = 78.0f, lw = 15.0f;
+        const float cx = W * 0.5f, cy = H * 0.5f, r = 106.0f, lw = 18.0f;
         const int axisBars = jmax (1, engine.axisBarsOut.load());
         const double axisBeats = (double) axisBars * flow::beatsPerBar;
         const double now = engine.beatPosOut.load();
@@ -1207,25 +1207,23 @@ private:
         if (playing && L > 0.0)
         {
             const int bars = jmax (1, (int) std::lround (L / flow::beatsPerBar));
-            g.setColour (txtC); g.setFont (hobby::makeFont (typeface, 28.0f).boldened());
-            g.drawText (String (bars) + (bars == 1 ? " bar" : " bars"), Rectangle<float> (cx - r, cy - 30.0f, 2.0f * r, 34.0f), Justification::centred, false);
-            g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 15.0f));
-            g.drawText (String (layers) + (layers == 1 ? " layer" : " layers"), Rectangle<float> (cx - r, cy + 8.0f, 2.0f * r, 22.0f), Justification::centred, false);
+            g.setColour (txtC); g.setFont (hobby::makeFont (typeface, 36.0f).boldened());
+            g.drawText (String (bars) + (bars == 1 ? " bar" : " bars"), Rectangle<float> (cx - r, cy - 38.0f, 2.0f * r, 42.0f), Justification::centred, false);
+            g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 18.0f));
+            g.drawText (String (layers) + (layers == 1 ? " layer" : " layers"), Rectangle<float> (cx - r, cy + 10.0f, 2.0f * r, 26.0f), Justification::centred, false);
         }
         else
         {
-            g.setFont (hobby::makeFont (typeface, 24.0f).boldened());
+            g.setFont (hobby::makeFont (typeface, 30.0f).boldened());
             g.setColour (recLoop ? hobby::kRed.withAlpha (0.25f + 0.75f * decay * decay * (barStart ? 1.0f : 0.8f)) : dimC);   // το «Rec» αναβοσβήνει με το tempo όσο γράφεται η λούπα
-            g.drawText (! valid ? String ("-") : recLoop ? String (over ? "Overdub" : "Rec") : String ("ready"), Rectangle<float> (cx - r, cy - 18.0f, 2.0f * r, 36.0f), Justification::centred, false);
+            g.drawText (! valid ? String ("-") : recLoop ? String (over ? "Overdub" : "Rec") : String ("ready"), Rectangle<float> (cx - r, cy - 22.0f, 2.0f * r, 44.0f), Justification::centred, false);
         }
-        g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 14.0f).boldened());
-        if (valid) g.drawText ("Block " + String (sel + 1), Rectangle<float> (0.0f, 12.0f, W, 20.0f), Justification::centred, false);
-        g.setFont (hobby::makeFont (typeface, 13.0f));
-        g.drawText ("axis " + String (axisBars) + " bars", Rectangle<float> (0.0f, H - 36.0f, W, 16.0f), Justification::centred, false);
+        g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 20.0f).boldened());
+        if (valid) g.drawText ("Block " + String (sel + 1), Rectangle<float> (14.0f, 10.0f, 150.0f, 26.0f), Justification::centredLeft, false);   // αριστερά πάνω
         if (recLoop || over)
         {
-            g.setColour (over ? hobby::kPeach : hobby::kRed);
-            g.drawText (over ? "Overdub (Rec MIDI loop)" : "Rec MIDI loop", Rectangle<float> (0.0f, H - 20.0f, W, 16.0f), Justification::centred, false);
+            g.setColour (over ? hobby::kPeach : hobby::kRed); g.setFont (hobby::makeFont (typeface, 14.0f));
+            g.drawText (over ? "Overdub (Rec MIDI loop)" : "Rec MIDI loop", Rectangle<float> (W - 214.0f, 12.0f, 200.0f, 22.0f), Justification::centredRight, false);   // δεξιά πάνω
         }
     }
 
