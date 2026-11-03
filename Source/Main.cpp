@@ -1155,7 +1155,7 @@ private:
         const int sel = selected;
         const bool valid = isActive (sel);
         const Colour trackC (0xff3a3430), dimC (0xff6a6c73), txtC (0xfff3f4f6), notchC (0xff262220);
-        const float cx = W * 0.5f, cy = H * 0.5f, r = 106.0f, lw = 18.0f;
+        const float cx = W * 0.68f, cy = H * 0.5f, r = 98.0f, lw = 17.0f;   // ο κύκλος δεξιά, αριστερά η στήλη Block / αριθμός / plugin
         const int axisBars = jmax (1, engine.axisBarsOut.load());
         const double axisBeats = (double) axisBars * flow::beatsPerBar;
         const double now = engine.beatPosOut.load();
@@ -1207,23 +1207,41 @@ private:
         if (playing && L > 0.0)
         {
             const int bars = jmax (1, (int) std::lround (L / flow::beatsPerBar));
-            g.setColour (txtC); g.setFont (hobby::makeFont (typeface, 36.0f).boldened());
-            g.drawText (String (bars) + (bars == 1 ? " bar" : " bars"), Rectangle<float> (cx - r, cy - 38.0f, 2.0f * r, 42.0f), Justification::centred, false);
-            g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 18.0f));
+            g.setColour (txtC); g.setFont (hobby::makeFont (typeface, 32.0f).boldened());
+            g.drawText (String (bars) + (bars == 1 ? " bar" : " bars"), Rectangle<float> (cx - r, cy - 34.0f, 2.0f * r, 38.0f), Justification::centred, false);
+            g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 16.0f));
             g.drawText (String (layers) + (layers == 1 ? " layer" : " layers"), Rectangle<float> (cx - r, cy + 10.0f, 2.0f * r, 26.0f), Justification::centred, false);
         }
         else
         {
-            g.setFont (hobby::makeFont (typeface, 30.0f).boldened());
+            g.setFont (hobby::makeFont (typeface, 26.0f).boldened());
             g.setColour (recLoop ? hobby::kRed.withAlpha (0.25f + 0.75f * decay * decay * (barStart ? 1.0f : 0.8f)) : dimC);   // το «Rec» αναβοσβήνει με το tempo όσο γράφεται η λούπα
             g.drawText (! valid ? String ("-") : recLoop ? String (over ? "Overdub" : "Rec") : String ("ready"), Rectangle<float> (cx - r, cy - 22.0f, 2.0f * r, 44.0f), Justification::centred, false);
         }
-        g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 20.0f).boldened());
-        if (valid) g.drawText ("Block " + String (sel + 1), Rectangle<float> (14.0f, 10.0f, 150.0f, 26.0f), Justification::centredLeft, false);   // αριστερά πάνω
+        // αριστερή στήλη: Block, μεγάλος αριθμός (χρώμα του block), όνομα plugin σε στρογγυλεμένο κουτί, και κάτω η ένδειξη Rec MIDI loop όσο γράφεις
+        g.setColour (dimC); g.setFont (hobby::makeFont (typeface, 36.0f).boldened());
+        g.drawText ("Block", Rectangle<float> (16.0f, 26.0f, 180.0f, 42.0f), Justification::centredLeft, false);
+        g.setColour (valid ? (muted ? Colour (0xff4a4a52) : blockLight (sel)) : dimC); g.setFont (hobby::makeFont (typeface, 92.0f).boldened());
+        g.drawText (valid ? String (sel + 1) : String ("-"), Rectangle<float> (16.0f, 64.0f, 180.0f, 96.0f), Justification::centredLeft, false);
+        if (valid)
+        {
+            auto* pl = engine.getPlugin (sel);
+            const String nm = pl != nullptr ? pl->getName() : String();
+            if (nm.isNotEmpty())
+            {
+                const Rectangle<float> box (14.0f, 172.0f, 176.0f, 38.0f);
+                g.setColour (Colour (0xff2d2926)); g.fillRoundedRectangle (box, 12.0f);
+                g.setColour (blockLight (sel).withAlpha (0.75f)); g.drawRoundedRectangle (box.reduced (0.75f), 12.0f, 1.5f);
+                float fs = 22.0f;
+                while (fs > 13.0f && textWidth (hobby::makeFont (typeface, fs), nm) > box.getWidth() - 20.0f) fs -= 1.0f;   // το μακρύ όνομα μικραίνει ώστε να χωρά στο κουτί
+                g.setColour (txtC); g.setFont (hobby::makeFont (typeface, fs));
+                g.drawText (nm, box.reduced (10.0f, 0.0f), Justification::centred, true);
+            }
+        }
         if (recLoop || over)
         {
-            g.setColour (over ? hobby::kPeach : hobby::kRed); g.setFont (hobby::makeFont (typeface, 14.0f));
-            g.drawText (over ? "Overdub (Rec MIDI loop)" : "Rec MIDI loop", Rectangle<float> (W - 214.0f, 12.0f, 200.0f, 22.0f), Justification::centredRight, false);   // δεξιά πάνω
+            g.setColour (over ? hobby::kPeach : hobby::kRed); g.setFont (hobby::makeFont (typeface, 15.0f));
+            g.drawText (over ? "Overdub (Rec MIDI loop)" : "Rec MIDI loop", Rectangle<float> (14.0f, 222.0f, 190.0f, 22.0f), Justification::centredLeft, false);
         }
     }
 
