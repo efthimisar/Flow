@@ -774,7 +774,7 @@ private:
         auto it = pluginWindows.find (p);
         if (it == pluginWindows.end() || it->second == nullptr || ! it->second->isShowing()) return;
         const auto f = thumbFile (p->getName());
-        if (f.existsAsFile() && ! isBlankImage (ImageFileFormat::loadFrom (f))) return;   // μία φορά ανά plugin
+        if (f.existsAsFile()) { const auto old = ImageFileFormat::loadFrom (f); if (! isBlankImage (old) && old.getWidth() >= 480) return; }   // μία φορά ανά plugin· τα παλιά μικρά (288 px) ξανασώζονται σε 480 px για τις οθόνες του S88
         auto* content = it->second->getContentComponent();
         if (content == nullptr || content->getWidth() < 40 || content->getHeight() < 40) return;
 
@@ -798,7 +798,7 @@ private:
             flow::flowLog ("thumb: blank snapshot of " + p->getName() + " (try " + String (attempt) + ")");
             return;
         }
-        const int tw = 288, th = 192;   // 3:2, όπως η θέση στη λίστα
+        const int tw = 480, th = 320;   // 3:2, όπως η θέση στη λίστα· 480 px ώστε να είναι καθαρό στις οθόνες του S88
         const float want = (float) tw / (float) th;
         int cw = full.getWidth(), chh = (int) std::lround ((float) cw / want);
         if (chh > full.getHeight()) { chh = full.getHeight(); cw = (int) std::lround ((float) chh * want); }
