@@ -1938,13 +1938,75 @@ private:
         return out;
     }
 
+    // Γεννήτρια: γεωμετρική σύνθεση σε στυλ Bauhaus με συνδυασμό χρωμάτων Wada (μόνο συνδυασμοί με 3-4 χρώματα): ορθογώνια κελιά σε πλέγμα 3x3 ή 4x4 (γειτονικά κελιά με διαφορετικό χρώμα), πάνω τους τεταρτοκύκλια, ημικύκλια και ορθογώνια, και λεπτός κόκκος
+    static Image orbGenerated (Random& rnd)
+    {
+        constexpr int N = 512;
+        int cand[348], nc = 0;
+        for (int i = 0; i < 348; ++i) if (wada::kCombos[i].n >= 3) cand[nc++] = i;
+        const auto& combo = wada::kCombos[cand[rnd.nextInt (nc)]];
+        const int np = combo.n;
+        Colour pal[4];
+        for (int i = 0; i < np; ++i) pal[i] = Colour ((uint32) (0xff000000u | wada::kColours[combo.idx[i]]));
+
+        Image out (Image::ARGB, N, N, true);
+        Graphics g (out);
+        const int grid = rnd.nextBool() ? 3 : 4;
+        const float cs = (float) N / (float) grid;
+        int cell[4][4] = {};
+        for (int r = 0; r < grid; ++r)
+            for (int c = 0; c < grid; ++c)
+            {
+                int k = rnd.nextInt (np), tries = 0;
+                while (tries++ < 20 && ((c > 0 && k == cell[r][c - 1]) || (r > 0 && k == cell[r - 1][c]))) k = rnd.nextInt (np);
+                cell[r][c] = k;
+                g.setColour (pal[k]);
+                g.fillRect (Rectangle<float> ((float) c * cs, (float) r * cs, cs + 1.0f, cs + 1.0f));
+            }
+        int last = -1;
+        const int nShapes = 8 + rnd.nextInt (5);
+        for (int i = 0; i < nShapes; ++i)
+        {
+            int k = rnd.nextInt (np);
+            if (k == last) k = (k + 1 + rnd.nextInt (np - 1)) % np;
+            last = k;
+            g.setColour (pal[k]);
+            const float gx = (float) rnd.nextInt (grid + 1) * cs, gy = (float) rnd.nextInt (grid + 1) * cs;
+            const float roll = rnd.nextFloat();
+            if (roll < 0.65f)
+            {
+                const float R = rnd.nextInt (4) == 0 ? 2.0f * cs : cs;
+                const float a0 = (float) rnd.nextInt (4) * MathConstants<float>::halfPi;
+                const float span = roll < 0.4f ? MathConstants<float>::halfPi : MathConstants<float>::pi;   // τεταρτοκύκλιο ή ημικύκλιο
+                Path p; p.addPieSegment (gx - R, gy - R, 2.0f * R, 2.0f * R, a0, a0 + span, 0.0f);
+                g.fillPath (p);
+            }
+            else g.fillRect (Rectangle<float> (gx, gy, cs * (float) (1 + rnd.nextInt (2)), cs * (float) (1 + rnd.nextInt (2))));
+        }
+        {   // λεπτός κόκκος
+            Image::BitmapData bd (out, Image::BitmapData::readWrite);
+            for (int y = 0; y < N; ++y)
+                for (int x = 0; x < N; ++x)
+                {
+                    const auto c = bd.getPixelColour (x, y);
+                    const int dn = rnd.nextInt (11) - 5;
+                    bd.setPixelColour (x, y, Colour ((uint8) jlimit (0, 255, (int) c.getRed() + dn), (uint8) jlimit (0, 255, (int) c.getGreen() + dn), (uint8) jlimit (0, 255, (int) c.getBlue() + dn), (uint8) 255));
+                }
+        }
+        return out;
+    }
+
     void autoOrbImage()
     {
         auto dir = orbImagesDir();
         dir.createDirectory();
         const auto files = dir.findChildFiles (File::findFiles, false, "*.jpg;*.jpeg;*.png");
-        if (files.isEmpty()) return;
         Random rnd;
+        if (files.isEmpty() || rnd.nextBool())   // κενός φάκελος: πάντα γεννήτρια· αλλιώς μισές φορές γεννήτρια, μισές εικόνα του φακέλου
+        {
+            setOrbImage (orbGenerated (rnd), false);
+            return;
+        }
         const auto src = ImageFileFormat::loadFrom (files[rnd.nextInt (files.size())]);
         if (src.isValid()) setOrbImage (orbVariation (src, rnd), false);
     }
@@ -4711,7 +4773,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.88.1"; }
+    const String getApplicationVersion() override { return "0.89.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
