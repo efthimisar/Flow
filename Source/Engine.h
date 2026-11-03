@@ -1097,7 +1097,7 @@ namespace flow
                     ty[c] = smartType[(size_t) c].load();
                     for (int k = 0; k < smartBands; ++k) lv[c][k] = smartBand[(size_t) c][(size_t) k].load();
                 }
-                smartContextCut (lv, ty, ac, numBlocks, b, 0.6f, ctxCut);
+                smartContextCut (lv, ty, ac, numBlocks, b, 0.5f, ctxCut);
             }
             const float kkAtt = 1.0f - std::exp (-(float) n / (0.15f * (float) sr));   // Context: γρήγορο attack, αργό release
             float g[6];
