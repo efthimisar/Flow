@@ -1242,7 +1242,7 @@ private:
         const double axisBeats = (double) axisBars * flow::beatsPerBar;
         const double now = engine.beatPosOut.load();
         const double cycA = engine.cycleAnchorOut.load();
-        const float nameX = 10.0f, laneX = 150.0f, laneW = W - 12.0f - laneX;
+        const float nameX = 10.0f, laneX = 178.0f, laneW = W - 12.0f - laneX;
         const int top = 16;
         const int step = jmin (30, (KeyScreens::height - top - 8) / count);
         const int laneH = jmax (6, step - 5);
@@ -1321,12 +1321,12 @@ private:
             }
             // αριστερά της λωρίδας: αριθμός και όνομα του plugin
             const bool hasLoop = state != flow::loopOff;
-            g.setFont (hobby::makeFont (typeface, jlimit (11.0f, 16.0f, (float) laneH * 0.62f)));
+            g.setFont (hobby::makeFont (typeface, jlimit (14.0f, 22.0f, (float) laneH * 0.82f)));
             g.setColour (hasLoop ? blockLight (b) : blockLight (b).withAlpha (0.55f));
-            g.drawText (String (b + 1), Rectangle<float> (nameX, y, 18.0f, lh), Justification::centredLeft, false);
+            g.drawText (String (b + 1), Rectangle<float> (nameX, y, 22.0f, lh), Justification::centredLeft, false);
             g.setColour (hasLoop ? Colour (0xfff3f4f6) : Colour (0xff8a8c93));
             auto* pl = engine.getPlugin (b);
-            g.drawText (pl != nullptr ? pl->getName() : String(), Rectangle<float> (nameX + 20.0f, y, laneX - nameX - 26.0f, lh), Justification::centredLeft, true);
+            g.drawText (pl != nullptr ? pl->getName() : String(), Rectangle<float> (nameX + 24.0f, y, laneX - nameX - 30.0f, lh), Justification::centredLeft, true);
         }
         bool anyLoop = recording >= 0;
         for (int i = 0; i < count && ! anyLoop; ++i)
