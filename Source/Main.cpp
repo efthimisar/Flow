@@ -1113,8 +1113,10 @@ private:
         for (int y = 0; y < KeyScreens::height; ++y)
             for (int x = 0; x < KeyScreens::width; ++x)
             {
-                const auto c = bd.getPixelColour (x, y);
-                const uint16_t v = (uint16_t) (((c.getRed() >> 3) << 11) | ((c.getGreen() >> 2) << 5) | (c.getBlue() >> 3));
+                uint8 r8, g8, b8;
+                if (bd.pixelFormat == Image::RGB) { const auto* px = reinterpret_cast<const PixelRGB*> (bd.getPixelPointer (x, y)); r8 = px->getRed(); g8 = px->getGreen(); b8 = px->getBlue(); }   // γρήγορη ανάγνωση: η getPixelColour ανά pixel έκανε τα καρέ αργά
+                else { const auto c = bd.getPixelColour (x, y); r8 = c.getRed(); g8 = c.getGreen(); b8 = c.getBlue(); }
+                const uint16_t v = (uint16_t) (((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3));
                 const size_t i = ((size_t) y * KeyScreens::width + (size_t) x) * 2;
                 out[i] = (uint8_t) (v >> 8); out[i + 1] = (uint8_t) (v & 0xff);
             }
@@ -1339,7 +1341,6 @@ private:
 
     // ---- Περιεχόμενο των οθονών του S88: λίστα plugins ανοιχτή = αριστερά thumbnail + δεξιά λωρίδα που κυλά· κλειστή = οθόνες λούπας (πιο πάνω)
     String s88Sig;
-    uint32 s88LastMs = 0;
     int s88Scroll = 0;
 
     void updateS88Screens()
@@ -1358,9 +1359,7 @@ private:
         }
         else
         {
-            const uint32 ms = Time::getMillisecondCounter();   // οθόνες λούπας: κινούνται (playhead, αναβοσβήματα), ξανασχεδιάζονται ~11 φορές το δευτερόλεπτο
-            if (s88Sig == "P" && ms - s88LastMs < 90) return;
-            s88LastMs = ms; s88Sig = "P";
+            s88Sig = "P";   // οθόνες λούπας: κινούνται (playhead, αναβοσβήματα), ξανασχεδιάζονται σε κάθε tick του timer (30 φορές το δευτερόλεπτο)
         }
 
         const Colour bg (0xff262220), card (0xff2d2926), thumbBg (0xff3a3430), white (0xfff3f4f6), grey (0xffb7bbc6), dim (0xff6a6c73);
