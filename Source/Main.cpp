@@ -4,6 +4,7 @@
 #include "Views.h"
 #include "KeyLights.h"
 #include "KeyScreens.h"
+#include "WadaPalettes.h"
 #include "WindowSnap.h"
 #include <algorithm>
 #include "AudioPanel.h"
@@ -1884,17 +1885,53 @@ private:
         constexpr int N = 512;
         Image out = orbFit (src, rnd.nextBool(), rnd.nextInt (4));
 
-        // χρώμα: μετατόπιση απόχρωσης, κορεσμός, φωτεινότητα
-        const float hueShift = rnd.nextFloat(), satMul = 0.7f + rnd.nextFloat() * 0.6f, briMul = 0.8f + rnd.nextFloat() * 0.35f;
+        // χρώμα: τυχαίος συνδυασμός από το «A Dictionary of Color Combinations» του Sanzo Wada (WadaPalettes.h). Gradient map: η φωτεινότητα της εικόνας (με αυτόματη επέκταση της κλίμακας) αντιστοιχίζεται στα χρώματα του συνδυασμού, από το πιο σκούρο στο πιο ανοιχτό, και το αποτέλεσμα αναμειγνύεται 80/20 με τα αρχικά χρώματα
         {
+            const auto& combo = wada::kCombos[rnd.nextInt (348)];
+            auto luma = [] (float r, float g, float b) { return 0.2126f * r + 0.7152f * g + 0.0722f * b; };
+            struct Stop { float l, r, g, b; };
+            std::vector<Stop> stops;
+            for (int i = 0; i < combo.n; ++i)
+            {
+                const uint32_t c = wada::kColours[combo.idx[i]];
+                const float r = (float) ((c >> 16) & 0xff) / 255.0f, g = (float) ((c >> 8) & 0xff) / 255.0f, b = (float) (c & 0xff) / 255.0f;
+                stops.push_back ({ luma (r, g, b), r, g, b });
+            }
+            std::sort (stops.begin(), stops.end(), [] (const Stop& x, const Stop& y) { return x.l < y.l; });
+
             Image::BitmapData bd (out, Image::BitmapData::readWrite);
+            int hist[256] = {}; int count = 0;
             for (int y = 0; y < N; ++y)
                 for (int x = 0; x < N; ++x)
                 {
                     const auto c = bd.getPixelColour (x, y);
-                    float h = 0, sa = 0, v = 0;
-                    c.getHSB (h, sa, v);
-                    bd.setPixelColour (x, y, Colour::fromHSV (std::fmod (h + hueShift, 1.0f), jlimit (0.0f, 1.0f, sa * satMul), jlimit (0.0f, 1.0f, v * briMul), c.getFloatAlpha()));
+                    if (c.getAlpha() < 128) continue;
+                    ++hist[jlimit (0, 255, (int) std::lround (luma (c.getFloatRed(), c.getFloatGreen(), c.getFloatBlue()) * 255.0f))]; ++count;
+                }
+            float lo = 0.0f, hi = 1.0f;   // 2% - 98% της φωτεινότητας → 0 - 1, ώστε η παλέτα να χρησιμοποιείται ολόκληρη
+            if (count > 0)
+            {
+                int acc = 0, il = 0, ih = 255;
+                for (int i = 0; i < 256; ++i) { acc += hist[i]; if (acc >= count * 0.02) { il = i; break; } }
+                acc = 0;
+                for (int i = 0; i < 256; ++i) { acc += hist[i]; if (acc >= count * 0.98) { ih = i; break; } }
+                lo = (float) il / 255.0f; hi = jmax (lo + 0.05f, (float) ih / 255.0f);
+            }
+            constexpr float mixMapped = 0.8f;
+            for (int y = 0; y < N; ++y)
+                for (int x = 0; x < N; ++x)
+                {
+                    const auto c = bd.getPixelColour (x, y);
+                    if (c.getAlpha() == 0) continue;
+                    const float t = jlimit (0.0f, 1.0f, (luma (c.getFloatRed(), c.getFloatGreen(), c.getFloatBlue()) - lo) / (hi - lo));
+                    const float pos = t * (float) (stops.size() - 1);   // οι στάσεις κατανέμονται ισομερώς κατά μήκος της κλίμακας
+                    const int k = jlimit (0, (int) stops.size() - 2, (int) pos);
+                    const float f = pos - (float) k;
+                    const float r = stops[(size_t) k].r + (stops[(size_t) k + 1].r - stops[(size_t) k].r) * f;
+                    const float g = stops[(size_t) k].g + (stops[(size_t) k + 1].g - stops[(size_t) k].g) * f;
+                    const float b = stops[(size_t) k].b + (stops[(size_t) k + 1].b - stops[(size_t) k].b) * f;
+                    bd.setPixelColour (x, y, Colour::fromFloatRGBA (c.getFloatRed() + (r - c.getFloatRed()) * mixMapped, c.getFloatGreen() + (g - c.getFloatGreen()) * mixMapped,
+                                                                     c.getFloatBlue() + (b - c.getFloatBlue()) * mixMapped, c.getFloatAlpha()));
                 }
         }
 
@@ -4674,7 +4711,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.87.0"; }
+    const String getApplicationVersion() override { return "0.88.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
