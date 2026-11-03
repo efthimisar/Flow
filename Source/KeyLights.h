@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 #include <memory>
+#include <functional>
 
 // Φώτα πλήκτρων του Native Instruments Komplete Kontrol (S-series MK2) μέσω USB HID (η υλοποίηση είναι στο KeyLights.cpp).
 // Πρωτόκολλο βάσει των έργων SynthesiaKontrol (sonic74 / ojacques, MIT) και KompleteKontrolLightGuideSongConfigs (MIT):
@@ -21,6 +22,9 @@ public:
     bool sendKeys (const uint8_t* keys, int count);
     int getKeyCount() const { return keyCount; }
     int getFirstNote() const { return offset; }
+    // Διαγνωστικό: καταγράφει (μόνο ανάγνωση) τα HID reports που στέλνει το πληκτρολόγιο (κουμπιά, 4D encoder, joystick). Καλείται στο κύριο νήμα.
+    void setInputLogger (std::function<void (const juce::String&)> f) { inputLogger = std::move (f); }
+    void logInput (const uint8_t* data, int len);
 
 private:
     bool fail (const juce::String& why);
@@ -31,4 +35,11 @@ private:
     int keyCount = 88, offset = 21;
     juce::uint32 lastInitMs = 0;   // πότε στάλθηκε τελευταία φορά το [0xa0, 0, 0] (light-guide mode)
     juce::String status;
+    std::function<void (const juce::String&)> inputLogger;
+    uint8_t lastReport[256][64] = {};
+    int lastLen[256] = {};
+    juce::uint32 lastLogMs = 0;
+    int logBudget = 0, totalLogged = 0;
+public:
+    void armInputLog() { logBudget = 0; totalLogged = 0; }
 };

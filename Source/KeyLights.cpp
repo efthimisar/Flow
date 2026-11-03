@@ -11,6 +11,7 @@ struct KeyLights::Impl
 #if JUCE_MAC
     IOHIDManagerRef manager = nullptr;
     IOHIDDeviceRef device = nullptr;
+    uint8_t inBuf[512] = {};
 #endif
 };
 
@@ -25,6 +26,12 @@ bool KeyLights::fail (const juce::String& why)
 }
 
 #if JUCE_MAC
+static void inputReportCb (void* ctx, IOReturn, void*, IOHIDReportType, uint32_t reportID, uint8_t* report, CFIndex len)
+{
+    juce::ignoreUnused (reportID);
+    if (auto* self = static_cast<KeyLights*> (ctx)) self->logInput (report, (int) len);
+}
+
 static int intProperty (IOHIDDeviceRef d, CFStringRef key)
 {
     int v = 0;
@@ -82,6 +89,8 @@ bool KeyLights::start()
         {
             CFRetain (d);
             impl->device = d;
+            IOHIDDeviceRegisterInputReportCallback (d, impl->inBuf, (CFIndex) sizeof (impl->inBuf), inputReportCb, this);
+            IOHIDDeviceScheduleWithRunLoop (d, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
             lastInitMs = juce::Time::getMillisecondCounter();
             keyCount = pid == 0x1630 ? 88 : pid == 0x1620 ? 61 : 49;
             offset = pid == 0x1630 ? 21 : 36;
@@ -108,6 +117,8 @@ void KeyLights::stop()
 #if JUCE_MAC
     if (impl->device != nullptr)
     {
+        IOHIDDeviceRegisterInputReportCallback (impl->device, impl->inBuf, (CFIndex) sizeof (impl->inBuf), nullptr, nullptr);
+        IOHIDDeviceUnscheduleFromRunLoop (impl->device, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
         std::vector<uint8_t> off ((size_t) keyCount + 1, 0);
         off[0] = 0x81;
         IOHIDDeviceSetReport (impl->device, kIOHIDReportTypeOutput, off[0], off.data(), (CFIndex) off.size());
@@ -152,4 +163,26 @@ bool KeyLights::sendKeys (const uint8_t* keys, int count)
     juce::ignoreUnused (keys, count);
     return false;
 #endif
+}
+
+// Καταγράφει μόνο ΑΛΛΑΓΜΕΝΑ bytes ενός report (id = πρώτο byte), με όριο ρυθμού και συνολικό όριο, ώστε να μη γεμίσει το log.
+void KeyLights::logInput (const uint8_t* data, int len)
+{
+    if (! inputLogger || data == nullptr || len <= 0) return;
+    const int id = data[0];
+    const int n = juce::jmin (len, 64);
+    const auto now = juce::Time::getMillisecondCounter();
+    if (now - lastLogMs >= 1000) { lastLogMs = now; logBudget = 25; }   // έως 25 γραμμές ανά δευτερόλεπτο
+    if (logBudget <= 0 || totalLogged >= 1500) return;
+
+    juce::String diff;
+    const bool first = lastLen[id] == 0;
+    for (int i = 1; i < n; ++i)
+        if (first || lastReport[id][i] != data[i])
+            diff << " [" << i << "]=" << juce::String::toHexString (data[i]);
+    for (int i = 0; i < n; ++i) lastReport[id][i] = data[i];
+    lastLen[id] = n;
+    if (diff.isEmpty()) return;
+    --logBudget; ++totalLogged;
+    inputLogger ("s88 hid in: id=0x" + juce::String::toHexString (id) + " len=" + juce::String (len) + diff);
 }

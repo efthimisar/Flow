@@ -244,6 +244,9 @@ namespace flow
         std::atomic<int> statCalls { 0 }, statOver { 0 }, statOverFull { 0 };   // μετρήσεις callback ήχου (διαβάζονται κάθε λίγα δευτερόλεπτα από το Main)
         std::atomic<float> statMaxCb { 0.0f }, statMaxLock { 0.0f }, statBudget { 0.0f };
         std::atomic<int> loopEvtCount { 0 };    // νότες που παίζουν οι λούπες (για τα φώτα του hardware)
+        // Διαγνωστικό: τα μηνύματα MIDI που δεν είναι νότες/clock (CC, pitch bend, program, SysEx κ.λπ.) περνούν σε μικρό ring για καταγραφή στο log (όχι στο νήμα ήχου)
+        std::atomic<uint32_t> midiDiag[256] {};
+        std::atomic<int> midiDiagW { 0 };
         std::atomic<int> midiCount { 0 };       // μετρά τα μηνύματα MIDI που έρχονται (για την ένδειξη στην κεφαλίδα)
         std::atomic<int> tapActiveOut { 0 };
         std::atomic<uint32_t> ctlHeld { 0 };   // πατημένα πλήκτρα ελέγχου (bit 0 = A0)
@@ -1401,6 +1404,13 @@ namespace flow
                 const auto msg = metadata.getMessage();
                 const int pos = juce::jlimit (0, numSamples - 1, metadata.samplePosition);
                 if (! msg.isMidiClock() && ! msg.isActiveSense()) ++midiCount;
+                if (! msg.isMidiClock() && ! msg.isActiveSense() && ! msg.isNoteOnOrOff() && msg.getRawDataSize() >= 1)
+                {
+                    const auto* d = msg.getRawData();
+                    const int w = midiDiagW.load (std::memory_order_relaxed);
+                    midiDiag[(size_t) (w & 255)].store (((uint32_t) d[0] << 16) | ((msg.getRawDataSize() > 1 ? (uint32_t) d[1] : 0u) << 8) | (msg.getRawDataSize() > 2 ? (uint32_t) d[2] : 0u) | ((uint32_t) juce::jmin (msg.getRawDataSize(), 15) << 24), std::memory_order_relaxed);
+                    midiDiagW.store (w + 1, std::memory_order_release);
+                }
 
                 if (msg.isController() && msg.getControllerNumber() == 64)   // sustain = shift για το ειδικό block (momentary)
                 {

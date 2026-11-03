@@ -1065,11 +1065,35 @@ private:
     int lightsTick = 0;
     std::array<uint8_t, 88> lastLights {};
 
+    int midiDiagR = 0, midiDiagTotal = 0;
+    uint32_t midiDiagLast[256] = {};
+    uint32_t midiDiagLastMs[256] = {};
+
+    // Διαγνωστικό: γράφει στο log τα MIDI μηνύματα που δεν είναι νότες (CC, pitch bend, program change, SysEx…), ένα ανά (status, data1) το πολύ κάθε 150 ms
+    void drainMidiDiag()
+    {
+        const int w = engine.midiDiagW.load (std::memory_order_acquire);
+        if (w - midiDiagR > 256) midiDiagR = w - 256;
+        while (midiDiagR < w)
+        {
+            const uint32_t v = engine.midiDiag[(size_t) (midiDiagR & 255)].load (std::memory_order_relaxed);
+            ++midiDiagR;
+            const uint32_t status = (v >> 16) & 0xff, d1 = (v >> 8) & 0xff, d2 = v & 0xff, size = v >> 24;
+            const size_t key = (size_t) (((status & 0x0f) * 31 + d1 * 7 + (status >> 4)) & 255);
+            const auto now = Time::getMillisecondCounter();
+            if (midiDiagTotal >= 1500) continue;
+            if (midiDiagLast[key] == (v & 0xffffff) || (now - midiDiagLastMs[key] < 150)) continue;
+            midiDiagLast[key] = v & 0xffffff; midiDiagLastMs[key] = now; ++midiDiagTotal;
+            flow::flowLog ("midi in: status=0x" + String::toHexString ((int) status) + " d1=" + String ((int) d1) + " d2=" + String ((int) d2) + " size=" + String ((int) size));
+        }
+    }
+
     void setKeyLights (bool on)
     {
         lightsWanted = on;
         if (on)
         {
+            keyLights.setInputLogger ([] (const String& s) { flow::flowLog (s); });
             bool ok;
             { const ScopedLock sl (lightsLock); ok = keyLights.start(); }
             flow::flowLog ("key lights: " + keyLights.getStatus());
@@ -4101,6 +4125,8 @@ private:
         if (cc != lastChange) { lastChange = cc; dirty = true; }
         if (dirty && Time::getMillisecondCounter() - lastSaveMs > 5000)   // κάθε αποθήκευση γράφει ~15 MB (~160 ms στο UI): όχι πιο συχνά από ανά 5 s
             saveSettings (false);
+
+        drainMidiDiag();
 
         if (engine.smartOn.load() != 0 && ++smartDiagTicks >= 300)   // κάθε ~10 s: στάθμες ανά block και ζώνη (dBFS) και διόρθωση, για ρύθμιση του Smart με δεδομένα
         {
