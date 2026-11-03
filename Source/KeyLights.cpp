@@ -82,6 +82,7 @@ bool KeyLights::start()
         {
             CFRetain (d);
             impl->device = d;
+            lastInitMs = juce::Time::getMillisecondCounter();
             keyCount = pid == 0x1630 ? 88 : pid == 0x1620 ? 61 : 49;
             offset = pid == 0x1630 ? 21 : 36;
         }
@@ -128,6 +129,15 @@ bool KeyLights::sendKeys (const uint8_t* keys, int count)
 {
 #if JUCE_MAC
     if (impl->device == nullptr) return false;
+    // Το Komplete Kontrol / Maschine (NIHostIntegrationAgent) μπορεί να αλλάξει τη λειτουργία του πληκτρολογίου. Ξαναστέλνουμε το
+    // [0xa0, 0, 0] (light-guide mode) κάθε 1 s, ώστε να ξαναπαίρνουν ισχύ τα φώτα του Flow. ΠΕΙΡΑΜΑΤΙΚΟ: δεν έχει δοκιμαστεί σε S88 MK2.
+    const auto nowMs = juce::Time::getMillisecondCounter();
+    if (nowMs - lastInitMs >= 1000)
+    {
+        lastInitMs = nowMs;
+        const uint8_t init[3] = { 0xa0, 0x00, 0x00 };
+        IOHIDDeviceSetReport (impl->device, kIOHIDReportTypeOutput, init[0], init, sizeof (init));
+    }
     std::vector<uint8_t> data ((size_t) keyCount + 1, 0);
     data[0] = 0x81;
     for (int i = 0; i < keyCount && i < count; ++i) data[(size_t) i + 1] = keys[i];

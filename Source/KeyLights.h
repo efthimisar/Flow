@@ -29,5 +29,6 @@ private:
     std::unique_ptr<Impl> impl;
     bool active = false;
     int keyCount = 88, offset = 21;
+    juce::uint32 lastInitMs = 0;   // πότε στάλθηκε τελευταία φορά το [0xa0, 0, 0] (light-guide mode)
     juce::String status;
 };
