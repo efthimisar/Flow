@@ -7,6 +7,7 @@
 #include <thread>
 
 #if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
  #include <IOKit/IOKitLib.h>
  #include <IOKit/IOCFPlugIn.h>
  #include <IOKit/usb/IOUSBLib.h>
