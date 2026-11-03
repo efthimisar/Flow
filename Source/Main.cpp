@@ -1885,7 +1885,7 @@ private:
         constexpr int N = 512;
         Image out = orbFit (src, rnd.nextBool(), rnd.nextInt (4));
 
-        // χρώμα: τυχαίος συνδυασμός από το «A Dictionary of Color Combinations» του Sanzo Wada (WadaPalettes.h). Gradient map: η φωτεινότητα της εικόνας (με αυτόματη επέκταση της κλίμακας) αντιστοιχίζεται στα χρώματα του συνδυασμού, από το πιο σκούρο στο πιο ανοιχτό, και το αποτέλεσμα αναμειγνύεται 80/20 με τα αρχικά χρώματα
+        // χρώμα: τυχαίος συνδυασμός από το «A Dictionary of Color Combinations» του Sanzo Wada (WadaPalettes.h). Gradient map: η φωτεινότητα της εικόνας (με αυτόματη επέκταση της κλίμακας) αντιστοιχίζεται στα χρώματα του συνδυασμού, από το πιο σκούρο στο πιο ανοιχτό, και το αποτέλεσμα αντικαθιστά πλήρως τα χρώματα της εικόνας (100%, κατά επιλογή του χρήστη)
         {
             const auto& combo = wada::kCombos[rnd.nextInt (348)];
             auto luma = [] (float r, float g, float b) { return 0.2126f * r + 0.7152f * g + 0.0722f * b; };
@@ -1917,7 +1917,7 @@ private:
                 for (int i = 0; i < 256; ++i) { acc += hist[i]; if (acc >= count * 0.98) { ih = i; break; } }
                 lo = (float) il / 255.0f; hi = jmax (lo + 0.05f, (float) ih / 255.0f);
             }
-            constexpr float mixMapped = 0.8f;
+            constexpr float mixMapped = 1.0f;
             for (int y = 0; y < N; ++y)
                 for (int x = 0; x < N; ++x)
                 {
