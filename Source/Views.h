@@ -270,6 +270,13 @@ public:
         }
     }
 
+    // Για τις οθόνες του S88: πρόσβαση στην κατάσταση της λίστας
+    const StringArray& getItems() const { return items; }
+    const StringArray& getFmts() const { return fmts; }
+    bool getShowAll() const { return showAll; }
+    int getSelK() const { return selK; }
+    String getSearchText() const { return search.getText().trim(); }
+
     void encoderRows (int delta)
     {
         std::vector<int> vis; int cols, rows; buildVis (vis, cols, rows);

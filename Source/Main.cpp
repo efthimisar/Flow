@@ -1146,6 +1146,93 @@ private:
         }
     }
 
+    // ---- Περιεχόμενο των οθονών του S88: λίστα plugins (αριστερά thumbnail + όνομα, δεξιά πλακίδια με το ίδιο πλέγμα και δείκτη επιλογής όπως στην οθόνη του Flow)
+    String s88Sig;
+    int s88Scroll = 0;
+
+    void updateS88Screens()
+    {
+        if (! keyScreens.isOn()) return;
+        auto& list = loopsView.getList();
+        const bool open = list.isVisible();
+        std::vector<int> vis; int cols = 1, rows = 1;
+        String sig = "I";
+        if (open)
+        {
+            list.buildVis (vis, cols, rows);
+            sig = "L" + String (list.getSelK()) + "/" + String ((int) vis.size()) + "/" + String ((int) list.getShowAll()) + "/" + list.getSearchText() + "/" + String (cols);
+        }
+        if (sig == s88Sig) return;
+        s88Sig = sig;
+
+        const Colour bg (0xff262220), card (0xff2d2926), thumbBg (0xff3a3430), white (0xfff3f4f6), grey (0xffb7bbc6), dim (0xff6a6c73);
+        Image L (Image::RGB, KeyScreens::width, KeyScreens::height, true), R (Image::RGB, KeyScreens::width, KeyScreens::height, true);
+        Graphics gl (L), gRt (R);
+        gl.fillAll (bg); gRt.fillAll (bg);
+
+        if (! open || vis.empty())
+        {
+            gl.setColour (dim); gl.setFont (hobby::makeFont (typeface, 56.0f));
+            gl.drawText ("flow", Rectangle<int> (0, 0, KeyScreens::width, KeyScreens::height), Justification::centred);
+            if (open) { gRt.setColour (dim); gRt.setFont (hobby::makeFont (typeface, 20.0f)); gRt.drawText ("No results", Rectangle<int> (0, 0, KeyScreens::width, KeyScreens::height), Justification::centred); }
+        }
+        else
+        {
+            const int total = (int) vis.size();
+            const int selK = jlimit (0, total - 1, list.getSelK());
+            const auto& items = list.getItems();
+            const auto& fmts = list.getFmts();
+
+            // αριστερά: μεγάλο thumbnail και όνομα του επιλεγμένου plugin
+            {
+                const int idx = vis[(size_t) selK];
+                const Rectangle<float> tr (108.0f, 14.0f, 264.0f, 176.0f);
+                gl.setColour (thumbBg); gl.fillRoundedRectangle (tr, 8.0f);
+                Image im = list.thumbFn ? list.thumbFn (items[idx]) : Image();
+                if (im.isValid()) { gl.setColour (Colours::white); gl.setImageResamplingQuality (Graphics::highResamplingQuality); gl.drawImage (im, tr, RectanglePlacement::centred); }
+                else { gl.setColour (grey.withAlpha (0.55f)); gl.setFont (hobby::makeFont (typeface, 80.0f).boldened()); gl.drawText (items[idx].substring (0, 1).toUpperCase(), tr.toNearestInt(), Justification::centred); }
+                gl.setColour (white); gl.setFont (hobby::makeFont (typeface, 30.0f).boldened());
+                gl.drawText (items[idx], Rectangle<int> (16, 198, 448, 40), Justification::centred, true);
+                gl.setColour (grey); gl.setFont (hobby::makeFont (typeface, 16.0f));
+                gl.drawText (fmts[idx] + String::fromUTF8 ("  \xc2\xb7  ") + (list.getShowAll() ? "instruments" : "favorites"), Rectangle<int> (16, 238, 448, 24), Justification::centred, false);
+            }
+
+            // δεξιά: κεφαλίδα και πλακίδια στο ίδιο πλέγμα (στήλες) με την οθόνη του Flow· 4 γραμμές ορατές
+            {
+                gRt.setFont (hobby::makeFont (typeface, 16.0f));
+                gRt.setColour (list.getShowAll() ? white : dim); gRt.drawText ("instruments", Rectangle<int> (16, 12, 110, 24), Justification::centredLeft);
+                gRt.setColour (grey.withAlpha (0.5f)); gRt.drawText (String::fromUTF8 ("\xc2\xb7"), Rectangle<int> (126, 12, 14, 24), Justification::centred);
+                gRt.setColour (! list.getShowAll() ? white : dim); gRt.drawText ("favorites", Rectangle<int> (140, 12, 110, 24), Justification::centredLeft);
+                const int rowsShown = 4;
+                const int selRow = selK / cols;
+                if (selRow < s88Scroll) s88Scroll = selRow;
+                else if (selRow >= s88Scroll + rowsShown) s88Scroll = selRow - rowsShown + 1;
+                const int totalRows = (total + cols - 1) / cols;
+                s88Scroll = jlimit (0, jmax (0, totalRows - rowsShown), s88Scroll);
+                const float gapX = 8.0f, tw = ((float) KeyScreens::width - 24.0f - gapX * (float) (cols - 1)) / (float) cols, th = 50.0f;
+                for (int r = 0; r < rowsShown; ++r)
+                    for (int c = 0; c < cols; ++c)
+                    {
+                        const int k = (r + s88Scroll) * cols + c;
+                        if (k >= total) continue;
+                        const int idx = vis[(size_t) k];
+                        const Rectangle<float> rr (12.0f + (float) c * (tw + gapX), 44.0f + (float) r * 55.0f, tw, th);
+                        gRt.setColour (card); gRt.fillRoundedRectangle (rr, 6.0f);
+                        if (k == selK) { gRt.setColour (white); gRt.drawRoundedRectangle (rr.reduced (1.0f), 6.0f, 2.0f); }
+                        const Rectangle<float> ir (rr.getX() + 6.0f, rr.getY() + 7.0f, 54.0f, 36.0f);
+                        Image im = list.thumbFn ? list.thumbFn (items[idx]) : Image();
+                        if (im.isValid()) { gRt.setColour (Colours::white); gRt.setImageResamplingQuality (Graphics::highResamplingQuality); gRt.drawImage (im, ir, RectanglePlacement::centred); }
+                        else { gRt.setColour (thumbBg); gRt.fillRoundedRectangle (ir, 3.0f); }
+                        gRt.setColour (white); gRt.setFont (hobby::makeFont (typeface, cols > 1 ? 14.0f : 18.0f));
+                        gRt.drawText (items[idx], rr.withTrimmedLeft (68.0f).withTrimmedRight (6.0f).toNearestInt(), Justification::centredLeft, true);
+                    }
+            }
+        }
+        std::vector<uint8_t> buf;
+        toBgr565 (L, buf); keyScreens.submit (0, buf.data());
+        toBgr565 (R, buf); keyScreens.submit (1, buf.data());
+    }
+
     int midiDiagR = 0, midiDiagTotal = 0;
     uint32_t midiDiagLast[256] = {};
     uint32_t midiDiagLastMs[256] = {};
@@ -1183,7 +1270,7 @@ private:
             if (ok && ! keyScreens.isOn())   // οθόνες S88 (πείραμα): δοκιμαστικό καρέ με μπάρες χρώματος
             {
                 keyScreens.logger = [] (const String& s) { flow::flowLog (s); };
-                if (keyScreens.start()) sendScreenTest();
+                if (keyScreens.start()) s88Sig = String();   // ζωγραφίζεται στο επόμενο tick
             }
             if (ok)
             {
@@ -4215,6 +4302,7 @@ private:
             saveSettings (false);
 
         drainMidiDiag();
+        updateS88Screens();
 
         if (engine.smartOn.load() != 0 && ++smartDiagTicks >= 300)   // κάθε ~10 s: στάθμες ανά block και ζώνη (dBFS) και διόρθωση, για ρύθμιση του Smart με δεδομένα
         {
@@ -4339,7 +4427,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.84.2"; }
+    const String getApplicationVersion() override { return "0.85.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
