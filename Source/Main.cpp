@@ -182,7 +182,7 @@ public:
         };
         loopsView.onSmartType = [this] (int b)
         {
-            engine.smartType[(size_t) b] = (engine.smartType[(size_t) b].load() + 1) % 8;
+            engine.smartType[(size_t) b] = (engine.smartType[(size_t) b].load() + 1) % 9;
             if (engine.smartType[(size_t) b].load() == 6) engine.followBlock[(size_t) b] = 0;   // Drums: δεν ακολουθούν (μπορείς να το ξανανάψεις στις ρυθμίσεις)
             engine.smartResetApp (b); rememberSmartType (b, engine.smartType[(size_t) b].load());
             saveNow(); loopsView.repaint();
@@ -290,7 +290,6 @@ public:
         engine.masterPos = 1.0f;   // το master volume είναι πάντα 100%
         engine.followSetScale (settings->getIntValue ("followRoot", 9), settings->getIntValue ("followType", 1));
         engine.smartOn = settings->getIntValue ("smartOn", 0) != 0 ? 1 : 0;
-        engine.smartContext = settings->getIntValue ("smartContext", 0) != 0 ? 1 : 0;
         engine.smartAccept = jlimit (0.0f, 1.0f, (float) settings->getDoubleValue ("smartAccept", 0.6));
         engine.masterCc = 0;
         metroSamplePath = settings->getValue ("metroSample");
@@ -2153,13 +2152,13 @@ private:
     {
         auto* settings = const_cast<juce::ApplicationProperties&> (properties).getUserSettings();
         if (plugin.isEmpty() || settings == nullptr) return 0;
-        return jlimit (0, 7, settings->getIntValue ("stype:" + plugin, 0));
+        return jlimit (0, 8, settings->getIntValue ("stype:" + plugin, 0));
     }
     void rememberSmartType (int b, int t)
     {
         auto* settings = properties.getUserSettings();
         if (settings == nullptr) return;
-        if (auto* pl = engine.getPlugin (b)) settings->setValue ("stype:" + pl->getName(), jlimit (0, 7, t));
+        if (auto* pl = engine.getPlugin (b)) settings->setValue ("stype:" + pl->getName(), jlimit (0, 8, t));
     }
     void pluginLoaded (int block, const String& token, std::unique_ptr<AudioPluginInstance> instance, const String& error,
                        const MemoryBlock& state, bool userLoad, bool captureZone, std::function<void()> after)
@@ -2899,6 +2898,7 @@ private:
                 auto& x = v[(size_t) b];
                 if (auto* p = engine.getPlugin (b)) { x.active = true; x.name = p->getName(); }
                 x.type = engine.smartType[(size_t) b].load();
+                x.autoType = engine.smartAutoT[(size_t) b].load();
                 for (int k = 0; k < flow::smartBands; ++k)
                 {
                     x.band[k] = engine.smartBand[(size_t) b][(size_t) k].load();
@@ -2907,21 +2907,19 @@ private:
                 }
                 x.colour = blockLight (b);
                 x.width = engine.smartWidth[(size_t) b].load();
-                flow::smartLimits (x.type, x.lim);
+                flow::smartLimits (x.type != 0 ? x.type : x.autoType, x.lim);
                 x.needW = engine.smartNeedWidth[(size_t) b].load(); x.appW = engine.smartAppWidth[(size_t) b].load();
             }
             return v;
         };
-        h.smartContextGet = [this] { return engine.smartContext.load(); };
-        h.smartContextSet = [this] (int v) { engine.smartContext = v; saveNow(); };
         h.smartOnGet = [this] { return engine.smartOn.load(); };
         h.smartOnSet = [this] (int v) { engine.smartOn = v; saveNow(); };
         h.smartAcceptGet = [this] { return engine.smartAccept.load(); };
         h.smartAcceptSet = [this] (float v) { engine.smartAccept = v; saveNow(); };
         h.smartTypeSet = [this] (int b, int t)
         {
-            engine.smartType[(size_t) b] = jlimit (0, 7, t);
-            if (jlimit (0, 7, t) == 6) engine.followBlock[(size_t) b] = 0;   // Drums: αποκλείονται από το Follow
+            engine.smartType[(size_t) b] = jlimit (0, 8, t);
+            if (jlimit (0, 8, t) == 6) engine.followBlock[(size_t) b] = 0;   // Drums: αποκλείονται από το Follow
             engine.smartResetApp (b);   // νέος τύπος: καθαρή αρχή
             rememberSmartType (b, t);
             saveNow();
@@ -3355,7 +3353,7 @@ private:
 
             engine.holdMode[(size_t) slot]  = jlimit (0, 2, e->getIntAttribute ("hold", 0));
             engine.curveMode[(size_t) slot] = jlimit (0, flow::numCurves - 1, e->getIntAttribute ("curve", 0));
-            engine.smartType[(size_t) slot] = jlimit (0, 7, e->getIntAttribute ("stype", 0));
+            engine.smartType[(size_t) slot] = jlimit (0, 8, e->getIntAttribute ("stype", 0));
             // παλιό attribute "follow" αγνοείται: όλα ακολουθούν, εκτός από όσα το έχουν αποκλείσει ή είναι Drums
             engine.followBlock[(size_t) slot] = e->hasAttribute ("nofollow") ? (e->getIntAttribute ("nofollow", 0) != 0 ? 0 : 1)
                                                                               : (engine.smartType[(size_t) slot].load() == 6 ? 0 : 1);
@@ -3617,7 +3615,7 @@ private:
     void paletteApply (int b, const XmlElement& e, const flow::LoopSnapshot& snap, bool hadLoop)
     {
         if (! isActive (b)) return;
-        engine.smartType[(size_t) b]  = jlimit (0, 7, e.getIntAttribute ("stype", 0));
+        engine.smartType[(size_t) b]  = jlimit (0, 8, e.getIntAttribute ("stype", 0));
         engine.holdMode[(size_t) b]   = jlimit (0, 2, e.getIntAttribute ("hold", 0));
         engine.curveMode[(size_t) b]  = jlimit (0, flow::numCurves - 1, e.getIntAttribute ("curve", 0));
         engine.volPos[(size_t) b]     = (float) jlimit (0.0, 1.0, e.getDoubleAttribute ("vol", 1.0));
@@ -3666,11 +3664,11 @@ private:
         const int type = engine.smartType[(size_t) selected].load();
         if (type == 6) { setMessage (gr ("Drums are not kept in the Palette")); return; }
 
-        static const char* const typeNames[] { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
+        static const char* const typeNames[] { "Smart", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX", "Arp" };
         const String dot = String::fromUTF8 (" \xc2\xb7 ");
         snapshotBlock = selected;
         roleCard.open (gr ("What is this sound?"),
-                       engine.getPlugin (selected)->getName() + dot + gr ("block ") + String (selected + 1) + dot + gr ("Smart master: ") + typeNames[jlimit (0, 7, type)],
+                       engine.getPlugin (selected)->getName() + dot + gr ("block ") + String (selected + 1) + dot + gr ("Smart master: ") + typeNames[jlimit (0, 8, type)],
                        RoleCard::roleFromSmartType (type));
     }
 
@@ -3770,7 +3768,6 @@ private:
         settings->setValue ("followRoot", engine.followRoot.load());
         settings->setValue ("followType", engine.followType.load());
         settings->setValue ("smartOn", engine.smartOn.load());
-        settings->setValue ("smartContext", engine.smartContext.load());
         settings->setValue ("smartAccept", (double) engine.smartAccept.load());
         settings->setValue ("metroChannel", engine.metroChannel.load());
         settings->setValue ("metroSample", metroSamplePath);
@@ -4108,8 +4105,8 @@ private:
         if (engine.smartOn.load() != 0 && ++smartDiagTicks >= 300)   // κάθε ~10 s: στάθμες ανά block και ζώνη (dBFS) και διόρθωση, για ρύθμιση του Smart με δεδομένα
         {
             smartDiagTicks = 0;
-            static const char* tn[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
-            String line = String ("smart ") + (engine.smartContext.load() != 0 ? "context" : "classic") + ":";
+            static const char* tn[] = { "Smart", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX", "Arp" };
+            String line = String ("smart ") + "context" + ":";
             float total[6] = {};
             for (int b = 0; b < flow::numBlocks; ++b)
             {
@@ -4122,7 +4119,11 @@ private:
                     lv << String (lvl * 60.0f - 60.0f, 0) << (k < 5 ? " " : "");
                     ap << String (engine.smartApp[(size_t) b][(size_t) k].load(), 1) << (k < 5 ? " " : "");
                 }
-                line << " | b" << (b + 1) << " " << tn[jlimit (0, 7, engine.smartType[(size_t) b].load())] << " dB[" << lv << "] cut[" << ap << "] w" << String (engine.smartWidth[(size_t) b].load(), 2);
+                line << " | b" << (b + 1) << " " << tn[jlimit (0, 8, engine.smartType[(size_t) b].load())];
+                if (engine.smartType[(size_t) b].load() == 0)
+                    line << "->" << tn[jlimit (0, 8, engine.smartAutoT[(size_t) b].load())] << " (low " << String (engine.smartFeat[(size_t) b][0].load(), 2) << " mid " << String (engine.smartFeat[(size_t) b][1].load(), 2)
+                         << " high " << String (engine.smartFeat[(size_t) b][2].load(), 2) << " dbStd " << String (engine.smartFeat[(size_t) b][3].load(), 1) << ")";
+                line << " dB[" << lv << "] cut[" << ap << "] w" << String (engine.smartWidth[(size_t) b].load(), 2);
             }
             float all = 0.0f; for (int k = 0; k < 6; ++k) all += total[k];
             if (all > 1.0e-12f) line << " | share% [" << String (100.0f * total[0] / all, 0) << " " << String (100.0f * total[1] / all, 0) << " " << String (100.0f * total[2] / all, 0) << " " << String (100.0f * total[3] / all, 0) << " " << String (100.0f * total[4] / all, 0) << " " << String (100.0f * total[5] / all, 0) << "]";

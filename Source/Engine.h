@@ -101,15 +101,16 @@ namespace flow
     // σύμβαση μίξης, όχι τεκμηριωμένα ευρήματα. Ρυθμίζονται με το αυτί. 1.0 = χωρίς όριο.
     inline void smartLimits (int type, float* out)
     {
-        static const float t[8][4] = { { 1.0f, 1.0f, 1.0f, 1.0f },     // Other
+        static const float t[9][4] = { { 1.0f, 1.0f, 1.0f, 1.0f },     // Other
                                        { 0.85f, 0.60f, 0.35f, 0.20f }, // Bass
                                        { 0.80f, 0.85f, 0.70f, 0.60f }, // Keys
                                        { 0.60f, 0.75f, 0.60f, 1.00f }, // Pad
                                        { 0.60f, 0.85f, 0.80f, 0.70f }, // Lead
                                        { 0.70f, 0.85f, 0.75f, 0.90f },  // Strings
                                        { 0.90f, 0.80f, 0.85f, 0.80f },  // Drums
-                                       { 0.50f, 0.80f, 0.80f, 1.00f } }; // FX
-        const int i = type < 0 || type > 7 ? 0 : type;
+                                       { 0.50f, 0.80f, 0.80f, 1.00f },   // FX
+                                       { 0.50f, 0.85f, 0.85f, 0.80f } }; // Arp
+        const int i = type < 0 || type > 8 ? 0 : type;
         const float lo = t[i][0], mi = t[i][1], hi = t[i][2];
         out[0] = lo < 0.999f ? lo * 0.85f : 1.0f;
         out[1] = lo;
@@ -139,6 +140,7 @@ namespace flow
                 volMap[b] = 0;
                 followBlock[b] = 1;
                 smartType[b] = 0; smartWidth[b] = 0.0f; smartNeedWidth[b] = 1.0f;
+                smartAutoT[b] = 0; for (int q = 0; q < 4; ++q) smartFeat[b][(size_t) q] = 0.0f;
                 for (int k = 0; k < smartBands; ++k) { smartBand[b][(size_t) k] = 0.0f; smartNeed[b][(size_t) k] = 0.0f; }
                 smartResetApp ((int) b);
                 loopStateOut[b] = loopOff;
@@ -201,17 +203,24 @@ namespace flow
             followTRoot = followRoot.load(); followTType = followType.load();
         }
         // Smart master: μέτρηση ανά block (3 ζώνες + πλάτος stereo) και διόρθωση με βάση τον τύπο ήχου
-        std::atomic<int> smartContext { 0 };                       // 1 = Smart «Context»: διόρθωση ως προς τα άλλα blocks (SmartCore.h)
+        std::atomic<int> smartContext { 1 };                       // Smart: η διόρθωση εξαρτάται από τα άλλα blocks (SmartCore.h). Η ένταση του εφέ = «accept» (0..100%)
         std::atomic<int> smartOn { 0 }, smartAuto { 1 };            // On/Off. Η διόρθωση είναι πάντα Auto (το smartAuto δεν χρησιμοποιείται πια)
         std::atomic<float> smartAccept { 0.6f };                    // πόσο από την αναγκαία διόρθωση εφαρμόζεται (0..1)
-        std::array<std::atomic<int>, numBlocks> smartType;          // 0 Other, 1 Bass, 2 Keys, 3 Pad, 4 Lead, 5 Strings, 6 Drums, 7 FX
+        std::array<std::atomic<int>, numBlocks> smartAutoT;         // τύπος που βρήκε το Smart μόνο του (όταν ο τύπος είναι «Smart»=0): 0 = δεν είναι σίγουρο
+        std::array<std::array<std::atomic<float>, 4>, numBlocks> smartFeat;   // χαρακτηριστικά που χρησιμοποιήθηκαν: χαμηλά, μεσαία, υψηλά, dbStd
+        std::array<std::atomic<int>, numBlocks> smartType;          // 0 Smart (αυτόματος),  1 Bass, 2 Keys, 3 Pad, 4 Lead, 5 Strings, 6 Drums, 7 FX
         std::array<std::array<std::atomic<float>, smartBands>, numBlocks> smartBand, smartNeed, smartApp;   // ανά ζώνη: μέτρηση 0..1 (πριν τη διόρθωση), αναγκαία και εφαρμοσμένη μείωση (dB)
         std::array<std::atomic<float>, numBlocks> smartWidth, smartNeedWidth, smartAppWidth;                // πλάτος 0..1, αναγκαία και εφαρμοσμένη κλίμακα πλάτους
         void smartResetApp (int b)
         {
             for (int k = 0; k < smartBands; ++k) smartApp[(size_t) b][(size_t) k] = 0.0f;
             smartAppWidth[(size_t) b] = 1.0f;
+            smartAutoT[(size_t) b] = 0;
+            auto& B = blocks[(size_t) b];
+            for (int k = 0; k < 6; ++k) B.smLong[k] = 0.0f;
+            B.smDbMean = -60.0f; B.smDbVar = 0.0f; B.smSoundSec = 0.0f;
         }
+        int smartEffType (int b) const { const int t = smartType[(size_t) b].load(); return t != 0 ? t : smartAutoT[(size_t) b].load(); }
         std::atomic<int> sceneRequest { -1 };   // από πετάλι: -2 = προηγούμενη, -3 = επόμενη (το διαβάζει το UI)
         std::atomic<int> selectedBlock { 0 };   // το block στο οποίο δρουν Hold και looper
         std::atomic<int> lastPlayed { -1 };     // το block που έπαιξες τελευταίο: εκεί γράφει το Rec MIDI loop από πετάλι
@@ -937,6 +946,7 @@ namespace flow
             float smLp[5] {};                                    // μέτρηση: μονοφωνικό άθροισμα, 5 φίλτρα (όρια των 6 ζωνών)
             float smCorrL[5] {}, smCorrR[5] {};                  // διόρθωση: τα ίδια φίλτρα ανά κανάλι
             float smEn[6] {}, smEnM = 0.0f, smEnS = 0.0f;
+            float smLong[6] {}, smDbMean = -60.0f, smDbVar = 0.0f, smSoundSec = 0.0f;   // Smart αυτόματος τύπος: μακροπρόθεσμο φάσμα και διακύμανση στάθμης
             float smPrevG[6] { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
             float smPrevW = 1.0f;
             int lastLatched = -1;
@@ -1071,6 +1081,22 @@ namespace flow
                 B.smEn[k] += kk0 * ((float) sE[k] * inv - B.smEn[k]);
                 smartBand[(size_t) b][(size_t) k] = smartLevel (B.smEn[k]);
             }
+            {   // Smart αυτόματος τύπος: αργή μέση ενέργεια ανά ζώνη και διακύμανση της στάθμης, μόνο όσο το block ηχεί
+                double totE = 0.0; for (int k = 0; k < 6; ++k) totE += sE[k] * inv;
+                if (totE > 1.0e-9)
+                {
+                    const float kL = 1.0f - std::exp (-(float) n / (4.0f * (float) sr));
+                    for (int k = 0; k < 6; ++k) B.smLong[k] += kL * ((float) (sE[k] * inv) - B.smLong[k]);
+                    const float dbNow = 10.0f * std::log10 ((float) totE + 1.0e-12f);
+                    B.smDbMean += kL * (dbNow - B.smDbMean);
+                    const float d = dbNow - B.smDbMean;
+                    B.smDbVar += kL * (d * d - B.smDbVar);
+                    B.smSoundSec = juce::jmin (60.0f, B.smSoundSec + (float) n / (float) sr);
+                }
+                float feat[4];
+                smartAutoT[(size_t) b] = smartAutoClassify (B.smLong, std::sqrt (juce::jmax (0.0f, B.smDbVar)), B.smSoundSec, feat);
+                for (int q = 0; q < 4; ++q) smartFeat[(size_t) b][(size_t) q] = feat[q];
+            }
             B.smEnM += kk0 * ((float) sM * inv - B.smEnM);
             B.smEnS += kk0 * ((float) sS * inv - B.smEnS);
             float width = smartWidth[(size_t) b].load();
@@ -1082,7 +1108,7 @@ namespace flow
             }
 
             // αναγκαία διόρθωση ως προς τα όρια του τύπου
-            const int type = smartType[(size_t) b].load();
+            const int type = smartEffType (b);   // «Smart» (0) = ο τύπος που βρήκε το Smart μόνο του
             float lim[7]; smartLimits (type, lim);
             const float accept = smartAccept.load();
             const float kk = 1.0f - std::exp (-(float) n / (0.5f * (float) sr));
@@ -1094,7 +1120,7 @@ namespace flow
                 for (int c = 0; c < numBlocks; ++c)
                 {
                     ac[c] = active[(size_t) c].load() != 0;
-                    ty[c] = smartType[(size_t) c].load();
+                    ty[c] = smartEffType (c);
                     for (int k = 0; k < smartBands; ++k) lv[c][k] = smartBand[(size_t) c][(size_t) k].load();
                 }
                 smartContextCut (lv, ty, ac, numBlocks, b, 0.5f, ctxCut);

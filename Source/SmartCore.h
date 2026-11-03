@@ -14,7 +14,7 @@ namespace flow
     // ποιο block «κατέχει» κάθε ζώνη (1 = κυρίαρχο). Ζώνες: Sub, Low, Low-Mid, Mid, High-Mid, High
     inline float smartPrio (int type, int band)
     {
-        static const float p[8][6] = {
+        static const float p[9][6] = {
             { 0.50f, 0.50f, 0.50f, 0.50f, 0.50f, 0.50f },   // Other (δεν διορθώνεται)
             { 0.80f, 1.00f, 0.60f, 0.25f, 0.15f, 0.10f },   // Bass: κατέχει τα Low· στο Sub δίνει προτεραιότητα στην μπότα (Drums)
             { 0.25f, 0.40f, 0.60f, 0.65f, 0.60f, 0.45f },   // Keys (πιάνο, arp)
@@ -22,8 +22,9 @@ namespace flow
             { 0.20f, 0.40f, 0.70f, 1.00f, 1.00f, 0.80f },   // Lead (σόλο): κατέχει Mid και High-Mid
             { 0.25f, 0.35f, 0.55f, 0.60f, 0.55f, 0.50f },   // Strings
             { 1.00f, 0.90f, 0.50f, 0.40f, 0.50f, 0.70f },   // Drums (μπότα στο Sub, hats ψηλά)
-            { 0.10f, 0.20f, 0.30f, 0.40f, 0.50f, 0.60f } }; // FX
-        return p[type < 0 || type > 7 ? 0 : type][band < 0 || band > 5 ? 0 : band];
+            { 0.10f, 0.20f, 0.30f, 0.40f, 0.50f, 0.60f },   // FX
+            { 0.15f, 0.30f, 0.50f, 0.80f, 0.85f, 0.65f } }; // Arp: ρυθμικός και καθαρός, πάνω από pads/strings στα Mid και High-Mid, κάτω από το σόλο
+        return p[type < 0 || type > 8 ? 0 : type][band < 0 || band > 5 ? 0 : band];
     }
 
     inline float smartCtxEnergy (float level01) { return std::pow (10.0f, (level01 * 60.0f - 60.0f) / 10.0f); }
@@ -66,5 +67,25 @@ namespace flow
             }
             cutDb[k] = std::min (k < 2 ? 8.0f : 4.0f, cut);
         }
+    }
+
+    // Smart (αυτόματος τύπος): από το μακροπρόθεσμο φάσμα (e6: ενέργεια ανά ζώνη, ~4 s) και τη διακύμανση της στάθμης (dbStd, dB) του ίδιου του block
+    // βρίσκει τον πιθανό ρόλο. Επιστρέφει 0 όταν δεν είναι σίγουρο (τότε δεν γίνεται διόρθωση). ΟΙ ΚΑΝΟΝΕΣ ΕΙΝΑΙ ΣΥΜΒΑΣΕΙΣ, αρχικές τιμές που
+    // ρυθμίζονται με τα δεδομένα του Flow-log (γραμμές «smart»). Strings και Pad δεν ξεχωρίζουν: και τα δύο βγαίνουν Pad. Το FX δεν αναγνωρίζεται.
+    // feat[0..3] = ποσοστό χαμηλών (Sub+Low), μεσαίων, υψηλών, dbStd
+    inline int smartAutoClassify (const float* e6, float dbStd, float soundSec, float* feat)
+    {
+        float tot = 0.0f;
+        for (int k = 0; k < smartCtxBands; ++k) tot += e6[k];
+        if (feat != nullptr) feat[0] = feat[1] = feat[2] = 0.0f, feat[3] = dbStd;
+        if (soundSec < 3.0f || tot < 1.0e-9f) return 0;
+        const float low = (e6[0] + e6[1]) / tot, mid = (e6[2] + e6[3]) / tot, high = (e6[4] + e6[5]) / tot;
+        if (feat != nullptr) { feat[0] = low; feat[1] = mid; feat[2] = high; }
+        if (low > 0.65f && high < 0.12f) return 1;                    // Bass: ενέργεια σχεδόν μόνο στα χαμηλά
+        if (dbStd > 7.0f && high > 0.2f) return 6;                    // Drums: κρουστικός και φωτεινός
+        if (dbStd < 2.5f && low < 0.5f) return 3;                     // Pad: σταθερή στάθμη, όχι βαρύ
+        if (mid + high > 0.7f && high > 0.25f && dbStd <= 7.0f) return 4;   // Lead: ψηλός, κινείται
+        if (mid > 0.5f) return 2;                                      // Keys: μεσαίος
+        return 0;
     }
 }

@@ -1336,7 +1336,7 @@ public:
         const float acc = engine.smartAccept.load();
         const int sel = selected;
         const int type = valid ? engine.smartType[(size_t) sel].load() : 0;
-        static const char* typeNames[] { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
+        static const char* typeNames[] { "Smart", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX", "Arp" };
         const bool active = on && type != 0;
         float lim[7]; flow::smartLimits (type, lim);
         float vals[6], need[6];

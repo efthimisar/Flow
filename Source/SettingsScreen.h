@@ -13,7 +13,8 @@ public:
     {
         bool active = false;
         juce::String name;
-        int type = 0;                                   // 0 Other, 1 Bass, 2 Keys, 3 Pad, 4 Lead, 5 Strings
+        int type = 0;                                   // 0 Smart (αυτόματος), 1 Bass, 2 Keys, 3 Pad, 4 Lead, 5 Strings, 6 Drums, 7 FX, 8 Arp
+        int autoType = 0;                               // τι βρήκε το Smart μόνο του όταν type == 0 (0 = δεν είναι σίγουρο)
         float band[6] = {}, need[6] = {}, app[6] = {};  // ανά ζώνη: μέτρηση 0..1, αναγκαία και εφαρμοσμένη μείωση (dB)
         float lim[7] = { 1, 1, 1, 1, 1, 1, 1 };        // όρια του τύπου {6 ζώνες, πλάτος}
         float width = 0, needW = 1, appW = 1;
@@ -66,8 +67,6 @@ public:
         std::function<void (int)> followOnSet, followRootSet, followTypeSet;
         std::function<void (int, bool)> followBlockSet;
         std::function<std::vector<SmartBlock>()> smartBlocks;
-        std::function<int()> smartContextGet;   // προσωρινός διακόπτης: Smart Context (εξαρτάται από τα άλλα blocks)
-        std::function<void (int)> smartContextSet;
         std::function<int()> smartOnGet;
         std::function<float()> smartAcceptGet;
         std::function<void (int)> smartOnSet;
@@ -421,14 +420,16 @@ private:
         (void) L;
         // δεξιά: ανά block
         auto rc = cardHeader (g, R, "Per block");
-        if (host.smartContextGet)   // προσωρινά: Classic / Context
-        {
-            const bool ctxOn = host.smartContextGet() != 0;
-            smallPill (g, { R.getRight() - 20 - 190, R.getY() + 10, 90, 28 }, "Classic", ! ctxOn, [this] { if (host.smartContextSet) host.smartContextSet (0); repaint(); });
-            smallPill (g, { R.getRight() - 20 - 94, R.getY() + 10, 94, 28 }, "Context", ctxOn, [this] { if (host.smartContextSet) host.smartContextSet (1); repaint(); });
+        {   // ένταση του Smart: λίγο στα χαμηλά ποσοστά, πολύ στο 100%
+            const int pct = (int) std::lround (acc * 100.0f);
+            const int bx = R.getRight() - 20 - 150, by = R.getY() + 10;
+            smallPill (g, { bx, by, 40, 28 }, juce::String::fromUTF8 ("\xe2\x88\x92"), false, [this, acc] { if (host.smartAcceptSet) host.smartAcceptSet (juce::jlimit (0.0f, 1.0f, std::round ((acc - 0.05f) * 20.0f) / 20.0f)); repaint(); });
+            g.setColour (txt()); g.setFont (font (14.0f, true));
+            g.drawText (juce::String (pct) + "%", bx + 40, by, 70, 28, Justification::centred, false);
+            smallPill (g, { bx + 110, by, 40, 28 }, "+", false, [this, acc] { if (host.smartAcceptSet) host.smartAcceptSet (juce::jlimit (0.0f, 1.0f, std::round ((acc + 0.05f) * 20.0f) / 20.0f)); repaint(); });
         }
         const auto blocks = host.smartBlocks ? host.smartBlocks() : std::vector<SmartBlock>();
-        static const char* typeNames[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
+        static const char* typeNames[] = { "Smart", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX", "Arp" };
         int y = rc.getY();
         const int rowH = 40;
         bool any = false;
@@ -436,14 +437,16 @@ private:
         {
             const auto& B = blocks[(size_t) b];
             if (! B.active || y + rowH > rc.getBottom() + 6) continue;
+            const int eff = B.type != 0 ? B.type : B.autoType;   // ο τύπος που ισχύει: δικός σου ή αυτός που βρήκε το Smart
             any = true;
             g.setColour (Colour (0xff3a3632)); g.fillEllipse ((float) rc.getX(), (float) y + 5.0f, 28.0f, 28.0f);
             g.setColour (txt()); g.setFont (font (13.0f, true)); g.drawText (String (b + 1), rc.getX(), y + 5, 28, 28, Justification::centred, false);
-            smallPill (g, { rc.getX() + 36, y + 5, 86, 28 }, typeNames[jlimit (0, 7, B.type)], B.type != 0, [this, b, t = B.type] { if (host.smartTypeSet) host.smartTypeSet (b, (t + 1) % 8); repaint(); });
-            float na[6]; for (int k = 0; k < 6; ++k) na[k] = on && B.type != 0 ? B.need[k] : 0.0f;
-            const String corr = on && B.type != 0 ? hobby::smartCorrectionText (na, B.needW, acc) : String();
+            smallPill (g, { rc.getX() + 36, y + 5, 86, 28 }, typeNames[jlimit (0, 8, B.type)], B.type != 0, [this, b, t = B.type] { if (host.smartTypeSet) host.smartTypeSet (b, (t + 1) % 9); repaint(); });
+            float na[6]; for (int k = 0; k < 6; ++k) na[k] = on && eff != 0 ? B.need[k] : 0.0f;
+            const String corr = on && eff != 0 ? hobby::smartCorrectionText (na, B.needW, acc) : String();
             bool applied = B.appW < 0.98f; for (int k = 0; k < 6; ++k) if (B.app[k] > 0.2f) applied = true;
-            String msg = ! on ? "off" : B.type == 0 ? "pick a type" : corr.isNotEmpty() ? corr : applied ? "correcting" : "in range";
+            String msg = ! on ? "off" : eff == 0 ? "listening\xe2\x80\xa6" : corr.isNotEmpty() ? corr : applied ? "correcting" : "in range";
+            if (on && B.type == 0 && eff != 0) msg = String ("auto: ") + typeNames[jlimit (0, 8, eff)] + (corr.isNotEmpty() ? String (" \xc2\xb7 ") + corr : String());
             g.setColour (corr.isNotEmpty() ? Colour (0xffebb45a) : dim()); g.setFont (font (11.5f));
             g.drawText (msg, rc.getX() + 130, y + 5, rc.getWidth() - 130, 28, Justification::centredLeft, true);
             y += rowH;
@@ -1156,7 +1159,7 @@ private:
         }
         const int n = (int) idx.size(), gap = 12;
         const int cw = jmin (260, (W - 80 - (n - 1) * gap) / n), ch = bottom - top;
-        static const char* typeNames[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
+        static const char* typeNames[] = { "Smart", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX", "Arp" };
         const bool compact = ch < 300;
         for (int q = 0; q < n; ++q)
         {
@@ -1180,7 +1183,7 @@ private:
             g.setColour (typed ? Colour (0xff3c5a46) : Colour (0xff242220)); g.fillRoundedRectangle (tp.toFloat(), 13.0f);
             g.setColour (typed ? ok : lineC()); g.drawRoundedRectangle (tp.toFloat().reduced (0.5f), 13.0f, typed ? 1.6f : 1.0f);
             g.setColour (typed ? txt() : dim()); g.setFont (font (12.5f, true));
-            g.drawText (String (b + 1) + "  " + String (typeNames[jlimit (0, 7, B.type)]), tp, Justification::centred, false);
+            g.drawText (String (b + 1) + "  " + String (typeNames[jlimit (0, 8, B.type)]), tp, Justification::centred, false);
             hits.push_back ({ tp, [this, b, B] { if (host.smartTypeSet) host.smartTypeSet (b, (B.type + 1) % 8); repaint(); } });
             y += 34;
 
