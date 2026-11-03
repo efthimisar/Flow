@@ -1399,15 +1399,20 @@ private:
             const auto& items = list.getItems();
             const auto& fmts = list.getFmts();
 
-            // αριστερά: μόνο το thumbnail του επιλεγμένου plugin, γεμίζει ακριβώς όλη την οθόνη (χωρίς κενά, χωρίς γράμματα· περικόπτεται στο κέντρο αν η αναλογία διαφέρει)
+            // αριστερά: ολόκληρο το thumbnail του επιλεγμένου plugin (δεν κόβεται), και γύρω του θολή σκουραμένη προέκτασή του, ώστε η οθόνη να μένει γεμάτη χωρίς γράμματα
             {
                 const int idx = vis[(size_t) selK];
                 Image im = list.thumbFn ? list.thumbFn (items[idx]) : Image();
                 const Rectangle<float> full (0.0f, 0.0f, (float) KeyScreens::width, (float) KeyScreens::height);
                 if (im.isValid())
                 {
+                    Image small (Image::RGB, 48, 27, true);   // μικρή εικόνα που τεντώνεται = θόλωμα (φθηνό: η οθόνη ξανασχεδιάζεται μόνο όταν αλλάζει η επιλογή)
+                    { Graphics gs (small); gs.setImageResamplingQuality (Graphics::highResamplingQuality); gs.drawImage (im, Rectangle<float> (0.0f, 0.0f, 48.0f, 27.0f), RectanglePlacement (RectanglePlacement::centred | RectanglePlacement::fillDestination)); }
                     gl.setColour (Colours::white); gl.setImageResamplingQuality (Graphics::highResamplingQuality);
-                    gl.drawImage (im, full, RectanglePlacement (RectanglePlacement::centred | RectanglePlacement::fillDestination));
+                    gl.drawImage (small, full);
+                    gl.setColour (Colours::black.withAlpha (0.55f)); gl.fillRect (full);
+                    gl.setColour (Colours::white);
+                    gl.drawImage (im, full, RectanglePlacement::centred);   // ολόκληρο, στο ύψος της οθόνης
                 }
                 else { gl.setColour (thumbBg); gl.fillRect (full); }   // δεν υπάρχει ακόμη thumbnail: απλό σκούρο πλαίσιο
             }
