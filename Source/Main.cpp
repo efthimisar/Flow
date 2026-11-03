@@ -1183,18 +1183,17 @@ private:
             const auto& items = list.getItems();
             const auto& fmts = list.getFmts();
 
-            // αριστερά: μεγάλο thumbnail και όνομα του επιλεγμένου plugin
+            // αριστερά: μόνο το thumbnail του επιλεγμένου plugin, γεμίζει ακριβώς όλη την οθόνη (χωρίς κενά, χωρίς γράμματα· περικόπτεται στο κέντρο αν η αναλογία διαφέρει)
             {
                 const int idx = vis[(size_t) selK];
-                const Rectangle<float> tr (108.0f, 14.0f, 264.0f, 176.0f);
-                gl.setColour (thumbBg); gl.fillRoundedRectangle (tr, 8.0f);
                 Image im = list.thumbFn ? list.thumbFn (items[idx]) : Image();
-                if (im.isValid()) { gl.setColour (Colours::white); gl.setImageResamplingQuality (Graphics::highResamplingQuality); gl.drawImage (im, tr, RectanglePlacement::centred); }
-                else { gl.setColour (grey.withAlpha (0.55f)); gl.setFont (hobby::makeFont (typeface, 80.0f).boldened()); gl.drawText (items[idx].substring (0, 1).toUpperCase(), tr.toNearestInt(), Justification::centred); }
-                gl.setColour (white); gl.setFont (hobby::makeFont (typeface, 30.0f).boldened());
-                gl.drawText (items[idx], Rectangle<int> (16, 198, 448, 40), Justification::centred, true);
-                gl.setColour (grey); gl.setFont (hobby::makeFont (typeface, 16.0f));
-                gl.drawText (fmts[idx] + String::fromUTF8 ("  \xc2\xb7  ") + (list.getShowAll() ? "instruments" : "favorites"), Rectangle<int> (16, 238, 448, 24), Justification::centred, false);
+                const Rectangle<float> full (0.0f, 0.0f, (float) KeyScreens::width, (float) KeyScreens::height);
+                if (im.isValid())
+                {
+                    gl.setColour (Colours::white); gl.setImageResamplingQuality (Graphics::highResamplingQuality);
+                    gl.drawImage (im, full, RectanglePlacement (RectanglePlacement::centred | RectanglePlacement::fillDestination));
+                }
+                else { gl.setColour (thumbBg); gl.fillRect (full); }   // δεν υπάρχει ακόμη thumbnail: απλό σκούρο πλαίσιο
             }
 
             // δεξιά: κεφαλίδα και πλακίδια στο ίδιο πλέγμα (στήλες) με την οθόνη του Flow· 4 γραμμές ορατές
