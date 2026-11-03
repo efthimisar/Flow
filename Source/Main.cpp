@@ -1105,7 +1105,7 @@ private:
         }
     }
 
-    // ---- Οθόνες του S88 MK2 (πείραμα): μετατροπή εικόνας σε BGR565 big-endian και δοκιμαστικό καρέ με τρεις μπάρες χρώματος για έλεγχο χρωμάτων
+    // ---- Οθόνες του S88 MK2 (πείραμα): μετατροπή εικόνας σε 16 bit big-endian (στο S88 το κόκκινο είναι στα ψηλά bits: δοκιμάστηκε από τον χρήστη, το BGR της τεκμηρίωσης έβγαζε κόκκινο↔μπλε ανάποδα) και δοκιμαστικό καρέ με τρεις μπάρες χρώματος για έλεγχο χρωμάτων
     static void toBgr565 (const Image& im, std::vector<uint8_t>& out)
     {
         out.assign ((size_t) KeyScreens::frameBytes, 0);
@@ -1114,7 +1114,7 @@ private:
             for (int x = 0; x < KeyScreens::width; ++x)
             {
                 const auto c = bd.getPixelColour (x, y);
-                const uint16_t v = (uint16_t) (((c.getBlue() >> 3) << 11) | ((c.getGreen() >> 2) << 5) | (c.getRed() >> 3));
+                const uint16_t v = (uint16_t) (((c.getRed() >> 3) << 11) | ((c.getGreen() >> 2) << 5) | (c.getBlue() >> 3));
                 const size_t i = ((size_t) y * KeyScreens::width + (size_t) x) * 2;
                 out[i] = (uint8_t) (v >> 8); out[i + 1] = (uint8_t) (v & 0xff);
             }
@@ -4339,7 +4339,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.84.1"; }
+    const String getApplicationVersion() override { return "0.84.2"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
