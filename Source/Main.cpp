@@ -3,6 +3,7 @@
 
 #include "Views.h"
 #include "KeyLights.h"
+#include "KeyScreens.h"
 #include "WindowSnap.h"
 #include <algorithm>
 #include "AudioPanel.h"
@@ -1036,6 +1037,7 @@ private:
     // ◎ φωτάκι: πετάλι. 1ο πάτημα = ανάθεση (πράσινο): πάτα ένα κουμπί της εφαρμογής και μετά το πετάλι. 2ο = διαγραφή ανάθεσης (κόκκινο). 3ο = κλείνει.
     // ---- φώτα πλήκτρων Komplete Kontrol MK2: κάθε block παίρνει το χρώμα του, το ειδικό block ανάβει άσπρο στο πρώτο και στο τελευταίο πλήκτρο
     KeyLights keyLights;
+    KeyScreens keyScreens;
     // Το Komplete Kontrol plugin γράφει κι αυτό φώτα. Γρήγορο ρολόι (200 Hz) ξαναστέλνει τα δικά μας μόλις έρθει νότα και για ~1 s μετά.
     CriticalSection lightsLock;
     std::array<uint8_t, 88> lightsBuf {};
@@ -1103,6 +1105,47 @@ private:
         }
     }
 
+    // ---- Οθόνες του S88 MK2 (πείραμα): μετατροπή εικόνας σε BGR565 big-endian και δοκιμαστικό καρέ με τρεις μπάρες χρώματος για έλεγχο χρωμάτων
+    static void toBgr565 (const Image& im, std::vector<uint8_t>& out)
+    {
+        out.assign ((size_t) KeyScreens::frameBytes, 0);
+        Image::BitmapData bd (im, Image::BitmapData::readOnly);
+        for (int y = 0; y < KeyScreens::height; ++y)
+            for (int x = 0; x < KeyScreens::width; ++x)
+            {
+                const auto c = bd.getPixelColour (x, y);
+                const uint16_t v = (uint16_t) (((c.getBlue() >> 3) << 11) | ((c.getGreen() >> 2) << 5) | (c.getRed() >> 3));
+                const size_t i = ((size_t) y * KeyScreens::width + (size_t) x) * 2;
+                out[i] = (uint8_t) (v >> 8); out[i + 1] = (uint8_t) (v & 0xff);
+            }
+    }
+
+    void sendScreenTest()
+    {
+        const char* labels[2] = { "LEFT screen", "RIGHT screen" };
+        for (int s = 0; s < 2; ++s)
+        {
+            Image im (Image::RGB, KeyScreens::width, KeyScreens::height, true);
+            Graphics g (im);
+            g.fillAll (Colour (0xff262220));
+            const Colour cols[3] = { Colours::red, Colours::green, Colours::blue };
+            const char* names[3] = { "RED", "GREEN", "BLUE" };
+            for (int i = 0; i < 3; ++i)
+            {
+                const Rectangle<int> r (20 + i * 150, 90, 140, 110);
+                g.setColour (cols[i]); g.fillRoundedRectangle (r.toFloat(), 8.0f);
+                g.setColour (Colours::white); g.setFont (Font (FontOptions (22.0f))); g.drawText (names[i], r, Justification::centred);
+            }
+            g.setColour (Colours::white); g.setFont (Font (FontOptions (30.0f)));
+            g.drawText (String ("Flow  -  ") + labels[s], Rectangle<int> (20, 20, 440, 50), Justification::centredLeft);
+            g.setFont (Font (FontOptions (16.0f)));
+            g.drawText ("S88 MK2 screen test: do the bar colours match their names?", Rectangle<int> (20, 220, 440, 30), Justification::centredLeft);
+            std::vector<uint8_t> buf;
+            toBgr565 (im, buf);
+            keyScreens.submit (s, buf.data());
+        }
+    }
+
     int midiDiagR = 0, midiDiagTotal = 0;
     uint32_t midiDiagLast[256] = {};
     uint32_t midiDiagLastMs[256] = {};
@@ -1137,6 +1180,11 @@ private:
             { const ScopedLock sl (lightsLock); ok = keyLights.start(); }
             flow::flowLog ("key lights: " + keyLights.getStatus());
             if (ok) setMessage (gr ("Key lights: ") + keyLights.getStatus());
+            if (ok && ! keyScreens.isOn())   // οθόνες S88 (πείραμα): δοκιμαστικό καρέ με μπάρες χρώματος
+            {
+                keyScreens.logger = [] (const String& s) { flow::flowLog (s); };
+                if (keyScreens.start()) sendScreenTest();
+            }
             if (ok)
             {
                 lastLights.fill (0xff);
@@ -1151,6 +1199,7 @@ private:
             lightsRetryAt = 0;
             lightsPump.stopTimer();
             { const ScopedLock sl (lightsLock); keyLights.stop(); }
+            keyScreens.stop();
             flow::flowLog ("key lights: off");
         }
         saveNow();
@@ -4290,7 +4339,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.83.0"; }
+    const String getApplicationVersion() override { return "0.84.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
