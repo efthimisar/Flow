@@ -190,7 +190,7 @@ public:
                 const Rectangle<float> rr (x, y, colW, rowH - 6.0f);
                 g.setColour (Colour (0xff2d2926));
                 g.fillRoundedRectangle (rr, 6.0f);
-                if (selActive && k == selK) { g.setColour (Colour (0xfff3f4f6)); g.drawRoundedRectangle (rr.reduced (1.0f), 6.0f, 2.0f); }   // δείκτης επιλογής του encoder (S88)
+                if ((selActive || alwaysShowSel) && k == selK) { g.setColour (Colour (0xfff3f4f6)); g.drawRoundedRectangle (rr.reduced (1.0f), 6.0f, 2.0f); }   // δείκτης επιλογής του encoder (S88)
                 const bool fav = idx < keys.size() && favs.contains (keys[idx]);
                 const Rectangle<float> fr (rr.getX() + 6.0f, rr.getY() + (rr.getHeight() - 22.0f) * 0.5f, 22.0f, 22.0f);
                 if (fav) { g.setColour (Colour (0xfff3f4f6).withAlpha (0.16f)); g.fillEllipse (fr); }
@@ -240,7 +240,7 @@ public:
         }
     }
 
-    void mouseMove (const MouseEvent&) override { if (selActive) { selActive = false; repaint(); } }
+    void mouseMove (const MouseEvent&) override { if (selActive && ! alwaysShowSel) { selActive = false; repaint(); } }
 
     void mouseDown (const MouseEvent& e) override
     {
@@ -308,7 +308,7 @@ public:
     void encoderPush()
     {
         std::vector<int> vis; int cols, rows; buildVis (vis, cols, rows);
-        if (! selActive || selK < 0 || selK >= (int) vis.size()) return;
+        if ((! selActive && ! alwaysShowSel) || selK < 0 || selK >= (int) vis.size()) return;
         const int idx = vis[(size_t) selK];
         if (onPick) onPick (idx);
         close();
@@ -342,6 +342,9 @@ private:
     TextEditor search;
     int scroll = 0, selK = 0;
     bool selActive = false;
+public:
+    bool alwaysShowSel = false;   // με συνδεδεμένες οθόνες S88 το περίγραμμα επιλογής φαίνεται πάντα, ίδιο με αυτό της οθόνης του πληκτρολογίου
+private:
     std::vector<std::pair<Rectangle<float>, std::function<void()>>> hot;
 };
 

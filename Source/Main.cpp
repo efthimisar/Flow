@@ -1155,6 +1155,7 @@ private:
         if (! keyScreens.isOn()) return;
         auto& list = loopsView.getList();
         const bool open = list.isVisible();
+        list.alwaysShowSel = true;
         std::vector<int> vis; int cols = 1, rows = 1;
         String sig = "I";
         if (open)
@@ -1281,6 +1282,7 @@ private:
             lightsPump.stopTimer();
             { const ScopedLock sl (lightsLock); keyLights.stop(); }
             keyScreens.stop();
+            loopsView.getList().alwaysShowSel = false;
             flow::flowLog ("key lights: off");
         }
         saveNow();
