@@ -1065,6 +1065,44 @@ private:
     int lightsTick = 0;
     std::array<uint8_t, 88> lastLights {};
 
+    // Χειριστήρια του S88 MK2 (καταγραφή HID). 35–42 = τα 8 κουμπιά πάνω από την οθόνη → τα κουμπιά του Flow (5 αριστερά + 3 δεξιά).
+    // Encoder στη λίστα plugins: περιστροφή = γραμμή, κλίση πάνω/κάτω = instruments/favorites, αριστερά/δεξιά = στήλη, πάτημα = επιλογή.
+    void handleS88Control (int ctl, int v)
+    {
+        auto& list = loopsView.getList();
+        const bool listOpen = list.isVisible();
+        if (ctl == 100)   // περιστροφή: + = δεξιά
+        {
+            if (listOpen) list.encoderRows (v > 0 ? 1 : -1);
+            return;
+        }
+        if (v == 0) return;   // μόνο πάτημα
+        if (listOpen)
+        {
+            switch (ctl)
+            {
+                case 1: list.encoderPush(); return;                 // πάτημα encoder
+                case 2: list.encoderShowAll (true); return;         // πάνω = instruments
+                case 3: list.encoderShowAll (false); return;        // κάτω = favorites
+                case 4: list.encoderCols (-1); return;              // αριστερά
+                case 5: list.encoderCols (1); return;               // δεξιά
+                default: break;
+            }
+        }
+        switch (ctl)
+        {
+            case 35: blockTile.triggerClick(); break;
+            case 36: vstTile.triggerClick(); break;
+            case 37: mfxTile.triggerClick(); break;
+            case 38: fxTile.triggerClick(); break;
+            case 39: motionTile.triggerClick(); break;
+            case 40: folderTile.triggerClick(); break;
+            case 41: paletteTile.onDice(); break;
+            case 42: paletteTile.onCamera(); break;
+            default: break;
+        }
+    }
+
     int midiDiagR = 0, midiDiagTotal = 0;
     uint32_t midiDiagLast[256] = {};
     uint32_t midiDiagLastMs[256] = {};
@@ -1094,6 +1132,7 @@ private:
         if (on)
         {
             keyLights.setInputLogger ([] (const String& s) { flow::flowLog (s); });
+            keyLights.onControl = [this] (int ctl, int v) { handleS88Control (ctl, v); };
             bool ok;
             { const ScopedLock sl (lightsLock); ok = keyLights.start(); }
             flow::flowLog ("key lights: " + keyLights.getStatus());
@@ -4251,7 +4290,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.82.0"; }
+    const String getApplicationVersion() override { return "0.83.0"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

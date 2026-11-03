@@ -110,7 +110,7 @@ public:
         title = t; sub = s; colour = c; items = names; fmts = formats;
         onPick = pick; onRescan = rescan; onFile = file;
         keys = pluginKeys; favs = favourites; favChanged = favChangedFn; showAll = ! anyFavForTitle();   // ανοίγει στα favorites, αν υπάρχουν· αλλιώς σε όλα
-        scroll = 0;
+        scroll = 0; selK = 0; selActive = false;
         search.clear();
         setVisible (true);
         resized();
@@ -190,6 +190,7 @@ public:
                 const Rectangle<float> rr (x, y, colW, rowH - 6.0f);
                 g.setColour (Colour (0xff2d2926));
                 g.fillRoundedRectangle (rr, 6.0f);
+                if (selActive && k == selK) { g.setColour (Colour (0xfff3f4f6)); g.drawRoundedRectangle (rr.reduced (1.0f), 6.0f, 2.0f); }   // δείκτης επιλογής του encoder (S88)
                 const bool fav = idx < keys.size() && favs.contains (keys[idx]);
                 const Rectangle<float> fr (rr.getX() + 6.0f, rr.getY() + (rr.getHeight() - 22.0f) * 0.5f, 22.0f, 22.0f);
                 if (fav) { g.setColour (Colour (0xfff3f4f6).withAlpha (0.16f)); g.fillEllipse (fr); }
@@ -239,8 +240,11 @@ public:
         }
     }
 
+    void mouseMove (const MouseEvent&) override { if (selActive) { selActive = false; repaint(); } }
+
     void mouseDown (const MouseEvent& e) override
     {
+        selActive = false;
         for (auto& h : hot)
             if (h.first.contains (e.position)) { auto fn = h.second; fn(); return; }
     }
@@ -249,6 +253,60 @@ public:
     {
         for (int i = 0; i < items.size() && i < keys.size(); ++i) if (favs.contains (keys[i])) return true;
         return false;
+    }
+
+    // ---- Έλεγχος από τον encoder του S88 (4D): περιστροφή = γραμμή, κλίση πάνω/κάτω = instruments/favorites, αριστερά/δεξιά = στήλη, πάτημα = επιλογή
+    void buildVis (std::vector<int>& vis, int& cols, int& rowsVisible) const
+    {
+        cols = getWidth() >= 640 ? 2 : 1;
+        rowsVisible = jmax (1, (int) ((float) (getHeight() - 58 - 8) / 76.0f));
+        vis.clear();
+        const String q = search.getText().trim();
+        const bool onlyFavs = ! showAll && q.isEmpty();
+        for (int i = 0; i < items.size(); ++i)
+        {
+            if (! q.isEmpty()) { if (items[i].containsIgnoreCase (q)) vis.push_back (i); }
+            else if (! onlyFavs || (i < keys.size() && favs.contains (keys[i]))) vis.push_back (i);
+        }
+    }
+
+    void encoderRows (int delta)
+    {
+        std::vector<int> vis; int cols, rows; buildVis (vis, cols, rows);
+        const int total = (int) vis.size(); if (total == 0) return;
+        selK = jlimit (0, total - 1, selK + delta * cols);
+        keepSelVisible (cols, rows, total);
+    }
+
+    void encoderCols (int delta)
+    {
+        std::vector<int> vis; int cols, rows; buildVis (vis, cols, rows);
+        const int total = (int) vis.size(); if (total == 0 || cols < 2) return;
+        const int col = selK % cols;
+        if (delta < 0 && col > 0) --selK;
+        else if (delta > 0 && col < cols - 1 && selK + 1 < total) ++selK;
+        keepSelVisible (cols, rows, total);
+    }
+
+    void encoderShowAll (bool all) { showAll = all; scroll = 0; selK = 0; selActive = true; repaint(); }
+
+    void encoderPush()
+    {
+        std::vector<int> vis; int cols, rows; buildVis (vis, cols, rows);
+        if (! selActive || selK < 0 || selK >= (int) vis.size()) return;
+        const int idx = vis[(size_t) selK];
+        if (onPick) onPick (idx);
+        close();
+    }
+
+    void keepSelVisible (int cols, int rows, int total)
+    {
+        selActive = true;
+        const int row = selK / cols;
+        if (row < scroll) scroll = row;
+        else if (row >= scroll + rows) scroll = row - rows + 1;
+        scroll = jlimit (0, jmax (0, (total + cols - 1) / cols - rows), scroll);
+        repaint();
     }
 
     void mouseWheelMove (const MouseEvent&, const MouseWheelDetails& wd) override
@@ -267,7 +325,8 @@ private:
     std::function<void (int)> onPick;
     std::function<void()> onRescan, onFile;
     TextEditor search;
-    int scroll = 0;
+    int scroll = 0, selK = 0;
+    bool selActive = false;
     std::vector<std::pair<Rectangle<float>, std::function<void()>>> hot;
 };
 

@@ -25,6 +25,8 @@ public:
     // Διαγνωστικό: καταγράφει (μόνο ανάγνωση) τα HID reports που στέλνει το πληκτρολόγιο (κουμπιά, 4D encoder, joystick). Καλείται στο κύριο νήμα.
     void setInputLogger (std::function<void (const juce::String&)> f) { inputLogger = std::move (f); }
     void logInput (const uint8_t* data, int len);
+    // Χειριστήρια του S88 MK2 (HID report 0x01): ctl 1..50 = κουμπιά όπως αριθμήθηκαν στην εικόνα του χρήστη (value 1 = πάτημα, 0 = άφημα), ctl 100 = περιστροφή encoder (value = ±βήματα)
+    std::function<void (int ctl, int value)> onControl;
 
 private:
     bool fail (const juce::String& why);
@@ -40,6 +42,8 @@ private:
     int lastLen[256] = {};
     juce::uint32 lastLogMs = 0;
     int logBudget = 0, totalLogged = 0;
+    uint8_t ctlPrev[32] = {};
+    bool ctlHave = false;
 public:
     void armInputLog() { logBudget = 0; totalLogged = 0; }
 };

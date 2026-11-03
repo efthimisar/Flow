@@ -46,6 +46,7 @@ bool KeyLights::start()
 #if JUCE_MAC
     if (active) return true;
     status = {};
+    ctlHave = false;
 
     impl->manager = IOHIDManagerCreate (kCFAllocatorDefault, kIOHIDOptionsTypeNone);
     if (impl->manager == nullptr) return fail ("IOHIDManagerCreate failed");
@@ -166,8 +167,35 @@ bool KeyLights::sendKeys (const uint8_t* keys, int count)
 }
 
 // Καταγράφει μόνο ΑΛΛΑΓΜΕΝΑ bytes ενός report (id = πρώτο byte), με όριο ρυθμού και συνολικό όριο, ώστε να μη γεμίσει το log.
+// Αντιστοίχιση bits → αριθμός κουμπιού, βάσει της καταγραφής του χρήστη (S88 MK2, report 0x01, 32 bytes). 1 = πάτημα encoder, 2/3/4/5 = πάνω/κάτω/αριστερά/δεξιά
+static const struct { int byteIx; uint8_t mask; int ctl; } kS88Map[] = {
+    { 6, 0x08, 1 }, { 6, 0x20, 2 }, { 6, 0x40, 3 }, { 6, 0x10, 4 }, { 6, 0x80, 5 },
+    { 5, 0x04, 6 }, { 5, 0x02, 7 }, { 5, 0x01, 8 }, { 5, 0x10, 9 }, { 5, 0x20, 10 }, { 5, 0x08, 11 },
+    { 2, 0x80, 12 }, { 2, 0x08, 13 }, { 2, 0x04, 14 }, { 2, 0x40, 15 }, { 2, 0x02, 16 }, { 2, 0x01, 17 }, { 2, 0x20, 18 },
+    { 3, 0x08, 19 }, { 3, 0x04, 20 }, { 2, 0x10, 21 }, { 3, 0x02, 22 }, { 3, 0x01, 23 },
+    { 4, 0x01, 24 }, { 4, 0x02, 25 },
+    { 3, 0x10, 26 }, { 3, 0x40, 27 }, { 3, 0x80, 28 }, { 3, 0x20, 29 },
+    { 4, 0x04, 30 }, { 4, 0x08, 31 }, { 4, 0x10, 32 }, { 4, 0x40, 33 }, { 4, 0x20, 34 },
+    { 1, 0x10, 35 }, { 1, 0x20, 36 }, { 1, 0x40, 37 }, { 1, 0x80, 38 }, { 1, 0x01, 39 }, { 1, 0x02, 40 }, { 1, 0x04, 41 }, { 1, 0x08, 42 },
+};
+
 void KeyLights::logInput (const uint8_t* data, int len)
 {
+    if (data != nullptr && len >= 31 && data[0] == 0x01 && onControl)
+    {
+        if (ctlHave)
+        {
+            for (const auto& m : kS88Map)
+            {
+                const bool was = (ctlPrev[m.byteIx] & m.mask) != 0, now = (data[m.byteIx] & m.mask) != 0;
+                if (was != now) onControl (m.ctl, now ? 1 : 0);
+            }
+            const int d = (((int) (data[30] & 0x0f) - (int) (ctlPrev[30] & 0x0f) + 8) & 15) - 8;   // μετρητής 4 bit: + = δεξιά
+            if (d != 0) onControl (100, d);
+        }
+        for (int i = 0; i < 31; ++i) ctlPrev[i] = data[i];
+        ctlHave = true;
+    }
     if (! inputLogger || data == nullptr || len <= 0) return;
     const int id = data[0];
     const int n = juce::jmin (len, 64);
