@@ -290,6 +290,7 @@ public:
         engine.masterPos = 1.0f;   // το master volume είναι πάντα 100%
         engine.followSetScale (settings->getIntValue ("followRoot", 9), settings->getIntValue ("followType", 1));
         engine.smartOn = settings->getIntValue ("smartOn", 0) != 0 ? 1 : 0;
+        engine.smartContext = settings->getIntValue ("smartContext", 0) != 0 ? 1 : 0;
         engine.smartAccept = jlimit (0.0f, 1.0f, (float) settings->getDoubleValue ("smartAccept", 0.6));
         engine.masterCc = 0;
         metroSamplePath = settings->getValue ("metroSample");
@@ -2911,6 +2912,8 @@ private:
             }
             return v;
         };
+        h.smartContextGet = [this] { return engine.smartContext.load(); };
+        h.smartContextSet = [this] (int v) { engine.smartContext = v; saveNow(); };
         h.smartOnGet = [this] { return engine.smartOn.load(); };
         h.smartOnSet = [this] (int v) { engine.smartOn = v; saveNow(); };
         h.smartAcceptGet = [this] { return engine.smartAccept.load(); };
@@ -3767,6 +3770,7 @@ private:
         settings->setValue ("followRoot", engine.followRoot.load());
         settings->setValue ("followType", engine.followType.load());
         settings->setValue ("smartOn", engine.smartOn.load());
+        settings->setValue ("smartContext", engine.smartContext.load());
         settings->setValue ("smartAccept", (double) engine.smartAccept.load());
         settings->setValue ("metroChannel", engine.metroChannel.load());
         settings->setValue ("metroSample", metroSamplePath);
@@ -4101,6 +4105,30 @@ private:
         if (dirty && Time::getMillisecondCounter() - lastSaveMs > 5000)   // κάθε αποθήκευση γράφει ~15 MB (~160 ms στο UI): όχι πιο συχνά από ανά 5 s
             saveSettings (false);
 
+        if (engine.smartOn.load() != 0 && ++smartDiagTicks >= 300)   // κάθε ~10 s: στάθμες ανά block και ζώνη (dBFS) και διόρθωση, για ρύθμιση του Smart με δεδομένα
+        {
+            smartDiagTicks = 0;
+            static const char* tn[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
+            String line = String ("smart ") + (engine.smartContext.load() != 0 ? "context" : "classic") + ":";
+            float total[6] = {};
+            for (int b = 0; b < flow::numBlocks; ++b)
+            {
+                if (engine.active[(size_t) b].load() == 0) continue;
+                String lv, ap;
+                for (int k = 0; k < 6; ++k)
+                {
+                    const float lvl = engine.smartBand[(size_t) b][(size_t) k].load();
+                    total[k] += flow::smartCtxEnergy (lvl);
+                    lv << String (lvl * 60.0f - 60.0f, 0) << (k < 5 ? " " : "");
+                    ap << String (engine.smartApp[(size_t) b][(size_t) k].load(), 1) << (k < 5 ? " " : "");
+                }
+                line << " | b" << (b + 1) << " " << tn[jlimit (0, 7, engine.smartType[(size_t) b].load())] << " dB[" << lv << "] cut[" << ap << "] w" << String (engine.smartWidth[(size_t) b].load(), 2);
+            }
+            float all = 0.0f; for (int k = 0; k < 6; ++k) all += total[k];
+            if (all > 1.0e-12f) line << " | share% [" << String (100.0f * total[0] / all, 0) << " " << String (100.0f * total[1] / all, 0) << " " << String (100.0f * total[2] / all, 0) << " " << String (100.0f * total[3] / all, 0) << " " << String (100.0f * total[4] / all, 0) << " " << String (100.0f * total[5] / all, 0) << "]";
+            flow::flowLog (line);
+        }
+
         if (++stateTicks >= 3600)   // ~2 λεπτά: η αποθήκευση με states (32 MB) κοστίζει ~0.5 s στο UI
         {
             stateTicks = 0;
@@ -4133,7 +4161,7 @@ private:
     Rectangle<int> loopsBezel, pluginBezel, stripBezel, keysBezel;
     String message;
     int lastLearned = 0, lastVolLearned = 0, lastChange = 0;
-    int messageTicks = 0, stateTicks = 0;
+    int messageTicks = 0, stateTicks = 0, smartDiagTicks = 0;
     bool dirty = false;
     uint32 lastSaveMs = 0;
     Array<int> loadingSlots;

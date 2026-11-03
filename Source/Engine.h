@@ -4,6 +4,7 @@
 // Όλη η μουσική λογική τρέχει μέσα στο audio callback, άρα ο χρόνος ακολουθεί το ρολόι του ήχου.
 
 #include <juce_audio_utils/juce_audio_utils.h>
+#include "SmartCore.h"
 #include "RecorderEngine.h"
 #include "LinkBridge.h"
 #include <algorithm>
@@ -200,6 +201,7 @@ namespace flow
             followTRoot = followRoot.load(); followTType = followType.load();
         }
         // Smart master: μέτρηση ανά block (3 ζώνες + πλάτος stereo) και διόρθωση με βάση τον τύπο ήχου
+        std::atomic<int> smartContext { 0 };                       // 1 = Smart «Context»: διόρθωση ως προς τα άλλα blocks (SmartCore.h)
         std::atomic<int> smartOn { 0 }, smartAuto { 1 };            // On/Off. Η διόρθωση είναι πάντα Auto (το smartAuto δεν χρησιμοποιείται πια)
         std::atomic<float> smartAccept { 0.6f };                    // πόσο από την αναγκαία διόρθωση εφαρμόζεται (0..1)
         std::array<std::atomic<int>, numBlocks> smartType;          // 0 Other, 1 Bass, 2 Keys, 3 Pad, 4 Lead, 5 Strings, 6 Drums, 7 FX
@@ -1084,14 +1086,28 @@ namespace flow
             float lim[7]; smartLimits (type, lim);
             const float accept = smartAccept.load();
             const float kk = 1.0f - std::exp (-(float) n / (0.5f * (float) sr));
+            const bool ctx = smartContext.load() != 0;
+            float ctxCut[6] = {};
+            if (ctx && type != 0)   // Context: η μείωση εξαρτάται από τα άλλα blocks (τα επίπεδα όλων, πριν τη διόρθωση)
+            {
+                float lv[numBlocks][smartBands]; int ty[numBlocks]; bool ac[numBlocks];
+                for (int c = 0; c < numBlocks; ++c)
+                {
+                    ac[c] = active[(size_t) c].load() != 0;
+                    ty[c] = smartType[(size_t) c].load();
+                    for (int k = 0; k < smartBands; ++k) lv[c][k] = smartBand[(size_t) c][(size_t) k].load();
+                }
+                smartContextCut (lv, ty, ac, numBlocks, b, 0.6f, ctxCut);
+            }
+            const float kkAtt = 1.0f - std::exp (-(float) n / (0.15f * (float) sr));   // Context: γρήγορο attack, αργό release
             float g[6];
             for (int k = 0; k < 6; ++k)
             {
-                const float need = type == 0 ? 0.0f : juce::jlimit (0.0f, smartMaxDb (k), (smartBand[(size_t) b][(size_t) k].load() - lim[k]) * 60.0f);
+                const float need = type == 0 ? 0.0f : ctx ? ctxCut[k] : juce::jlimit (0.0f, smartMaxDb (k), (smartBand[(size_t) b][(size_t) k].load() - lim[k]) * 60.0f);
                 smartNeed[(size_t) b][(size_t) k] = need;
                 float app = smartApp[(size_t) b][(size_t) k].load();
                 if (type == 0) app = 0.0f;
-                else app += kk * (need * accept - app);
+                else app += (ctx && need * accept > app ? kkAtt : kk) * (need * accept - app);
                 smartApp[(size_t) b][(size_t) k] = app;
                 g[k] = std::pow (10.0f, -app / 20.0f);
             }

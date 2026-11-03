@@ -66,6 +66,8 @@ public:
         std::function<void (int)> followOnSet, followRootSet, followTypeSet;
         std::function<void (int, bool)> followBlockSet;
         std::function<std::vector<SmartBlock>()> smartBlocks;
+        std::function<int()> smartContextGet;   // προσωρινός διακόπτης: Smart Context (εξαρτάται από τα άλλα blocks)
+        std::function<void (int)> smartContextSet;
         std::function<int()> smartOnGet;
         std::function<float()> smartAcceptGet;
         std::function<void (int)> smartOnSet;
@@ -404,8 +406,8 @@ private:
     {
         using namespace juce;
         const bool hv = hov (r);
-        g.setColour (sel ? Colour (0xff3c5a46) : hv ? Colour (0xff423d39) : Colour (0xff36322f)); g.fillRoundedRectangle (r.toFloat(), (float) r.getHeight() * 0.5f);
-        g.setColour (sel ? hobby::kOn : lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), (float) r.getHeight() * 0.5f, sel ? 1.8f : 1.0f);
+        g.setColour (sel ? Colour (0xff4a4642) : hv ? Colour (0xff423d39) : Colour (0xff36322f)); g.fillRoundedRectangle (r.toFloat(), (float) r.getHeight() * 0.5f);
+        g.setColour (sel ? Colour (0xfff3f4f6) : lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), (float) r.getHeight() * 0.5f, sel ? 1.8f : 1.0f);
         g.setColour (sel ? txt() : dim()); g.setFont (font (13.0f, true));
         g.drawText (t, r, Justification::centred, true);
         hits.push_back ({ r, std::move (fn) });
@@ -419,6 +421,12 @@ private:
         (void) L;
         // δεξιά: ανά block
         auto rc = cardHeader (g, R, "Per block");
+        if (host.smartContextGet)   // προσωρινά: Classic / Context
+        {
+            const bool ctxOn = host.smartContextGet() != 0;
+            smallPill (g, { R.getRight() - 20 - 190, R.getY() + 10, 90, 28 }, "Classic", ! ctxOn, [this] { if (host.smartContextSet) host.smartContextSet (0); repaint(); });
+            smallPill (g, { R.getRight() - 20 - 94, R.getY() + 10, 94, 28 }, "Context", ctxOn, [this] { if (host.smartContextSet) host.smartContextSet (1); repaint(); });
+        }
         const auto blocks = host.smartBlocks ? host.smartBlocks() : std::vector<SmartBlock>();
         static const char* typeNames[] = { "Other", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX" };
         int y = rc.getY();
