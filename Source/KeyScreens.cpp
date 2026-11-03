@@ -151,6 +151,7 @@ bool KeyScreens::start()
     impl->worker = std::thread ([this]
     {
         std::vector<uint8_t> buf;
+        int lastScreen = 1;
         for (;;)
         {
             int screen = -1;
@@ -158,7 +159,9 @@ bool KeyScreens::start()
                 std::unique_lock<std::mutex> lk (impl->m);
                 impl->cv.wait (lk, [this] { return impl->quit.load() || impl->has[0] || impl->has[1]; });
                 if (impl->quit.load()) return;
-                screen = impl->has[0] ? 0 : 1;
+                const int other = 1 - lastScreen;   // εναλλάσσονται οι οθόνες: αλλιώς η αριστερή, που ανανεώνεται συνεχώς, άφηνε τη δεξιά να παίρνει καρέ σπάνια
+                screen = impl->has[other] ? other : lastScreen;
+                lastScreen = screen;
                 buf.clear();
                 static const uint8_t hdr[20] = { 0x84, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xe0, 0x01, 0x10, 0x00, 0x00, 0xff, 0x00 };
                 static const uint8_t ftr[8] = { 0x03, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00 };
