@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "Apple Silicon only")
 
-project(Flow VERSION 0.89.0)
+project(Flow VERSION 0.90.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,7 +42,7 @@ juce_add_gui_app(Flow
     PRODUCT_NAME "Flow"
     COMPANY_NAME "Prisma Audio"
     BUNDLE_ID com.prismaaudio.flow
-    VERSION 0.89.0
+    VERSION 0.90.0
     PLIST_TO_MERGE "<plist><dict><key>CFBundleDisplayName</key><string>flow</string></dict></plist>"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon.png")
 

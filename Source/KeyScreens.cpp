@@ -2,6 +2,7 @@
 #include "KeyScreens.h"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -197,6 +198,12 @@ bool KeyScreens::start()
 void KeyScreens::stop()
 {
 #if JUCE_MAC
+    if (impl->worker.joinable())   // να σταλεί το τελευταίο καρέ (π.χ. το λογότυπο στο κλείσιμο) πριν σταματήσει ο worker
+        for (int i = 0; i < 100; ++i)
+        {
+            { std::lock_guard<std::mutex> lk (impl->m); if (! impl->has[0] && ! impl->has[1]) break; }
+            std::this_thread::sleep_for (std::chrono::milliseconds (5));
+        }
     {
         std::lock_guard<std::mutex> lk (impl->m);
         impl->quit = true;
