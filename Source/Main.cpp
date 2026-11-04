@@ -1938,7 +1938,9 @@ private:
         return out;
     }
 
-    // Γεννήτρια: γεωμετρική σύνθεση σε στυλ Bauhaus με συνδυασμό χρωμάτων Wada (μόνο συνδυασμοί με 3-4 χρώματα): ορθογώνια κελιά σε πλέγμα 3x3 ή 4x4 (γειτονικά κελιά με διαφορετικό χρώμα), πάνω τους τεταρτοκύκλια, ημικύκλια και ορθογώνια, και λεπτός κόκκος
+    // Γεννήτρια: γεωμετρική σύνθεση σε στυλ Bauhaus με συνδυασμό χρωμάτων Wada (μόνο συνδυασμοί με 3-4 χρώματα). Τρεις πυκνότητες: λίγα και μεγάλα (πλέγμα 3x3, 3-5 σχήματα), μεσαία (4x4, 7-10), πολλά και μικρά (5x5, 12-18).
+    // Σχήματα: τεταρτοκύκλια 55%, ημικύκλια 20%, ορθογώνια 25%, πάντα με τουλάχιστον ένα τόξο. Έως 8 δοκιμές: κρατιέται η πρώτη όπου κανένα χρώμα δεν πιάνει πάνω από ~42-50% και κάθε χρώμα φαίνεται τουλάχιστον 8%.
+    // Όλες οι ευθείες ακμές πέφτουν σε ακέραια pixel (χωρίς εξομάλυνση ακμών), ώστε να μη φαίνονται λεπτές γραμμές στα όρια των κελιών· μόνο οι καμπύλες εξομαλύνονται. Στο τέλος λεπτός κόκκος.
     static Image orbGenerated (Random& rnd)
     {
         constexpr int N = 512;
@@ -1949,42 +1951,88 @@ private:
         Colour pal[4];
         for (int i = 0; i < np; ++i) pal[i] = Colour ((uint32) (0xff000000u | wada::kColours[combo.idx[i]]));
 
-        Image out (Image::ARGB, N, N, true);
-        Graphics g (out);
-        const int grid = rnd.nextBool() ? 3 : 4;
-        const float cs = (float) N / (float) grid;
-        int cell[4][4] = {};
-        for (int r = 0; r < grid; ++r)
-            for (int c = 0; c < grid; ++c)
-            {
-                int k = rnd.nextInt (np), tries = 0;
-                while (tries++ < 20 && ((c > 0 && k == cell[r][c - 1]) || (r > 0 && k == cell[r - 1][c]))) k = rnd.nextInt (np);
-                cell[r][c] = k;
-                g.setColour (pal[k]);
-                g.fillRect (Rectangle<float> ((float) c * cs, (float) r * cs, cs + 1.0f, cs + 1.0f));
-            }
-        int last = -1;
-        const int nShapes = 8 + rnd.nextInt (5);
-        for (int i = 0; i < nShapes; ++i)
+        const int dens = rnd.nextInt (3);                     // 0 λίγα και μεγάλα, 1 μεσαία, 2 πολλά και μικρά
+        const int grid = dens == 0 ? 3 : dens == 1 ? 4 : 5;
+        const int smin = dens == 0 ? 3 : dens == 1 ? 7 : 12, smax = dens == 0 ? 5 : dens == 1 ? 10 : 18;
+        int e[6];
+        for (int i = 0; i <= grid; ++i) e[i] = (int) std::lround ((double) i * N / (double) grid);
+
+        auto compose = [&] (Image& out)
         {
-            int k = rnd.nextInt (np);
-            if (k == last) k = (k + 1 + rnd.nextInt (np - 1)) % np;
-            last = k;
-            g.setColour (pal[k]);
-            const float gx = (float) rnd.nextInt (grid + 1) * cs, gy = (float) rnd.nextInt (grid + 1) * cs;
-            const float roll = rnd.nextFloat();
-            if (roll < 0.65f)
+            Graphics g (out);
+            g.fillAll (pal[0]);   // αδιαφανές από την αρχή: καμία ημιδιαφανής γραμμή
+            int cell[5][5] = {};
+            for (int r = 0; r < grid; ++r)
+                for (int c = 0; c < grid; ++c)
+                {
+                    int k = rnd.nextInt (np), tries = 0;
+                    while (tries++ < 20 && ((c > 0 && k == cell[r][c - 1]) || (r > 0 && k == cell[r - 1][c]))) k = rnd.nextInt (np);
+                    cell[r][c] = k;
+                    g.setColour (pal[k]);
+                    g.fillRect (Rectangle<int> (e[c], e[r], e[c + 1] - e[c], e[r + 1] - e[r]));
+                }
+            int last = -1, arcs = 0;
+            const int nShapes = smin + rnd.nextInt (smax - smin + 1);
+            for (int i = 0; i <= nShapes; ++i)   // το τελευταίο (i == nShapes) μπαίνει μόνο αν λείπει τόξο
             {
-                const float R = rnd.nextInt (4) == 0 ? 2.0f * cs : cs;
-                const float a0 = (float) rnd.nextInt (4) * MathConstants<float>::halfPi;
-                const float span = roll < 0.4f ? MathConstants<float>::halfPi : MathConstants<float>::pi;   // τεταρτοκύκλιο ή ημικύκλιο
-                Path p; p.addPieSegment (gx - R, gy - R, 2.0f * R, 2.0f * R, a0, a0 + span, 0.0f);
-                g.fillPath (p);
+                if (i == nShapes && arcs > 0) break;
+                int k = rnd.nextInt (np);
+                if (k == last) k = (k + 1 + rnd.nextInt (np - 1)) % np;
+                last = k;
+                g.setColour (pal[k]);
+                const int ix = rnd.nextInt (grid + 1), iy = rnd.nextInt (grid + 1);
+                const float roll = i == nShapes ? 0.0f : rnd.nextFloat();   // το αναγκαστικό σχήμα είναι τεταρτοκύκλιο
+                if (roll < 0.75f)
+                {
+                    const int rc = (dens != 2 && rnd.nextFloat() < 0.3f) ? 2 : 1;   // ακτίνα 1 ή 2 κελιά
+                    const float R = (float) e[jmin (grid, rc)];
+                    const float a0 = (float) rnd.nextInt (4) * MathConstants<float>::halfPi;
+                    const float span = roll < 0.55f ? MathConstants<float>::halfPi : MathConstants<float>::pi;
+                    Path pth; pth.addPieSegment ((float) e[ix] - R, (float) e[iy] - R, 2.0f * R, 2.0f * R, a0, a0 + span, 0.0f);
+                    g.fillPath (pth);
+                    ++arcs;
+                }
+                else
+                {
+                    const int w = 1 + rnd.nextInt (2), h = 1 + rnd.nextInt (2);
+                    g.fillRect (Rectangle<int> (e[ix], e[iy], e[jmin (grid, ix + w)] - e[ix], e[jmin (grid, iy + h)] - e[iy]));
+                }
             }
-            else g.fillRect (Rectangle<float> (gx, gy, cs * (float) (1 + rnd.nextInt (2)), cs * (float) (1 + rnd.nextInt (2))));
+        };
+
+        Image best; float bestScore = 1.0e9f;
+        for (int attempt = 0; attempt < 8; ++attempt)
+        {
+            Image cand1 (Image::ARGB, N, N, true);
+            compose (cand1);
+            int cnt[4] = {}, tot = 0;   // κάλυψη ανά χρώμα: δειγματοληψία μέσα στον κύκλο
+            {
+                Image::BitmapData bd (cand1, Image::BitmapData::readOnly);
+                for (int y = 4; y < N; y += 8)
+                    for (int x = 4; x < N; x += 8)
+                    {
+                        const float dx = (float) x - N * 0.5f, dy = (float) y - N * 0.5f;
+                        if (dx * dx + dy * dy > (N * 0.5f) * (N * 0.5f)) continue;
+                        const auto c = bd.getPixelColour (x, y);
+                        int bi = 0; float bd2 = 1.0e9f;
+                        for (int i = 0; i < np; ++i)
+                        {
+                            const float dr = c.getFloatRed() - pal[i].getFloatRed(), dg = c.getFloatGreen() - pal[i].getFloatGreen(), db = c.getFloatBlue() - pal[i].getFloatBlue();
+                            const float d2 = dr * dr + dg * dg + db * db;
+                            if (d2 < bd2) { bd2 = d2; bi = i; }
+                        }
+                        ++cnt[bi]; ++tot;
+                    }
+            }
+            float mx = 0.0f, mn = 1.0f;
+            for (int i = 0; i < np; ++i) { const float f = tot > 0 ? (float) cnt[i] / (float) tot : 0.0f; mx = jmax (mx, f); mn = jmin (mn, f); }
+            const float score = mx + (mn < 0.08f ? 0.3f : 0.0f);
+            if (! best.isValid() || score < bestScore) { best = cand1; bestScore = score; }
+            if (mx <= (np == 3 ? 0.5f : 0.42f) && mn >= 0.08f) break;
         }
+
         {   // λεπτός κόκκος
-            Image::BitmapData bd (out, Image::BitmapData::readWrite);
+            Image::BitmapData bd (best, Image::BitmapData::readWrite);
             for (int y = 0; y < N; ++y)
                 for (int x = 0; x < N; ++x)
                 {
@@ -1993,7 +2041,7 @@ private:
                     bd.setPixelColour (x, y, Colour ((uint8) jlimit (0, 255, (int) c.getRed() + dn), (uint8) jlimit (0, 255, (int) c.getGreen() + dn), (uint8) jlimit (0, 255, (int) c.getBlue() + dn), (uint8) 255));
                 }
         }
-        return out;
+        return best;
     }
 
     void autoOrbImage()
