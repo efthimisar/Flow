@@ -1198,12 +1198,12 @@ private:
     void drawS88Strip (Graphics& g, int screen)
     {
         static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Rec motion", "Settings", "Dice", "Keep" };
-        g.setColour (Colour (0xff2a2826));
-        g.fillRect (0, 2, KeyScreens::width, s88StripH - 4);
+        g.setColour (Colour (0xff1c1a19).withAlpha (0.75f));   // 75% αδιαφάνεια: το σχέδιο φαίνεται αχνά από πίσω
+        g.fillRect (0, 0, KeyScreens::width, s88StripH);
         g.setColour (Colour (0xffe8e4e0));
         g.setFont (hobby::makeFont (typeface, 22.0f).boldened());
         for (int i = 0; i < 4; ++i)
-            g.drawText (words[screen * 4 + i], Rectangle<int> (i * 120 + s88WordShift, 2, 120, s88StripH - 4), Justification::centred, false);
+            g.drawText (words[screen * 4 + i], Rectangle<int> (i * 120 + s88WordShift, 0, 120, s88StripH), Justification::centred, false);
     }
 
     // 1: λογότυπο αριστερά, κυκλάκι δεξιά, καθαρό μαύρο
@@ -1228,9 +1228,9 @@ private:
     // 2: το σχέδιο συνεχίζεται από την αριστερή οθόνη στη δεξιά (οθαλμαπάτη χωρίς διακοπή)
     void drawS88Art (Graphics& gl, Graphics& gRt)
     {
-        if (! s88Art.isValid()) { Random rnd; s88Art = orbGeneratedWide (rnd, 2 * KeyScreens::width, KeyScreens::height - s88StripH); }
-        gl.drawImageAt (s88Art, 0, s88StripH);
-        gRt.drawImageAt (s88Art, -KeyScreens::width, s88StripH);
+        if (! s88Art.isValid()) { Random rnd; s88Art = orbGeneratedWide (rnd, 2 * KeyScreens::width, KeyScreens::height); }
+        gl.drawImageAt (s88Art, 0, 0);   // το σχέδιο πιάνει όλο το ύψος· η λωρίδα με τις λέξεις είναι ημιδιαφανής από πάνω
+        gRt.drawImageAt (s88Art, -KeyScreens::width, 0);
     }
 
     // 4: δαχτυλίδια, 4 ανά οθόνη, κάτω από τη λωρίδα. Γεμίζει όσο προχωρά η λούπα· κόκκινο όσο γράφεται (Rec MIDI loop), όπως στο Flow.
