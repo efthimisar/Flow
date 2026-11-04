@@ -275,7 +275,6 @@ public:
         loopsView.onOrbMode = [this] { repaint(); };
         loopsView.onOrbImageClear = [this] { setOrbImage ({}); };
 
-        orbFolderPath = settings->getValue ("orbFolder");
         windowSizeMode = jlimit (0, 3, settings->getIntValue ("windowSize", 1));
         autoOrbImage();   // νέο (άδειο) set: τυχαία εικόνα από το φάκελο Music/Flow/Orb, αν υπάρχει
         loopsView.setOrbMode (false);   // η κύρια οθόνη δείχνει πάντα: loop του block, orb, Smart + Follow
@@ -1841,30 +1840,8 @@ private:
         if (save) saveNow();
     }
 
-    // ---- Orb: αυτόματη εικόνα από τον φάκελο Music/Flow/Orb, με τυχαία παραλλαγή ----
+    // ---- Orb: εικόνα από τη γεννήτρια (Bauhaus + Sanzo Wada) ----
     int windowSizeMode = 1;     // 0 Compact, 1 Default, 2 Large, 3 Free
-    String orbFolderPath;       // ρύθμιση χρήστη· κενό = Music/Flow/Orb
-    std::unique_ptr<FileChooser> orbFolderChooser;
-
-    File orbImagesDir() const
-    {
-        if (orbFolderPath.isNotEmpty()) return File (orbFolderPath);
-        return File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Orb");
-    }
-
-    void chooseOrbFolder()
-    {
-        orbFolderChooser = std::make_unique<FileChooser> (gr ("Folder with images for the orb"), orbImagesDir().getParentDirectory());
-        orbFolderChooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectDirectories, [this] (const FileChooser& fc)
-        {
-            const auto f = fc.getResult();
-            if (f == File() || ! f.isDirectory()) return;
-            orbFolderPath = f.getFullPathName();
-            saveNow();
-            setMessage (gr ("Orb images folder: ") + f.getFileName());
-        });
-    }
-
     // χωρίς zoom: η μεγάλη πλευρά της εικόνας = η διάμετρος του κύκλου· τετράγωνη εικόνα γεμίζει τον κύκλο και οι γωνίες κόβονται
     static Image orbFit (const Image& src, bool flipIt = false, int quarterTurns = 0)
     {
@@ -1877,64 +1854,6 @@ private:
         g.addTransform (AffineTransform::translation (-w * 0.5f, -h * 0.5f).scaled (flipIt ? -k : k, k)
                             .rotated ((float) quarterTurns * MathConstants<float>::halfPi).translated ((float) N * 0.5f, (float) N * 0.5f));
         g.drawImageAt (src, 0, 0);
-        return out;
-    }
-
-    static Image orbVariation (const Image& src, Random& rnd)
-    {
-        constexpr int N = 512;
-        Image out = orbFit (src, rnd.nextBool(), rnd.nextInt (4));
-
-        // χρώμα: τυχαίος συνδυασμός από το «A Dictionary of Color Combinations» του Sanzo Wada (WadaPalettes.h). Gradient map: η φωτεινότητα της εικόνας (με αυτόματη επέκταση της κλίμακας) αντιστοιχίζεται στα χρώματα του συνδυασμού, από το πιο σκούρο στο πιο ανοιχτό, και το αποτέλεσμα αντικαθιστά πλήρως τα χρώματα της εικόνας (100%, κατά επιλογή του χρήστη)
-        {
-            const auto& combo = wada::kCombos[rnd.nextInt (348)];
-            auto luma = [] (float r, float g, float b) { return 0.2126f * r + 0.7152f * g + 0.0722f * b; };
-            struct Stop { float l, r, g, b; };
-            std::vector<Stop> stops;
-            for (int i = 0; i < combo.n; ++i)
-            {
-                const uint32_t c = wada::kColours[combo.idx[i]];
-                const float r = (float) ((c >> 16) & 0xff) / 255.0f, g = (float) ((c >> 8) & 0xff) / 255.0f, b = (float) (c & 0xff) / 255.0f;
-                stops.push_back ({ luma (r, g, b), r, g, b });
-            }
-            std::sort (stops.begin(), stops.end(), [] (const Stop& x, const Stop& y) { return x.l < y.l; });
-
-            Image::BitmapData bd (out, Image::BitmapData::readWrite);
-            int hist[256] = {}; int count = 0;
-            for (int y = 0; y < N; ++y)
-                for (int x = 0; x < N; ++x)
-                {
-                    const auto c = bd.getPixelColour (x, y);
-                    if (c.getAlpha() < 128) continue;
-                    ++hist[jlimit (0, 255, (int) std::lround (luma (c.getFloatRed(), c.getFloatGreen(), c.getFloatBlue()) * 255.0f))]; ++count;
-                }
-            float lo = 0.0f, hi = 1.0f;   // 2% - 98% της φωτεινότητας → 0 - 1, ώστε η παλέτα να χρησιμοποιείται ολόκληρη
-            if (count > 0)
-            {
-                int acc = 0, il = 0, ih = 255;
-                for (int i = 0; i < 256; ++i) { acc += hist[i]; if (acc >= count * 0.02) { il = i; break; } }
-                acc = 0;
-                for (int i = 0; i < 256; ++i) { acc += hist[i]; if (acc >= count * 0.98) { ih = i; break; } }
-                lo = (float) il / 255.0f; hi = jmax (lo + 0.05f, (float) ih / 255.0f);
-            }
-            constexpr float mixMapped = 1.0f;
-            for (int y = 0; y < N; ++y)
-                for (int x = 0; x < N; ++x)
-                {
-                    const auto c = bd.getPixelColour (x, y);
-                    if (c.getAlpha() == 0) continue;
-                    const float t = jlimit (0.0f, 1.0f, (luma (c.getFloatRed(), c.getFloatGreen(), c.getFloatBlue()) - lo) / (hi - lo));
-                    const float pos = t * (float) (stops.size() - 1);   // οι στάσεις κατανέμονται ισομερώς κατά μήκος της κλίμακας
-                    const int k = jlimit (0, (int) stops.size() - 2, (int) pos);
-                    const float f = pos - (float) k;
-                    const float r = stops[(size_t) k].r + (stops[(size_t) k + 1].r - stops[(size_t) k].r) * f;
-                    const float g = stops[(size_t) k].g + (stops[(size_t) k + 1].g - stops[(size_t) k].g) * f;
-                    const float b = stops[(size_t) k].b + (stops[(size_t) k + 1].b - stops[(size_t) k].b) * f;
-                    bd.setPixelColour (x, y, Colour::fromFloatRGBA (c.getFloatRed() + (r - c.getFloatRed()) * mixMapped, c.getFloatGreen() + (g - c.getFloatGreen()) * mixMapped,
-                                                                     c.getFloatBlue() + (b - c.getFloatBlue()) * mixMapped, c.getFloatAlpha()));
-                }
-        }
-
         return out;
     }
 
@@ -2046,17 +1965,8 @@ private:
 
     void autoOrbImage()
     {
-        auto dir = orbImagesDir();
-        dir.createDirectory();
-        const auto files = dir.findChildFiles (File::findFiles, false, "*.jpg;*.jpeg;*.png");
         Random rnd;
-        if (files.isEmpty() || rnd.nextBool())   // κενός φάκελος: πάντα γεννήτρια· αλλιώς μισές φορές γεννήτρια, μισές εικόνα του φακέλου
-        {
-            setOrbImage (orbGenerated (rnd), false);
-            return;
-        }
-        const auto src = ImageFileFormat::loadFrom (files[rnd.nextInt (files.size())]);
-        if (src.isValid()) setOrbImage (orbVariation (src, rnd), false);
+        setOrbImage (orbGenerated (rnd), false);
     }
 
     void pickOrbImage()
@@ -3204,7 +3114,6 @@ private:
                  engine.setLinkEnabled (on);
                  setMessage (on ? gr ("Ableton Link: on") : gr ("Ableton Link: off"));
              }), LinkBridge::isAvailable(), engine.isLinkEnabled());
-        add (String::fromUTF8 ("\xe2\x96\xa3"), gr ("Orb images folder\xe2\x80\xa6"), act ([this] { chooseOrbFolder(); }));
         {
             LoopsView::MenuEntry m; m.glyph = "!"; m.text = "Panic";
             { LoopsView::MenuEntry sj; sj.text = gr ("Silence stuck notes (Esc)"); sj.fn = [this] { doPanic(); }; m.sub.push_back (std::move (sj)); }
@@ -3449,14 +3358,6 @@ private:
         h.panicAssign = [this] { startPedalLearn (flow::ctlPanic); };
         h.panicRemove = [this] { engine.mapCode[flow::ctlPanic] = 0; saveNow(); };
         h.panicCodeText = [this]() -> String { const int c = engine.mapCode[flow::ctlPanic].load(); return c != 0 ? pedalCodeText (c) : String(); };
-        h.orbFolderText = [this]
-        {
-            String path = orbImagesDir().getFullPathName();
-            const auto home = File::getSpecialLocation (File::userHomeDirectory).getFullPathName();
-            if (home.isNotEmpty() && path.startsWith (home)) path = "~" + path.substring (home.length());
-            return path;
-        };
-        h.chooseOrbFolder = [this] { chooseOrbFolder(); };
         h.startQGet = [this] { return engine.startQ.load(); };
         h.startQSet = [this] (int v) { engine.startQ = v; saveNow(); };
         h.lengthQGet = [this] { return engine.lengthQ.load(); };
@@ -4366,7 +4267,6 @@ private:
         settings->setValue ("metroSample", metroSamplePath);
         settings->setValue ("link", engine.isLinkEnabled());
         settings->setValue ("keyLights", lightsWanted);
-        settings->setValue ("orbFolder", orbFolderPath);
         settings->setValue ("windowSize", windowSizeMode);
 
         for (int i = 0; i < flow::numControls; ++i)

@@ -1,7 +1,7 @@
 // Sanzo Wada, «A Dictionary of Color Combinations» (1933-34): 348 συνδυασμοί 2-4 χρωμάτων από 159 χρώματα.
 // Τα δεδομένα προέρχονται από το δημόσιο αποθετήριο https://github.com/mattdesl/dictionary-of-colour-combinations (MIT, Copyright (c) 2020 Matt DesLauriers),
 // που τα βασίζει στη δουλειά του Dain M. Blodorn Kim (https://github.com/dblodorn/sanzo-wada). Αρχείο παραγόμενο από το colors.json τους: τιμές RGB ανά χρώμα και λίστα χρωμάτων ανά συνδυασμό.
-// Χρησιμοποιείται για το χρώμα της εικόνας του orb (Main.cpp, orbVariation).
+// Χρησιμοποιείται για το χρώμα της εικόνας του orb (Main.cpp, orbGenerated).
 #pragma once
 #include <cstdint>
 

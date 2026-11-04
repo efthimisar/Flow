@@ -56,8 +56,6 @@ public:
         std::function<void()> scanPlugins;   // νέα σάρωση plugins
         std::function<bool()> scanBusy;
         std::function<juce::String()> panicCodeText;   // κενό = δεν έχει ανατεθεί
-        std::function<juce::String()> orbFolderText;
-        std::function<void()> chooseOrbFolder;
         std::function<int()> startQGet, lengthQGet, tapMsGet, snapQGet, loopFitGet;
         std::function<void (int)> startQSet, lengthQSet, tapMsSet, snapQSet, loopFitSet;
         std::function<int()> autoLoopGet;
@@ -165,7 +163,6 @@ public:
             case RecFolder: paintRecFolder (g); break;
             case Master: paintMaster (g); break;
             case Panic:  paintPanic (g); break;
-            case OrbImages: paintOrbImages (g); break;
             case LoopRec: paintLoopRec (g); break;
             case Learn:  paintLearn (g); break;
             case WindowSize: paintWindowSize (g); break;
@@ -345,7 +342,6 @@ private:
             { 15, "Orb knobs", false, false, {}, true, 13 },
             { 11, "Smart master", false, false, {}, true, 11 },
             { 4, "Rec Audio folder", false, false, [this] { showPage (RecFolder); } },
-            { 4, "Orb images", false, false, [this] { showPage (OrbImages); } },
             { 8, "Window size", false, false, [this] { showPage (WindowSize); } },
             { 10, "MIDI learn", false, false, [this] { showPage (Learn); } },
             { 0, "Audio & MIDI", false, false, [this] { if (host.openAudio) host.openAudio(); } },
@@ -898,22 +894,6 @@ private:
         note (g, "After Assign, press the pedal or key you want to use for Panic.", getHeight() - 28);
     }
 
-
-    // ---------- orb images ----------
-    void paintOrbImages (juce::Graphics& g)
-    {
-        using namespace juce;
-        g.setColour (dim()); g.setFont (font (12.0f, true));
-        g.drawText ("Folder", 40, 78, 300, 16, Justification::centredLeft, false);
-        const Rectangle<int> r (40, 98, juce::jmin (620, getWidth() - 80), 42);
-        g.setColour (Colour (0xff36322f)); g.fillRoundedRectangle (r.toFloat(), 10.0f);
-        g.setColour (lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 10.0f, 1.0f);
-        drawSymbol (g, Symbol::Folder, { (float) r.getX() + 26.0f, (float) r.getCentreY() }, 20.0f, txt());
-        g.setColour (txt()); g.setFont (font (14.0f));
-        g.drawText (host.orbFolderText ? host.orbFolderText() : String(), r.withTrimmedLeft (48).withTrimmedRight (12), Justification::centredLeft, true);
-        pill (g, { 40, 164, 230, 46 }, "Choose folder...", false, true, [this] { if (host.chooseOrbFolder) host.chooseOrbFolder(); });
-        note (g, "At every start Flow picks a random image from this folder (jpg, png) and shows it in the orb.", getHeight() - 28);
-    }
 
     // ---------- loop recording ----------
     void chipRow (juce::Graphics& g, int x, int y, const juce::String& label, const juce::String& desc,
