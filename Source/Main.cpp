@@ -1155,7 +1155,8 @@ private:
     //  2  σχέδιο (γεννήτρια Bauhaus + Wada), συνεχόμενο στις δύο οθόνες: το Flow είναι ανοιχτό και δεν υπάρχει ακόμη λούπα
     //  3  λίστα plugins ανοιχτή: αριστερά «Block n» και μικρογραφία του block, δεξιά τοίχος 3×2 με μικρογραφίες των VST
     //  4  λούπες: 8 δαχτυλίδια, ένα ανά block (1–8), μόνο στο κάτω μέρος
-    static constexpr int s88StripH = 26;
+    static constexpr int s88StripH = 40;
+    static constexpr int s88WordShift = -15;   // οι λέξεις πιο αριστερά, ώστε να συμπίπτουν με τα πραγματικά κουμπιά
     Image s88Art;                 // το σχέδιο της οθόνης 2 (960 × 246), νέο σε κάθε σύνδεση των οθονών
     uint32 s88SplashUntil = 0;    // μέχρι πότε μένει το λογότυπο μετά τη σύνδεση
 
@@ -1200,9 +1201,9 @@ private:
         g.setColour (Colour (0xff2a2826));
         g.fillRect (0, 2, KeyScreens::width, s88StripH - 4);
         g.setColour (Colour (0xffe8e4e0));
-        g.setFont (hobby::makeFont (typeface, 13.0f).boldened());
+        g.setFont (hobby::makeFont (typeface, 22.0f).boldened());
         for (int i = 0; i < 4; ++i)
-            g.drawText (words[screen * 4 + i], Rectangle<int> (i * 120, 2, 120, s88StripH - 4), Justification::centred, false);
+            g.drawText (words[screen * 4 + i], Rectangle<int> (i * 120 + s88WordShift, 2, 120, s88StripH - 4), Justification::centred, false);
     }
 
     // 1: λογότυπο αριστερά, κυκλάκι δεξιά, καθαρό μαύρο
@@ -1278,8 +1279,8 @@ private:
     void drawS88ListLeft (Graphics& g, int b)
     {
         g.setColour (blockLight (b)); g.setFont (hobby::makeFont (typeface, 30.0f).boldened());
-        g.drawText ("Block " + String (b + 1), Rectangle<float> (0.0f, 30.0f, (float) KeyScreens::width, 36.0f), Justification::centred, false);
-        const float d = 160.0f, x = ((float) KeyScreens::width - d) * 0.5f, y = 78.0f;
+        g.drawText ("Block " + String (b + 1), Rectangle<float> (0.0f, (float) s88StripH + 6.0f, (float) KeyScreens::width, 36.0f), Justification::centred, false);
+        const float d = 150.0f, x = ((float) KeyScreens::width - d) * 0.5f, y = (float) s88StripH + 50.0f;
         Path clip; clip.addEllipse (x, y, d, d);
         g.saveState(); g.reduceClipRegion (clip, AffineTransform());
         if (orbImage.isValid()) { g.setColour (Colours::white); g.setImageResamplingQuality (Graphics::highResamplingQuality); g.drawImage (orbImage, Rectangle<float> (x, y, d, d), RectanglePlacement::centred); }
@@ -1347,7 +1348,7 @@ private:
                     if (selRow < s88WallTop) s88WallTop = selRow;
                     if (selRow > s88WallTop + 1) s88WallTop = selRow - 1;
                     s88WallTop = jlimit (0, jmax (0, totalRows - 2), s88WallTop);
-                    const float mx = 12.0f, gap = 12.0f, cw = ((float) KeyScreens::width - 2.0f * mx - 2.0f * gap) / 3.0f, th = 86.0f, labelH = 20.0f;
+                    const float mx = 12.0f, gap = 12.0f, cw = ((float) KeyScreens::width - 2.0f * mx - 2.0f * gap) / 3.0f, th = 80.0f, labelH = 20.0f;
                     for (int rr = 0; rr < 2; ++rr)
                         for (int cc = 0; cc < 3; ++cc)
                         {
@@ -4621,7 +4622,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.0"; }
+    const String getApplicationVersion() override { return "0.90.1"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
