@@ -1078,6 +1078,7 @@ private:
         if (ctl == 100)   // περιστροφή: + = δεξιά
         {
             if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
+            else if (s88RingsOpen) { s88Ring = jlimit (0, 3, s88Ring + (v > 0 ? 1 : -1)); s88Slot = 0; }   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
             return;
         }
         if (v == 0) return;   // μόνο πάτημα
@@ -1093,13 +1094,23 @@ private:
                 default: break;
             }
         }
+        if (s88RingsOpen && ! listOpen)
+        {
+            switch (ctl)
+            {
+                case 1: { const int k = s88Ring * 4 + s88Slot; if (knobTarget (k) != nullptr) clearKnobSlot (k); else startKnobLearn (k); return; }   // πάτημα: learn σε άδεια θέση, σβήσιμο σε κατειλημμένη
+                case 2: s88Slot = jmax (0, s88Slot - 1); return;
+                case 3: s88Slot = jmin (3, s88Slot + 1); return;
+                default: break;
+            }
+        }
         switch (ctl)
         {
             case 35: blockTile.triggerClick(); break;
             case 36: vstTile.triggerClick(); break;
             case 37: mfxTile.triggerClick(); break;
             case 38: fxTile.triggerClick(); break;
-            case 39: motionTile.triggerClick(); break;
+            case 39: s88RingsOpen = ! s88RingsOpen; s88Ring = 0; s88Slot = 0; if (! s88RingsOpen && knobStage != 0) stopKnobLearn(); break;   // Orb Rings: ανοίγει/κλείνει την οθόνη
             case 40: folderTile.triggerClick(); break;
             case 41: paletteTile.onDice(); break;
             case 42: paletteTile.onCamera(); break;
@@ -1197,7 +1208,7 @@ private:
 
     void drawS88Strip (Graphics& g, int screen)
     {
-        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Rec motion", "Settings", "Dice", "Keep" };
+        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "Settings", "Dice", "Keep" };
         g.setColour (Colour (0xff1c1a19).withAlpha (0.75f));   // 75% αδιαφάνεια: το σχέδιο φαίνεται αχνά από πίσω
         g.fillRect (0, 0, KeyScreens::width, s88StripH);
         g.setColour (Colour (0xffe8e4e0));
@@ -1289,7 +1300,73 @@ private:
     }
 
     String s88Sig;
+    bool s88RingsOpen = false;
+    int s88Ring = 0, s88Slot = 0;   // επιλεγμένο ring (0..3) και θέση παραμέτρου (0..3)
     int s88WallTop = 0;   // πρώτη ορατή σειρά του τοίχου
+
+    // Orb Rings: υπογραφή περιεχομένου (επιλογή, learn, ονόματα/τιμές, θέση στα 16 μέτρα): ξαναστέλνεται μόνο αν άλλαξε κάτι
+    String s88RingsSig()
+    {
+        String s = "O" + String (s88Ring) + "," + String (s88Slot) + "," + String (knobStage != 0 ? knobSlot : -1) + "," + String (selected) + "," + String ((int) orbRecArmed) + ",";
+        for (int k = 0; k < kSlots; ++k)
+        {
+            if (auto* p = knobTarget (k)) s += p->getName (24) + String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "|";
+            else s += "-|";
+        }
+        s += String ((int) (std::fmod (jmax (0.0, engine.beatPosOut.load()), 64.0) / 64.0 * 240.0));
+        return s;
+    }
+
+    // Orb Rings: 2 ring ανά οθόνη, 4 θέσεις παραμέτρων το καθένα. Λευκό περίγραμμα στην επιλεγμένη θέση, κάτω γραμμή = τα 16 μέτρα (κόκκινη όσο γράφει το Rec motion).
+    void drawS88OrbRings (Graphics& gl, Graphics& gRt)
+    {
+        drawS88Art (gl, gRt);
+        static const Colour rc[4] { Colour (0xffd96b4a), Colour (0xffe8b94a), Colour (0xff4a9ab8), Colour (0xffa86a9a) };
+        const Colour white (0xffffffff), dim (0xffb0aaa2), none (0xff6a645e), warm (0xffe8b94a);
+        const float ph = (float) (std::fmod (jmax (0.0, engine.beatPosOut.load()), 64.0) / 64.0);
+        Graphics* gs[2] = { &gl, &gRt };
+        for (int sc = 0; sc < 2; ++sc)
+        {
+            auto& g = *gs[sc];
+            g.setColour (Colour (0xff1c1a19).withAlpha (0.8f));
+            g.fillRoundedRectangle (14.0f, 50.0f, 452.0f, 208.0f, 14.0f);
+            for (int i = 0; i < 2; ++i)
+            {
+                const int r = sc * 2 + i;
+                const float x0 = i == 0 ? 26.0f : 246.0f;
+                g.setColour (rc[r]); g.fillEllipse (x0, 62.0f, 22.0f, 22.0f);
+                g.setColour (white); g.setFont (hobby::makeFont (typeface, 20.0f).boldened());
+                g.drawText ("Ring " + String (r + 1), Rectangle<float> (x0 + 32.0f, 59.0f, 150.0f, 26.0f), Justification::centredLeft, false);
+                for (int k = 0; k < 4; ++k)
+                {
+                    const int slot = r * 4 + k;
+                    const float y = 98.0f + (float) k * 40.0f;
+                    if (s88Ring == r && s88Slot == k) { g.setColour (white); g.drawRoundedRectangle (x0, y, 208.0f, 34.0f, 10.0f, 2.0f); }
+                    const Rectangle<float> tr (x0 + 10.0f, y + 4.0f, 150.0f, 26.0f), pr (x0 + 148.0f, y + 4.0f, 50.0f, 26.0f);
+                    if (auto* p = knobTarget (slot))
+                    {
+                        g.setFont (hobby::makeFont (typeface, 16.0f)); g.setColour (white);
+                        g.drawText (p->getName (24), Rectangle<float> (x0 + 10.0f, y + 4.0f, 136.0f, 26.0f), Justification::centredLeft, true);
+                        g.setFont (hobby::makeFont (typeface, 16.0f).boldened()); g.setColour (dim);
+                        g.drawText (String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "%", pr, Justification::centredRight, false);
+                    }
+                    else if (knobStage != 0 && knobSlot == slot)
+                    {
+                        g.setFont (hobby::makeFont (typeface, 15.0f)); g.setColour (warm);
+                        g.drawText (String (String::fromUTF8 ("touch a parameter\xe2\x80\xa6")), tr, Justification::centredLeft, false);
+                    }
+                    else
+                    {
+                        g.setFont (hobby::makeFont (typeface, 16.0f)); g.setColour (none);
+                        g.drawText (String::fromUTF8 ("\xe2\x80\x94"), tr, Justification::centredLeft, false);
+                    }
+                }
+            }
+            g.setColour (Colour (0xff3a3430)); g.fillRect (0, 266, KeyScreens::width, 6);
+            const float fw = jlimit (0.0f, (float) KeyScreens::width, ph * 2.0f * (float) KeyScreens::width - (float) (sc * KeyScreens::width));
+            g.setColour (orbRecArmed ? hobby::kCoral : Colour (0xffc9c3ba)); g.fillRect (0.0f, 266.0f, fw, 6.0f);
+        }
+    }
 
     void updateS88Screens()
     {
@@ -1312,6 +1389,12 @@ private:
             if (s88Sig == "LOGO") return;
             s88Sig = "LOGO";
         }
+        else if (s88RingsOpen)
+        {
+            const String sig = s88RingsSig();
+            if (sig == s88Sig) return;
+            s88Sig = sig;
+        }
         else if (anyS88Loop()) { s88Sig = "P"; animated = true; }   // δαχτυλίδια: κινούνται, ξανασχεδιάζονται σε κάθε tick
         else
         {
@@ -1329,6 +1412,7 @@ private:
         else
         {
             if (! open && s88Sig == "ART") drawS88Art (gl, gRt);
+            if (! open && s88Sig.startsWith ("O")) drawS88OrbRings (gl, gRt);
             if (! open && s88Sig == "P") { drawS88Rings (gl, 0); drawS88Rings (gRt, 1); }
             if (open)
             {
