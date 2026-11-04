@@ -1104,13 +1104,18 @@ private:
                 default: break;
             }
         }
+        if (s88RingsOpen && ctl >= 35 && ctl <= 40 && ctl != 39)   // άλλο κουμπί (Block, VST, MIDI FX, FX, Settings) κλείνει την οθόνη Orb Rings
+        {
+            s88RingsOpen = false;
+            if (knobStage != 0) stopKnobLearn();
+        }
         switch (ctl)
         {
             case 35: blockTile.triggerClick(); break;
             case 36: vstTile.triggerClick(); break;
             case 37: mfxTile.triggerClick(); break;
             case 38: fxTile.triggerClick(); break;
-            case 39: s88RingsOpen = ! s88RingsOpen; s88Ring = 0; s88Slot = 0; if (! s88RingsOpen && knobStage != 0) stopKnobLearn(); break;   // Orb Rings: ανοίγει/κλείνει την οθόνη
+            case 39: if (! s88RingsOpen) { s88RingsOpen = true; s88Ring = 0; s88Slot = 0; } else motionTile.triggerClick(); break;   // 1ο πάτημα: οθόνη Orb Rings· 2ο: Rec motion (η οθόνη μένει)
             case 40: folderTile.triggerClick(); break;
             case 41: paletteTile.onDice(); break;
             case 42: paletteTile.onCamera(); break;
@@ -1211,10 +1216,12 @@ private:
         static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "Settings", "Dice", "Keep" };
         g.setColour (Colour (0xff1c1a19).withAlpha (0.75f));   // 75% αδιαφάνεια: το σχέδιο φαίνεται αχνά από πίσω
         g.fillRect (0, 0, KeyScreens::width, s88StripH);
-        g.setColour (Colour (0xffe8e4e0));
         g.setFont (hobby::makeFont (typeface, 22.0f).boldened());
         for (int i = 0; i < 4; ++i)
+        {
+            g.setColour (screen * 4 + i == 4 && s88Blink ? hobby::kRed : Colour (0xffe8e4e0));   // Rec motion οπλισμένο: η λέξη Orb Rings αναβοσβήνει κόκκινη
             g.drawText (words[screen * 4 + i], Rectangle<int> (i * 120 + s88WordShift, 0, 120, s88StripH), Justification::centred, false);
+        }
     }
 
     // 1: λογότυπο αριστερά, κυκλάκι δεξιά, καθαρό μαύρο
@@ -1300,14 +1307,14 @@ private:
     }
 
     String s88Sig;
-    bool s88RingsOpen = false;
+    bool s88RingsOpen = false, s88Blink = false;
     int s88Ring = 0, s88Slot = 0;   // επιλεγμένο ring (0..3) και θέση παραμέτρου (0..3)
     int s88WallTop = 0;   // πρώτη ορατή σειρά του τοίχου
 
     // Orb Rings: υπογραφή περιεχομένου (επιλογή, learn, ονόματα/τιμές, θέση στα 16 μέτρα): ξαναστέλνεται μόνο αν άλλαξε κάτι
     String s88RingsSig()
     {
-        String s = "O" + String (s88Ring) + "," + String (s88Slot) + "," + String (knobStage != 0 ? knobSlot : -1) + "," + String (selected) + "," + String ((int) orbRecArmed) + ",";
+        String s = "O" + String (s88Ring) + "," + String (s88Slot) + "," + String (knobStage != 0 ? knobSlot : -1) + "," + String (selected) + "," + String ((int) orbRecArmed) + String ((int) s88Blink) + ",";
         for (int k = 0; k < kSlots; ++k)
         {
             if (auto* p = knobTarget (k)) s += p->getName (24) + String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "|";
@@ -1374,6 +1381,7 @@ private:
         auto& list = loopsView.getList();
         const bool open = list.isVisible();
         list.alwaysShowSel = true;
+        s88Blink = orbRecArmed && ((Time::getMillisecondCounter() / 400) & 1) != 0;
         const bool splash = Time::getMillisecondCounter() < s88SplashUntil;
         std::vector<int> vis; int cols = 1, rows = 1;
         bool animated = false;
@@ -1398,8 +1406,9 @@ private:
         else if (anyS88Loop()) { s88Sig = "P"; animated = true; }   // δαχτυλίδια: κινούνται, ξανασχεδιάζονται σε κάθε tick
         else
         {
-            if (s88Sig == "ART") return;
-            s88Sig = "ART";
+            const String sg = "ART" + String ((int) s88Blink);
+            if (s88Sig == sg) return;
+            s88Sig = sg;
         }
         juce::ignoreUnused (animated);
 
@@ -1411,7 +1420,7 @@ private:
         if (! open && splash) drawS88Logo (gl, gRt);
         else
         {
-            if (! open && s88Sig == "ART") drawS88Art (gl, gRt);
+            if (! open && s88Sig.startsWith ("ART")) drawS88Art (gl, gRt);
             if (! open && s88Sig.startsWith ("O")) drawS88OrbRings (gl, gRt);
             if (! open && s88Sig == "P") { drawS88Rings (gl, 0); drawS88Rings (gRt, 1); }
             if (open)
