@@ -183,15 +183,19 @@ void KeyLights::logInput (const uint8_t* data, int len)
 {
     if (data != nullptr && len >= 31 && data[0] == 0x01 && onControl)
     {
-        if (ctlHave)
+        // Το πληκτρολόγιο στέλνει report μόνο όταν αλλάζει κάτι: το πρώτο report μετά το άνοιγμα είναι συνήθως ήδη το πρώτο πάτημα.
+        // Γι' αυτό, αν δεν υπάρχει προηγούμενο report, τα κουμπιά συγκρίνονται με «όλα ελεύθερα» (αλλιώς το πρώτο πάτημα χανόταν)· ο encoder δεν έχει γνωστή αφετηρία και αγνοείται.
         {
             for (const auto& m : kS88Map)
             {
-                const bool was = (ctlPrev[m.byteIx] & m.mask) != 0, now = (data[m.byteIx] & m.mask) != 0;
+                const bool was = ctlHave && (ctlPrev[m.byteIx] & m.mask) != 0, now = (data[m.byteIx] & m.mask) != 0;
                 if (was != now) onControl (m.ctl, now ? 1 : 0);
             }
-            const int d = (((int) (data[30] & 0x0f) - (int) (ctlPrev[30] & 0x0f) + 8) & 15) - 8;   // μετρητής 4 bit: + = δεξιά
-            if (d != 0) onControl (100, d);
+            if (ctlHave)
+            {
+                const int d = (((int) (data[30] & 0x0f) - (int) (ctlPrev[30] & 0x0f) + 8) & 15) - 8;   // μετρητής 4 bit: + = δεξιά
+                if (d != 0) onControl (100, d);
+            }
         }
         for (int i = 0; i < 31; ++i) ctlPrev[i] = data[i];
         ctlHave = true;
