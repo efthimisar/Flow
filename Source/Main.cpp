@@ -1309,25 +1309,18 @@ private:
     // 2: το σχέδιο συνεχίζεται από την αριστερή οθόνη στη δεξιά (οθαλμαπάτη χωρίς διακοπή)
     void drawS88Art (Graphics& gl, Graphics& gRt)
     {
-        if (! s88Art.isValid()) { Random rnd; s88Art = orbGeneratedWide (rnd, 2 * KeyScreens::width, KeyScreens::height); }
-        gl.drawImageAt (s88Art, 0, 0);   // το σχέδιο πιάνει όλο το ύψος· η λωρίδα με τις λέξεις είναι ημιδιαφανής από πάνω
-        gRt.drawImageAt (s88Art, -KeyScreens::width, 0);
+        gl.fillAll (Colours::black);   // χωρίς σχέδια και χρώματα: καθαρό μαύρο (η λωρίδα με τις λέξεις είναι από πάνω)
+        gRt.fillAll (Colours::black);
     }
 
-    // το ίδιο σχέδιο με 75% σκούρο κάλυμμα και λεπτό κόκκο (±5, όπως στο Orb): υπόστρωμα για τις οθόνες Set zone
+    // μαύρο φόντο με λεπτό κόκκο (±5, όπως στο Orb): υπόστρωμα για τις οθόνες Set zone, λίστα VST και block
     Image s88ArtDim;
     void drawS88DimArt (Graphics& gl, Graphics& gRt)
     {
         if (! s88ArtDim.isValid())
         {
-            if (! s88Art.isValid()) { Random r; s88Art = orbGeneratedWide (r, 2 * KeyScreens::width, KeyScreens::height); }
-            s88ArtDim = Image (Image::RGB, s88Art.getWidth(), s88Art.getHeight(), false);
-            {
-                Graphics g (s88ArtDim);
-                g.drawImageAt (s88Art, 0, 0);
-                g.setColour (Colour (0xff1c1a19).withAlpha (0.75f));
-                g.fillAll();
-            }
+            s88ArtDim = Image (Image::RGB, 2 * KeyScreens::width, KeyScreens::height, true);   // μαύρο φόντο με λεπτό κόκκο, χωρίς σχέδια
+            { Graphics g (s88ArtDim); g.fillAll (Colours::black); }
             Random rnd;
             Image::BitmapData bd (s88ArtDim, Image::BitmapData::readWrite);
             for (int y = 0; y < bd.height; ++y)
