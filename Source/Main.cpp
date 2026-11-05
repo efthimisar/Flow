@@ -1203,7 +1203,7 @@ private:
         static const int wt[10] = { 16, 14, 12, 10, 12, 6, 9, 6, 5, 3 };
         for (;;)
         {
-            int roll = rnd.nextInt (105), k = 0;
+            int roll = rnd.nextInt (93), k = 0;
             while (k < 9 && roll >= wt[k]) { roll -= wt[k]; ++k; }
             if (k != last) return k;
         }
