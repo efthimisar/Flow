@@ -1268,48 +1268,6 @@ private:
         gRt.drawImageAt (s88Art, -KeyScreens::width, 0);
     }
 
-    // 4: δαχτυλίδια, 4 ανά οθόνη, κάτω από τη λωρίδα. Γεμίζει όσο προχωρά η λούπα· κόκκινο όσο γράφεται (Rec MIDI loop), όπως στο Flow.
-    // Χωρίς αναβοσβήματα και κείμενα: ο αριθμός του block φαίνεται μόνο όταν υπάρχει λούπα.
-    void drawS88Rings (Graphics& g, int screen)
-    {
-        const double now = engine.beatPosOut.load();
-        const double axisBeats = (double) jmax (1, engine.axisBarsOut.load()) * flow::beatsPerBar;
-        const float cy = (float) s88StripH + (float) (KeyScreens::height - s88StripH) * 0.5f, r = 56.0f, lw = 14.0f;
-        for (int i = 0; i < 4; ++i)
-        {
-            const int b = screen * 4 + i;
-            const float cx = (float) (i * 120 + 60);
-            Path track; track.addCentredArc (cx, cy, r, r, 0.0f, 0.0f, MathConstants<float>::twoPi, true);
-            g.setColour (Colour (0xff3a3634)); g.strokePath (track, PathStrokeType (lw));
-            if (! isActive (b)) continue;
-            const int st = engine.loopStateOut[(size_t) b].load();
-            if (st == (int) flow::loopOff) continue;
-            const double L = jmax (0.0, engine.loopBeatsOut[(size_t) b].load());
-            const bool rec = st == flow::loopRec, over = st == flow::loopOver;
-            const bool muted = engine.blockOff[(size_t) b].load() != 0 || engine.loopStoppedOut[(size_t) b].load() != 0;
-            const Colour col = muted ? Colour (0xff4a4a52) : rec ? hobby::kRed : over ? Colour (0xffe8883a) : blockLight (b);
-            float f = 0.0f;
-            if (rec) f = (float) jlimit (0.0, 1.0, (now - engine.recStartBeatOut[(size_t) b].load()) / axisBeats);
-            else if (L > 0.0) f = (float) (std::fmod (jmax (0.0, now - engine.loopAnchorOut[(size_t) b].load()), L) / L);
-            if (f > 0.002f)
-            {
-                Path arc; arc.addCentredArc (cx, cy, r, r, 0.0f, 0.0f, MathConstants<float>::twoPi * jmin (0.9999f, f), true);
-                g.setColour (col); g.strokePath (arc, PathStrokeType (lw));
-            }
-            const float bx = cx - r * 0.8f, by = cy - r * 0.8f;
-            g.setColour (Colour (0xff5a534d)); g.fillEllipse (bx - 15.0f, by - 15.0f, 30.0f, 30.0f);
-            g.setColour (Colour (0xfff0ece6)); g.setFont (hobby::makeFont (typeface, 20.0f).boldened());
-            g.drawText (String (b + 1), Rectangle<float> (bx - 15.0f, by - 15.0f, 30.0f, 30.0f), Justification::centred, false);
-        }
-    }
-
-    bool anyS88Loop()
-    {
-        for (int b = 0; b < 8; ++b)
-            if (isActive (b) && engine.loopStateOut[(size_t) b].load() != (int) flow::loopOff) return true;
-        return false;
-    }
-
     // 3 (αριστερά): «Block n» στο χρώμα του block και η μικρογραφία του block (η εικόνα του orb) σε κύκλο
     void drawS88ListLeft (Graphics& g, int b)
     {
@@ -1596,7 +1554,6 @@ private:
         }
         const bool splash = Time::getMillisecondCounter() < s88SplashUntil;
         std::vector<int> vis; int cols = 1, rows = 1;
-        bool animated = false;
         if (open)
         {
             list.buildVis (vis, cols, rows);
@@ -1628,14 +1585,12 @@ private:
             if (sig == s88Sig) return;
             s88Sig = sig;
         }
-        else if (anyS88Loop()) { s88Sig = "P"; animated = true; }   // δαχτυλίδια: κινούνται, ξανασχεδιάζονται σε κάθε tick
         else
         {
             const String sg = "ART" + String ((int) s88Blink);
             if (s88Sig == sg) return;
             s88Sig = sg;
         }
-        juce::ignoreUnused (animated);
 
         const Colour bg (0xff000000), thumbBg (0xff3a3430), white (0xfff3f4f6), grey (0xffb7bbc6), dim (0xff6a6c73);
         Image L (Image::RGB, KeyScreens::width, KeyScreens::height, true), R (Image::RGB, KeyScreens::width, KeyScreens::height, true);
@@ -1649,7 +1604,6 @@ private:
             if (! open && s88Sig.startsWith ("O")) drawS88OrbRings (gl, gRt);
             if (! open && s88Sig.startsWith ("Z")) drawS88SetZone (gl, gRt);
             if (! open && s88Sig.startsWith ("B")) drawS88Block (gl, gRt);
-            if (! open && s88Sig == "P") { drawS88Rings (gl, 0); drawS88Rings (gRt, 1); }
             if (open)
             {
                 if (vis.empty())
