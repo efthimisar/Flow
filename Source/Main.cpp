@@ -1314,6 +1314,34 @@ private:
         gRt.drawImageAt (s88Art, -KeyScreens::width, 0);
     }
 
+    // το ίδιο σχέδιο με 75% σκούρο κάλυμμα και λεπτό κόκκο (±5, όπως στο Orb): υπόστρωμα για τις οθόνες Set zone
+    Image s88ArtDim;
+    void drawS88DimArt (Graphics& gl, Graphics& gRt)
+    {
+        if (! s88ArtDim.isValid())
+        {
+            if (! s88Art.isValid()) { Random r; s88Art = orbGeneratedWide (r, 2 * KeyScreens::width, KeyScreens::height); }
+            s88ArtDim = Image (Image::RGB, s88Art.getWidth(), s88Art.getHeight(), false);
+            {
+                Graphics g (s88ArtDim);
+                g.drawImageAt (s88Art, 0, 0);
+                g.setColour (Colour (0xff1c1a19).withAlpha (0.75f));
+                g.fillAll();
+            }
+            Random rnd;
+            Image::BitmapData bd (s88ArtDim, Image::BitmapData::readWrite);
+            for (int y = 0; y < bd.height; ++y)
+                for (int x = 0; x < bd.width; ++x)
+                {
+                    const auto c = bd.getPixelColour (x, y);
+                    const int dn = rnd.nextInt (11) - 5;
+                    bd.setPixelColour (x, y, Colour ((uint8) jlimit (0, 255, (int) c.getRed() + dn), (uint8) jlimit (0, 255, (int) c.getGreen() + dn), (uint8) jlimit (0, 255, (int) c.getBlue() + dn)));
+                }
+        }
+        gl.drawImageAt (s88ArtDim, 0, 0);
+        gRt.drawImageAt (s88ArtDim, -KeyScreens::width, 0);
+    }
+
     // 3 (αριστερά): «Block n» στο χρώμα του block και η μικρογραφία του block (η εικόνα του orb) σε κύκλο
     void drawS88ListLeft (Graphics& g, int b)
     {
@@ -1480,47 +1508,68 @@ private:
         gRt.drawText (s88MenuLabel (s88MenuSel, b), Rectangle<float> (14.0f, 222.0f, 452.0f, 28.0f), Justification::centred, false);
     }
 
-    // Set zone: αριστερά «Block n» και οδηγία, δεξιά μικρό πληκτρολόγιο· μετά το πρώτο πλήκτρο φαίνεται στο χρώμα του block
+    // Set zone (και «ζώνη ορισμένη, χωρίς VST ακόμη»): φόντο 75% σκούρο με κόκκο. Αριστερά κάτω «Block n» και η επόμενη ενέργεια, κάτω δεξιά το snapshot του VST όσο φορτώνει.
+    // Δεξιά: κλαβιέ 2 οκτάβων (ίδιο ύψος με το snapshot), το range ακριβώς από πάνω δεξιά. Το παράθυρο ακολουθεί τα πλήκτρα που πατάς.
     void drawS88SetZone (Graphics& gl, Graphics& gRt)
     {
-        drawS88Art (gl, gRt);
-        const int b = jlimit (0, flow::numBlocks - 1, engine.pendingBlock());
-        const bool second = engine.zoneState[(size_t) b].load() == 2;
-        const int first = second ? engine.zoneFirst[(size_t) b].load() : -1;
-        const Colour white (0xffffffff), dim (0xffb0aaa2), warm (0xffe8b94a);
-        for (auto* g : { &gl, &gRt })
-        {
-            g->setColour (Colour (0xff1c1a19).withAlpha (0.8f));
-            g->fillRoundedRectangle (14.0f, 50.0f, 452.0f, 208.0f, 14.0f);
-        }
-        gl.setColour (blockLight (b)); gl.setFont (hobby::makeFont (typeface, 34.0f).boldened());
-        gl.drawText ("Block " + String (b + 1), Rectangle<float> (14.0f, 66.0f, 452.0f, 40.0f), Justification::centred, false);
-        gl.setColour (white); gl.setFont (hobby::makeFont (typeface, 22.0f).boldened());
-        gl.drawText ("Set the zone", Rectangle<float> (14.0f, 124.0f, 452.0f, 30.0f), Justification::centred, false);
-        gl.setColour (dim); gl.setFont (hobby::makeFont (typeface, 17.0f));
-        gl.drawText ("Press the first and the last key", Rectangle<float> (14.0f, 156.0f, 452.0f, 24.0f), Justification::centred, false);
-        gl.drawText ("Same key twice = one note", Rectangle<float> (14.0f, 184.0f, 452.0f, 24.0f), Justification::centred, false);
+        drawS88DimArt (gl, gRt);
+        const int pb = engine.pendingBlock();
+        const int b = jlimit (0, flow::numBlocks - 1, pb >= 0 ? pb : selected);
+        const bool done = pb < 0;   // η ζώνη έχει οριστεί, το block δεν έχει ακόμη plugin
+        const int first = (! done && engine.zoneState[(size_t) b].load() == 2) ? engine.zoneFirst[(size_t) b].load() : -1;
+        const int lo = engine.lo[(size_t) b].load(), hi = engine.hi[(size_t) b].load();
+        const bool loading = loadingSlots.contains (b);
+        const Colour bcol = blockLight (b), white (0xffffffff);
 
-        // δεξιά: όλο το πληκτρολόγιο (52 άσπρα) σε μικρογραφία
-        const float kx0 = 34.0f, kw = 412.0f / 52.0f, ky = 84.0f, kh = 110.0f;
-        int wi = 0;
-        for (int n = flow::lowestNote; n <= flow::highestNote; ++n)
-            if (! flow::isBlackKey (n))
-            {
-                gRt.setColour (n == first ? blockLight (b) : Colour (0xfff0ece6));
-                gRt.fillRect (kx0 + (float) wi * kw, ky, kw - 1.0f, kh);
-                ++wi;
-            }
-        wi = 0;
-        for (int n = flow::lowestNote; n <= flow::highestNote; ++n)
+        gl.setColour (bcol); gl.setFont (hobby::makeFont (typeface, 32.0f).boldened());
+        gl.drawText ("Block " + String (b + 1), Rectangle<float> (18.0f, 182.0f, 220.0f, 40.0f), Justification::centredLeft, false);
+        const String line2 = loading ? String() : done ? String ("Choose a VST") : String ("Set the zone");
+        gl.setColour (white); gl.setFont (hobby::makeFont (typeface, 22.0f).boldened());
+        gl.drawText (line2, Rectangle<float> (18.0f, 222.0f, 220.0f, 30.0f), Justification::centredLeft, false);
+        if (loading)   // snapshot του VST: η πάνω αριστερή γωνία στο κέντρο της οθόνης
         {
-            if (! flow::isBlackKey (n)) { ++wi; continue; }
-            gRt.setColour (n == first ? blockLight (b) : Colour (0xff15130f));
-            gRt.fillRect (kx0 + (float) wi * kw - kw * 0.3f, ky, kw * 0.6f, kh * 0.6f);
+            const Rectangle<float> tr (240.0f, 136.0f, 226.0f, 122.0f);
+            Path clip; clip.addRoundedRectangle (tr, 10.0f);
+            gl.saveState(); gl.reduceClipRegion (clip, AffineTransform());
+            Image im = thumbFor (loadingName[(size_t) b]);
+            gl.setColour (Colour (0xff3a3430)); gl.fillRect (tr);
+            if (im.isValid()) { gl.setColour (Colours::white); gl.setImageResamplingQuality (Graphics::highResamplingQuality); gl.drawImage (im, tr, RectanglePlacement::centred); }
+            gl.restoreState();
         }
-        gRt.setColour (warm); gRt.setFont (hobby::makeFont (typeface, 16.0f));
-        gRt.drawText ("Zone " + String (b + 1) + String::fromUTF8 (" \xc2\xb7 ") + (second ? "now press the last key" : "press the first key"),
-                      Rectangle<float> (14.0f, 216.0f, 452.0f, 26.0f), Justification::centred, false);
+
+        // δεξιά: παράθυρο 2 οκτάβων (14 λευκά), ευθυγραμμισμένο σε ντο
+        const int anchor = done ? lo : (first >= 0 ? first : 60);
+        int start = (anchor / 12) * 12;
+        if (done && hi > start + 23) start = jmax (start, (hi / 12 - 1) * 12);   // μεγάλη ζώνη: δείχνει το άκρο της (το range από πάνω δείχνει όλη τη ζώνη)
+        start = jlimit (12, 84, start);
+        const float kx0 = 34.0f, ww = 412.0f / 14.0f, ky = 136.0f, kh = 122.0f;
+        auto inZone = [&] (int n) { return (done && n >= lo && n <= hi) || n == first; };
+        int wi = 0;
+        std::array<int, 24> whiteIx {};
+        for (int n = start; n < start + 24; ++n)
+        {
+            whiteIx[(size_t) (n - start)] = wi;
+            if (flow::isBlackKey (n)) continue;
+            if (n >= flow::lowestNote && n <= flow::highestNote)
+            {
+                gRt.setColour (inZone (n) ? bcol : Colour (0xfff0ece6));
+                gRt.fillRect (kx0 + (float) wi * ww, ky, ww - 2.0f, kh);
+            }
+            ++wi;
+        }
+        for (int n = start; n < start + 24; ++n)
+            if (flow::isBlackKey (n) && n >= flow::lowestNote && n <= flow::highestNote)
+            {
+                const float x = kx0 + (float) whiteIx[(size_t) (n - start)] * ww;   // το μαύρο μπαίνει στο όριο ανάμεσα στο προηγούμενο και το επόμενο λευκό
+                gRt.setColour (inZone (n) ? bcol.darker (0.45f) : Colour (0xff15130f));
+                gRt.fillRect (x - ww * 0.3f, ky, ww * 0.6f, kh * 0.62f);
+            }
+        if (done || first >= 0)
+        {
+            gRt.setColour (white); gRt.setFont (hobby::makeFont (typeface, 34.0f).boldened());
+            gRt.drawText (done ? noteName (lo) + String::fromUTF8 (" \xe2\x80\x93 ") + noteName (hi) : noteName (first) + String::fromUTF8 (" \xe2\x80\x93"),
+                          Rectangle<float> (150.0f, ky - 50.0f, 296.0f, 42.0f), Justification::centredRight, false);
+        }
     }
 
     // Orb Rings: υπογραφή περιεχομένου (επιλογή, learn, ονόματα/τιμές, θέση στα 16 μέτρα): ξαναστέλνεται μόνο αν άλλαξε κάτι
@@ -1615,13 +1664,19 @@ private:
         else if (engine.pendingBlock() >= 0)   // το block περιμένει ζώνη (zones first ή μετά από φόρτωση plugin)
         {
             const int zb = engine.pendingBlock();
-            const String sig = "Z" + String (zb) + "," + String (engine.zoneState[(size_t) zb].load()) + "," + String (engine.zoneFirst[(size_t) zb].load()) + "," + String ((int) s88Blink);
+            const String sig = "Z" + String (zb) + "," + String (engine.zoneState[(size_t) zb].load()) + "," + String (engine.zoneFirst[(size_t) zb].load()) + "," + String ((int) s88Blink) + "," + String ((int) loadingSlots.contains (zb));
             if (sig == s88Sig) return;
             s88Sig = sig;
         }
         else if (s88RingsOpen)
         {
             const String sig = s88RingsSig();
+            if (sig == s88Sig) return;
+            s88Sig = sig;
+        }
+        else if (isEmptyZone (selected))   // ζώνη ορισμένη, χωρίς plugin ακόμη: μένουμε στην οθόνη του block (όχι στο άδειο σχέδιο)
+        {
+            const String sig = "Z" + String (selected) + ",done," + String (engine.lo[(size_t) selected].load()) + "," + String (engine.hi[(size_t) selected].load()) + "," + String ((int) loadingSlots.contains (selected));
             if (sig == s88Sig) return;
             s88Sig = sig;
         }
@@ -1736,7 +1791,7 @@ private:
             if (ok && ! keyScreens.isOn())   // οθόνες S88 (πείραμα): δοκιμαστικό καρέ με μπάρες χρώματος
             {
                 keyScreens.logger = [] (const String& s) { flow::flowLog (s); };
-                if (keyScreens.start()) { s88Sig = String(); s88Art = Image(); s88SplashUntil = Time::getMillisecondCounter() + 2500; submitS88Logo(); }   // πρώτα το λογότυπο, μετά το σχέδιο
+                if (keyScreens.start()) { s88Sig = String(); s88Art = Image(); s88ArtDim = Image(); s88SplashUntil = Time::getMillisecondCounter() + 2500; submitS88Logo(); }   // πρώτα το λογότυπο, μετά το σχέδιο
             }
             if (ok)
             {
@@ -2913,6 +2968,7 @@ private:
         if (! userLoad) setMessage (gr ("Loading: ") + description.name);
         setLoading (token, true);   // σημάδι ασφαλείας: αν κρασάρει, δεν ξαναφορτώνεται μόνο του
         loadingSlots.addIfNotAlreadyThere (block);
+        if (block >= 0 && block < flow::numBlocks) loadingName[(size_t) block] = description.name;
         ++pendingLoads;
 
         SafePointer<MainComponent> safeThis (this);
@@ -4977,6 +5033,7 @@ private:
     bool dirty = false;
     uint32 lastSaveMs = 0;
     Array<int> loadingSlots;
+    std::array<String, flow::numBlocks> loadingName;   // όνομα του plugin που φορτώνει σε κάθε θέση (για το snapshot στο S88)
     int pendingLoads = 0;
     StringArray loadingTokens;
     std::map<String, uint32> loadStartMs;
