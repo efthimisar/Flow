@@ -2245,10 +2245,75 @@ private:
         return best;
     }
 
+    // Εικόνα από τον φάκελο του χρήστη (Music/Flow/Orb): τυχαίο αρχείο, κεντραρισμένο τετράγωνο, βαμμένο ολόκληρο με χρώματα Wada.
+    // Το φωτεινό περιεχόμενο της εικόνας (luma, με αυτόματη επέκταση 2%–98%) αντιστοιχίζεται σε διαβάθμιση ανάμεσα στα 3-4 χρώματα ενός συνδυασμού Wada, ταξινομημένα από σκούρο σε ανοιχτό. Στο τέλος ο ίδιος λεπτός κόκκος με τη γεννήτρια.
+    // Αν ο φάκελος δεν υπάρχει ή δεν έχει εικόνες, επιστρέφει κενή εικόνα (τότε δουλεύει η γεννήτρια).
+    static Image orbFromFolder (Random& rnd)
+    {
+        constexpr int N = 512;
+        const auto dir = File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Orb");
+        if (! dir.isDirectory()) return {};
+        Array<File> files;
+        for (const auto& ext : { "*.png", "*.jpg", "*.jpeg" }) dir.findChildFiles (files, File::findFiles, false, ext);
+        if (files.isEmpty()) return {};
+        const Image src = ImageFileFormat::loadFrom (files[rnd.nextInt (files.size())]);
+        if (! src.isValid() || src.getWidth() < 2 || src.getHeight() < 2) return {};
+
+        Image sq (Image::RGB, N, N, true);   // κεντραρισμένο τετράγωνο, διάφανες περιοχές πάνω σε λευκό
+        {
+            Graphics g (sq);
+            g.fillAll (Colours::white);
+            g.setImageResamplingQuality (Graphics::highResamplingQuality);
+            const int side = jmin (src.getWidth(), src.getHeight());
+            const Image crop = src.getClippedImage (Rectangle<int> ((src.getWidth() - side) / 2, (src.getHeight() - side) / 2, side, side));
+            g.drawImage (crop, Rectangle<float> (0.0f, 0.0f, (float) N, (float) N));
+        }
+
+        int cand[348], nc = 0;
+        for (int i = 0; i < 348; ++i) if (wada::kCombos[i].n >= 3) cand[nc++] = i;
+        const auto& combo = wada::kCombos[cand[rnd.nextInt (nc)]];
+        const int np = combo.n;
+        Colour pal[4];
+        for (int i = 0; i < np; ++i) pal[i] = Colour ((uint32) (0xff000000u | wada::kColours[combo.idx[i]]));
+        auto luma = [] (Colour c) { return 0.299f * c.getFloatRed() + 0.587f * c.getFloatGreen() + 0.114f * c.getFloatBlue(); };
+        for (int i = 1; i < np; ++i)   // ταξινόμηση από σκούρο σε ανοιχτό
+            for (int j = i; j > 0 && luma (pal[j]) < luma (pal[j - 1]); --j) std::swap (pal[j], pal[j - 1]);
+
+        std::vector<float> L ((size_t) (N * N));
+        int hist[256] = {};
+        {
+            Image::BitmapData bd (sq, Image::BitmapData::readOnly);
+            for (int y = 0; y < N; ++y)
+                for (int x = 0; x < N; ++x)
+                {
+                    const float l = luma (bd.getPixelColour (x, y));
+                    L[(size_t) (y * N + x)] = l;
+                    ++hist[jlimit (0, 255, (int) (l * 255.0f))];
+                }
+        }
+        auto percentile = [&] (float f) { int acc = 0; const int target = (int) (f * (float) (N * N)); for (int i = 0; i < 256; ++i) { acc += hist[i]; if (acc >= target) return (float) i / 255.0f; } return 1.0f; };
+        const float lo = percentile (0.02f), hi = jmax (lo + 0.05f, percentile (0.98f));
+
+        Image out (Image::RGB, N, N, false);
+        Image::BitmapData bd (out, Image::BitmapData::writeOnly);
+        for (int y = 0; y < N; ++y)
+            for (int x = 0; x < N; ++x)
+            {
+                const float t = jlimit (0.0f, 1.0f, (L[(size_t) (y * N + x)] - lo) / (hi - lo)) * (float) (np - 1);
+                const int i0 = jmin (np - 2, (int) t);
+                const Colour c = pal[i0].interpolatedWith (pal[i0 + 1], t - (float) i0);
+                const int dn = rnd.nextInt (11) - 5;
+                bd.setPixelColour (x, y, Colour ((uint8) jlimit (0, 255, (int) c.getRed() + dn), (uint8) jlimit (0, 255, (int) c.getGreen() + dn), (uint8) jlimit (0, 255, (int) c.getBlue() + dn)));
+            }
+        return out;
+    }
+
     void autoOrbImage()
     {
         Random rnd;
-        setOrbImage (orbGenerated (rnd), false);
+        Image im = orbFromFolder (rnd);                    // 1) δική σου εικόνα από Music/Flow/Orb, βαμμένη με Wada
+        if (! im.isValid()) im = orbGenerated (rnd);       // 2) αλλιώς η γεννήτρια
+        setOrbImage (im, false);
     }
 
     void pickOrbImage()
