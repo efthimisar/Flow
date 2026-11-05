@@ -365,22 +365,23 @@ bool KeyScreens::start()
 #if JUCE_MAC
     if (active) return true;
     status = {};
-    // 1ος δρόμος: ο agent της NI (οι υπηρεσίες NI πρέπει να τρέχουν). Αν δεν συνδεθεί, 2ος δρόμος: άμεσο USB.
-    for (uint32_t pid : { 0x1630u, 0x1620u, 0x1610u })
+    // 1ος δρόμος: άμεσο USB (δοκιμασμένο στο S88 MK2, δουλεύει και με τον agent της NI ανοιχτό).
+    // 2ος δρόμος, μόνο αν το USB δεν ανοίγει: ο agent της NI. Ο δρόμος του agent δεν έχει επιβεβαιωθεί για το S88 MK2: στη δοκιμή «συνδέθηκε» και δέχτηκε τα καρέ, αλλά οι οθόνες έμειναν στο λογότυπο.
+    const auto err = openScreenInterface (impl->dev, impl->intf, impl->pipe, [this] (const juce::String& s) { log (s); });
+    if (err.isNotEmpty())
     {
-        auto session = std::make_unique<niservice::Session>();
-        const auto serr = session->connect (pid, [this] (const std::string& s) { log (juce::String (s)); });
-        if (serr.empty()) { impl->svc = std::move (session); log ("NI service route connected (" + juce::String (impl->svc->bootstrapUsed) + ", pid 0x" + juce::String::toHexString ((int) pid) + ")"); break; }
-        log ("NI service route not available for pid 0x" + juce::String::toHexString ((int) pid) + ": " + juce::String (serr));
-        if (serr.find ("not running") != std::string::npos) break;
+        log ("direct USB not available (" + err + "), trying the NI service route");
+        for (uint32_t pid : { 0x1630u, 0x1620u, 0x1610u })
+        {
+            auto session = std::make_unique<niservice::Session>();
+            const auto serr = session->connect (pid, [this] (const std::string& s) { log (juce::String (s)); });
+            if (serr.empty()) { impl->svc = std::move (session); log ("NI service route connected (" + juce::String (impl->svc->bootstrapUsed) + ", pid 0x" + juce::String::toHexString ((int) pid) + ")"); break; }
+            log ("NI service route not available for pid 0x" + juce::String::toHexString ((int) pid) + ": " + juce::String (serr));
+            if (serr.find ("not running") != std::string::npos) break;
+        }
+        if (impl->svc == nullptr) { status = err; log (err); stop(); return false; }
     }
     const bool viaService = impl->svc != nullptr;
-    if (! viaService)
-    {
-        log ("falling back to direct USB");
-        const auto err = openScreenInterface (impl->dev, impl->intf, impl->pipe, [this] (const juce::String& s) { log (s); });
-        if (err.isNotEmpty()) { status = err; log (err); stop(); return false; }
-    }
 
     impl->quit = false;
     impl->sent = impl->failed = 0;
