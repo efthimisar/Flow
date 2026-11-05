@@ -1332,7 +1332,7 @@ private:
     int s88MenuSel = 0, s88LastSelKey = -2;
     uint32 s88BlockUntil = 0, s88RemoveArmUntil = 0;
     bool s88BlockVisible() const { return Time::getMillisecondCounter() < s88BlockUntil && isActive (selected); }
-    void s88BlockTouch() { s88BlockUntil = Time::getMillisecondCounter() + 8000; }
+    void s88BlockTouch() { s88BlockUntil = 0xffffffffu; }   // μόνιμη οθόνη: μένει μέχρι να πατηθεί άλλο κουμπί (Orb Rings, VST, MIDI FX, FX…)
 
     String s88MenuLabel (int i, int b) const
     {
