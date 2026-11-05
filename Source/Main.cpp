@@ -1342,17 +1342,56 @@ private:
         gRt.drawImageAt (s88ArtDim, -KeyScreens::width, 0);
     }
 
-    // 3 (αριστερά): «Block n» στο χρώμα του block και η μικρογραφία του block (η εικόνα του orb) σε κύκλο
-    void drawS88ListLeft (Graphics& g, int b)
+    // 3 (αριστερά): όπως η οθόνη Set zone: «Block n» και «Choose a VST» κάτω αριστερά, κάτω δεξιά το snapshot του VST που είναι επιλεγμένο στη λίστα (κενό σκούρο ορθογώνιο αν δεν έχει)
+    void drawS88ListLeft (Graphics& g, int b, const Image& snapshot)
     {
-        g.setColour (blockLight (b)); g.setFont (hobby::makeFont (typeface, 30.0f).boldened());
-        g.drawText ("Block " + String (b + 1), Rectangle<float> (0.0f, (float) s88StripH + 6.0f, (float) KeyScreens::width, 36.0f), Justification::centred, false);
-        const float d = 150.0f, x = ((float) KeyScreens::width - d) * 0.5f, y = (float) s88StripH + 50.0f;
-        Path clip; clip.addEllipse (x, y, d, d);
+        g.setColour (blockLight (b)); g.setFont (hobby::makeFont (typeface, 32.0f).boldened());
+        g.drawText ("Block " + String (b + 1), Rectangle<float> (18.0f, 182.0f, 220.0f, 40.0f), Justification::centredLeft, false);
+        g.setColour (Colours::white); g.setFont (hobby::makeFont (typeface, 22.0f).boldened());
+        g.drawText ("Choose a VST", Rectangle<float> (18.0f, 222.0f, 220.0f, 30.0f), Justification::centredLeft, false);
+        const Rectangle<float> tr (240.0f, 136.0f, 226.0f, 122.0f);
+        Path clip; clip.addRoundedRectangle (tr, 10.0f);
         g.saveState(); g.reduceClipRegion (clip, AffineTransform());
-        if (orbImage.isValid()) { g.setColour (Colours::white); g.setImageResamplingQuality (Graphics::highResamplingQuality); g.drawImage (orbImage, Rectangle<float> (x, y, d, d), RectanglePlacement::centred); }
-        else { g.setColour (Colour (0xff3a3430)); g.fillRect (x, y, d, d); }
+        g.setColour (Colour (0xff3a3430)); g.fillRect (tr);
+        if (snapshot.isValid()) { g.setColour (Colours::white); g.setImageResamplingQuality (Graphics::highResamplingQuality); g.drawImage (snapshot, tr, RectanglePlacement::centred); }
         g.restoreState();
+    }
+
+    // 3 (δεξιά): ρολό από πλακίδια με ονόματα, ευθυγραμμισμένα δεξιά· το επιλεγμένο μεγάλο με λευκό περίγραμμα και την κουκκίδα του block, τα γειτονικά στενότερα και πιο αχνά
+    void drawS88ListRight (Graphics& g, int b, const std::vector<int>& vis, const StringArray& items, int selK, bool showAll)
+    {
+        const int total = (int) vis.size();
+        const float R = (float) KeyScreens::width - 14.0f, cy = 156.0f;
+        struct Sp { float w, h, off, fs, fill, txt; };
+        static const Sp sp[3] = { { 300.0f, 58.0f, 0.0f, 32.0f, 1.0f, 1.0f }, { 272.0f, 42.0f, 54.0f, 18.0f, 0.67f, 0.8f }, { 244.0f, 32.0f, 98.0f, 15.0f, 0.39f, 0.55f } };
+        for (int d = 2; d >= 0; --d)
+            for (int sgn = -1; sgn <= 1; sgn += 2)
+            {
+                if (d == 0 && sgn > 0) continue;
+                const int k = selK + sgn * d;
+                if (k < 0 || k >= total) continue;
+                const auto& q = sp[d];
+                const float yc = cy + (float) sgn * q.off, x0 = R - q.w;
+                const Rectangle<float> tile (x0, yc - q.h * 0.5f, q.w, q.h);
+                const String& name = items[vis[(size_t) k]];
+                if (d == 0)
+                {
+                    g.setColour (Colour (0xff3a3430)); g.fillRoundedRectangle (tile, 14.0f);
+                    g.setColour (Colours::white); g.drawRoundedRectangle (tile.reduced (1.5f), 14.0f, 3.0f);
+                    g.setColour (blockLight (b)); g.fillEllipse (x0 + 16.0f, yc - 8.0f, 16.0f, 16.0f);
+                    g.setColour (Colours::white); g.setFont (hobby::makeFont (typeface, q.fs).boldened());
+                    g.drawText (name, Rectangle<float> (x0 + 44.0f, tile.getY(), q.w - 54.0f, q.h), Justification::centredLeft, true);
+                }
+                else
+                {
+                    g.setColour (Colour (0xff3a3430).withAlpha (q.fill)); g.fillRoundedRectangle (tile, 10.0f);
+                    g.setColour (Colours::white.withAlpha (q.txt)); g.setFont (hobby::makeFont (typeface, q.fs));
+                    g.drawText (name, Rectangle<float> (x0 + 16.0f, tile.getY(), q.w - 26.0f, q.h), Justification::centredLeft, true);
+                }
+            }
+        g.setColour (Colour (0xffb7bbc6)); g.setFont (hobby::makeFont (typeface, 13.0f));
+        g.drawText (String (showAll ? "instruments" : "favorites") + String::fromUTF8 ("  \xc2\xb7  ") + String (selK + 1) + " / " + String (total),
+                    Rectangle<float> (18.0f, 244.0f, 220.0f, 18.0f), Justification::centredLeft, false);
     }
 
     String s88Sig;
@@ -1707,44 +1746,21 @@ private:
             if (! open && s88Sig.startsWith ("B")) drawS88Block (gl, gRt);
             if (open)
             {
+                drawS88DimArt (gl, gRt);
+                const Colour dimTxt (0xff6a6c73);
                 if (vis.empty())
                 {
-                    gRt.setColour (dim); gRt.setFont (hobby::makeFont (typeface, 20.0f)); gRt.drawText ("No results", Rectangle<int> (0, 0, KeyScreens::width, KeyScreens::height), Justification::centred);
+                    gRt.setColour (dimTxt); gRt.setFont (hobby::makeFont (typeface, 20.0f)); gRt.drawText ("No results", Rectangle<int> (0, 0, KeyScreens::width, KeyScreens::height), Justification::centred);
+                    drawS88ListLeft (gl, jlimit (0, flow::numBlocks - 1, selected), Image());
                 }
                 else
                 {
                     const int total = (int) vis.size();
                     const int selK = jlimit (0, total - 1, list.getSelK());
                     const auto& items = list.getItems();
-                    drawS88ListLeft (gl, jlimit (0, flow::numBlocks - 1, selected));
-
-                    // δεξιά: τοίχος 3×2 με τα thumbnails (ολόκληρα, χωρίς κόψιμο), μικρό όνομα από κάτω, λευκό περίγραμμα στο επιλεγμένο. Κυλά ανά σειρά.
-                    const int totalRows = (total + 2) / 3, selRow = selK / 3;
-                    if (selRow < s88WallTop) s88WallTop = selRow;
-                    if (selRow > s88WallTop + 1) s88WallTop = selRow - 1;
-                    s88WallTop = jlimit (0, jmax (0, totalRows - 2), s88WallTop);
-                    const float mx = 12.0f, gap = 12.0f, cw = ((float) KeyScreens::width - 2.0f * mx - 2.0f * gap) / 3.0f, th = 80.0f, labelH = 20.0f;
-                    for (int rr = 0; rr < 2; ++rr)
-                        for (int cc = 0; cc < 3; ++cc)
-                        {
-                            const int k = (s88WallTop + rr) * 3 + cc;
-                            if (k >= total) continue;
-                            const int idx = vis[(size_t) k];
-                            const bool sel = k == selK;
-                            const float x = mx + (float) cc * (cw + gap), y = (float) s88StripH + 8.0f + (float) rr * (th + labelH + 8.0f);
-                            const Rectangle<float> tr (x, y, cw, th);
-                            Image im = list.thumbFn ? list.thumbFn (items[idx]) : Image();
-                            Path clip; clip.addRoundedRectangle (tr, 6.0f);
-                            gRt.saveState(); gRt.reduceClipRegion (clip, AffineTransform());
-                            if (im.isValid()) { gRt.setColour (Colours::white); gRt.setImageResamplingQuality (Graphics::highResamplingQuality); gRt.drawImage (im, tr, RectanglePlacement::centred); }
-                            else { gRt.setColour (thumbBg); gRt.fillRect (tr); }
-                            gRt.restoreState();
-                            gRt.setColour (sel ? white : grey); gRt.setFont (hobby::makeFont (typeface, 14.0f).withStyle (sel ? Font::bold : Font::plain));
-                            gRt.drawText (items[idx], Rectangle<float> (x - 4.0f, y + th + 2.0f, cw + 8.0f, labelH - 2.0f), Justification::centred, true);
-                            if (sel) { gRt.setColour (white); gRt.drawRoundedRectangle (Rectangle<float> (x - 3.0f, y - 3.0f, cw + 6.0f, th + 6.0f), 8.0f, 2.0f); }
-                        }
-                    gRt.setColour (dim); gRt.setFont (hobby::makeFont (typeface, 10.0f));   // μικρή ένδειξη όψης (πάνω/κάτω κλίση του encoder)
-                    gRt.drawText (list.getShowAll() ? "instruments" : "favorites", Rectangle<int> (KeyScreens::width - 110, KeyScreens::height - 11, 100, 10), Justification::centredRight);
+                    Image snap = list.thumbFn ? list.thumbFn (items[vis[(size_t) selK]]) : Image();
+                    drawS88ListLeft (gl, jlimit (0, flow::numBlocks - 1, selected), snap);
+                    drawS88ListRight (gRt, jlimit (0, flow::numBlocks - 1, selected), vis, items, selK, list.getShowAll());
                 }
             }
             drawS88Strip (gl, 0); drawS88Strip (gRt, 1);
