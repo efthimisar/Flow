@@ -220,7 +220,6 @@ public:
             engine.volPos[(size_t) b] = flow::curveInverse (engine.curveMode[(size_t) b].load(), gainValue);
             dirty = true;
         };
-        keyboardView.onVolumeMenu = [this] (int b) { showVolumeMenu (b); };
         keyboardView.onSpecialZone = [this] (int sb, int a, int c, bool fin)
         {
             if (! engine.isSp (sb)) return;
@@ -3339,33 +3338,6 @@ private:
             }
             if (result == 2) safe->startPedalLearn (flow::ctlSpecial);
             if (result == 3) { safe->engine.mapCode[(size_t) flow::ctlSpecial] = 0; safe->saveNow(); }
-        });
-    }
-
-    void showVolumeMenu (int b)
-    {
-        const int code = engine.volMap[(size_t) b].load();
-
-        PopupMenu menu;
-        menu.addItem (1, gr ("\xe2\x97\x8e"));
-        menu.addItem (2, gr ("\xe2\x9c\x95"), code != 0);
-        if (code != 0)
-            menu.addItem (3, gr ("Now: ") + pedalCodeText (code), false);
-
-        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardView),
-                            [safe = SafePointer<MainComponent> (this), b] (int result)
-        {
-            if (safe == nullptr) return;
-            if (result == 1)
-            {
-                safe->engine.startVolumeLearn (b);
-                safe->setMessage (gr ("Move the volume pedal for block ") + String (b + 1));
-            }
-            if (result == 2)
-            {
-                safe->engine.volMap[(size_t) b] = 0;
-                safe->saveNow();
-            }
         });
     }
 

@@ -1816,7 +1816,7 @@ public:
 
     static String chordNameFor (int mask, int bass) { return detectChord (mask, bass); }
 
-    std::function<void (int)> onSelect, onRedoZone, onCurve, onVolumeMenu, onHold;
+    std::function<void (int)> onSelect, onRedoZone, onCurve, onHold;
     std::function<void (int)> onRemoveBlock;
     std::function<void (int)> onToggleOff;   // (δεν χρησιμοποιείται πια από τον αριθμό)
     std::function<void (int)> onSwapInstrument, onToggleSpecialBlock, onToggleMf, onToggleFollowBlock;   // ⇄ και SP στη σειρά του block
@@ -2252,7 +2252,7 @@ public:
             const auto& specialRect = specialRects[(size_t) spi];
             if (specialRect.isEmpty() || ! specialRect.expanded (3.0f, 4.0f).contains (p)) continue;
             const int sb = spi == 0 ? engine.specialBlock.load() : engine.specialBlock2.load();
-            if (e.mods.isPopupMenu()) { if (onVolumeMenu) onVolumeMenu (sb); return; }
+            if (e.mods.isPopupMenu()) return;   // χωρίς δεξί κλικ μενού
             spWhich = sb;
             spLo0 = engine.lo[(size_t) sb].load(); spHi0 = engine.hi[(size_t) sb].load();
             spStartNote = noteAtX (p.x);
@@ -2276,7 +2276,6 @@ public:
             {
                 if (onTr) { if (onTranspose) onTranspose (b, -1); }
                 else if (onChord) { if (onChordType) onChordType (b, -1); }
-                else if (onBar) { if (onVolumeMenu) onVolumeMenu (b); }
                 return;
             }
 
