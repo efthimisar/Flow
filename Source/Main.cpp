@@ -1079,7 +1079,7 @@ private:
         {
             if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
             else if (s88RingsOpen) { s88Ring = jlimit (0, 3, s88Ring + (v > 0 ? 1 : -1)); s88Slot = 0; }
-            else if (engine.pendingBlock() < 0 && s88BlockVisible()) { s88MenuSel = jlimit (0, 10, s88MenuSel + (v > 0 ? 1 : -1)); s88BlockTouch(); }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
+            else if (engine.pendingBlock() < 0 && s88BlockVisible()) { s88MenuSel = jlimit (0, 9, s88MenuSel + (v > 0 ? 1 : -1)); s88BlockTouch(); }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
             return;
         }
         if (v == 0) return;   // μόνο πάτημα
@@ -1112,10 +1112,10 @@ private:
                 switch (ctl)
                 {
                     case 1: s88MenuActivate(); s88BlockTouch(); return;
-                    case 2: if (s88MenuSel >= 6) s88MenuSel -= 6; s88BlockTouch(); return;                       // πάνω: πρώτη σειρά (6 κυκλάκια)
-                    case 3: if (s88MenuSel < 6) s88MenuSel = jmin (10, s88MenuSel + 6); s88BlockTouch(); return;   // κάτω: δεύτερη σειρά (5 κυκλάκια)
-                    case 4: if (s88MenuSel != 0 && s88MenuSel != 6) --s88MenuSel; s88BlockTouch(); return;
-                    case 5: if (s88MenuSel != 5 && s88MenuSel != 10) ++s88MenuSel; s88BlockTouch(); return;
+                    case 2: if (s88MenuSel >= 5) s88MenuSel -= 5; s88BlockTouch(); return;
+                    case 3: if (s88MenuSel < 5) s88MenuSel += 5; s88BlockTouch(); return;
+                    case 4: if (s88MenuSel % 5 > 0) --s88MenuSel; s88BlockTouch(); return;
+                    case 5: if (s88MenuSel % 5 < 4) ++s88MenuSel; s88BlockTouch(); return;
                     default: break;
                 }
             }
@@ -1300,13 +1300,13 @@ private:
         {
             case 0: { const int h = engine.holdMode[(size_t) b].load(); return "Hold " + String::fromUTF8 ("\xc2\xb7 ") + (h == 0 ? "off" : h == 1 ? "LM" : h == 2 ? "LP" : "AL"); }
             case 1: return "Volume curve";
-            case 2: case 3: return "Transpose " + String::fromUTF8 ("\xc2\xb7 ") + (tr > 0 ? "+" : "") + String (tr) + (i == 2 ? "  (\xe2\x88\x92 octave)" : "  (+ octave)");
-            case 4: return "Live " + String::fromUTF8 ("\xc2\xb7 ") + (engine.liveSilent[(size_t) b].load() != 0 ? "silent" : "sounding");
-            case 5: return "Change instrument";
-            case 6: return "Special " + String::fromUTF8 ("\xc2\xb7 ") + (engine.isSp (b) ? "on" : "off");
-            case 7: return "Master flow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.mfBlock.load() == b ? "on" : "off");
-            case 8: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() != 0 ? "on" : "off");
-            case 9: return "Set the zone again";
+            case 2: return "Transpose " + String::fromUTF8 ("\xc2\xb7 ") + (tr > 0 ? "+" : "") + String (tr);
+            case 3: return "Live " + String::fromUTF8 ("\xc2\xb7 ") + (engine.liveSilent[(size_t) b].load() != 0 ? "silent" : "sounding");
+            case 4: return "Change instrument";
+            case 5: return "Special " + String::fromUTF8 ("\xc2\xb7 ") + (engine.isSp (b) ? "on" : "off");
+            case 6: return "Master flow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.mfBlock.load() == b ? "on" : "off");
+            case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() != 0 ? "on" : "off");
+            case 8: return "Set the zone again";
             default: return armed ? "Press again to delete" : "Delete block";
         }
     }
@@ -1315,11 +1315,11 @@ private:
         switch (i)
         {
             case 0: return engine.holdMode[(size_t) b].load() != 0;
-            case 2: case 3: return engine.transpose[(size_t) b].load() != 0;
-            case 4: return engine.liveSilent[(size_t) b].load() != 0;
-            case 6: return engine.isSp (b);
-            case 7: return engine.mfBlock.load() == b;
-            case 8: return engine.followBlock[(size_t) b].load() != 0;
+            case 2: return engine.transpose[(size_t) b].load() != 0;
+            case 3: return engine.liveSilent[(size_t) b].load() != 0;
+            case 5: return engine.isSp (b);
+            case 6: return engine.mfBlock.load() == b;
+            case 7: return engine.followBlock[(size_t) b].load() != 0;
             default: return false;
         }
     }
@@ -1332,14 +1332,13 @@ private:
         {
             case 0: if (keyboardView.onHold) keyboardView.onHold (b); break;
             case 1: if (keyboardView.onCurve) keyboardView.onCurve (b); break;
-            case 2: if (keyboardView.onTranspose) keyboardView.onTranspose (b, -1); break;   // −1 οκτάβα (έως −4)
-            case 3: if (keyboardView.onTranspose) keyboardView.onTranspose (b, 1); break;    // +1 οκτάβα (έως +4)
-            case 4: if (keyboardView.onToggleSilent) keyboardView.onToggleSilent (b); break;
-            case 5: if (keyboardView.onSwapInstrument) keyboardView.onSwapInstrument (b); break;
-            case 6: if (keyboardView.onToggleSpecialBlock) keyboardView.onToggleSpecialBlock (b); break;
-            case 7: if (keyboardView.onToggleMf) keyboardView.onToggleMf (b); break;
-            case 8: if (keyboardView.onToggleFollowBlock) keyboardView.onToggleFollowBlock (b); break;
-            case 9: if (keyboardView.onRedoZone) keyboardView.onRedoZone (b); break;
+            case 2: if (keyboardView.onTranspose) keyboardView.onTranspose (b, engine.transpose[(size_t) b].load() >= 48 ? 0 : 1); break;   // +1 οκτάβα, μετά το +4 γυρνά στο 0
+            case 3: if (keyboardView.onToggleSilent) keyboardView.onToggleSilent (b); break;
+            case 4: if (keyboardView.onSwapInstrument) keyboardView.onSwapInstrument (b); break;
+            case 5: if (keyboardView.onToggleSpecialBlock) keyboardView.onToggleSpecialBlock (b); break;
+            case 6: if (keyboardView.onToggleMf) keyboardView.onToggleMf (b); break;
+            case 7: if (keyboardView.onToggleFollowBlock) keyboardView.onToggleFollowBlock (b); break;
+            case 8: if (keyboardView.onRedoZone) keyboardView.onRedoZone (b); break;
             default:
                 if (Time::getMillisecondCounter() < s88RemoveArmUntil) { s88RemoveArmUntil = 0; removeBlock (b); }   // σβήσιμο: δύο πατήματα, όπως στον Mac
                 else { s88RemoveArmUntil = Time::getMillisecondCounter() + 3000; setMessage (gr ("Press again to delete the block")); }
@@ -1352,7 +1351,7 @@ private:
         const int b = selected;
         String s = "B" + String (b) + "," + String (s88MenuSel) + "," + String (engine.lo[(size_t) b].load()) + "," + String (engine.hi[(size_t) b].load()) + ","
                    + String ((int) (engine.volPos[(size_t) b].load() * 200.0f)) + "," + String ((int) engine.pressBits[0].load()) + "," + String ((int) engine.pressBits[1].load()) + ",";
-        for (int i = 0; i < 11; ++i) s += s88MenuLabel (i, b) + "|";
+        for (int i = 0; i < 10; ++i) s += s88MenuLabel (i, b) + "|";
         return s;
     }
 
@@ -1399,40 +1398,35 @@ private:
         }
 
         // ---- δεξιά: 10 κυκλάκια, 5×2 ----
-        const float D = 56.0f, gap = 12.0f, gx = 14.0f + (452.0f - (6.0f * D + 5.0f * gap)) * 0.5f;
-        for (int i = 0; i < 11; ++i)
+        const float D = 64.0f, gap = 14.0f, gx = 14.0f + (452.0f - (5.0f * D + 4.0f * gap)) * 0.5f;
+        for (int i = 0; i < 10; ++i)
         {
-            const int col = i < 6 ? i : i - 6, row = i < 6 ? 0 : 1;
-            const float cx = gx + (float) col * (D + gap), cy = 64.0f + (float) row * (D + 14.0f);
+            const float cx = gx + (float) (i % 5) * (D + gap), cy = 62.0f + (float) (i / 5) * (D + 12.0f);
             gRt.setColour (Colours::black); gRt.fillEllipse (cx, cy, D, D);
             if (s88MenuOn (i, b)) { gRt.setColour (bcol); gRt.drawEllipse (cx + 1.5f, cy + 1.5f, D - 3.0f, D - 3.0f, 3.0f); }
             if (i == s88MenuSel) { gRt.setColour (white); gRt.drawEllipse (cx - 3.0f, cy - 3.0f, D + 6.0f, D + 6.0f, 3.0f); }
             gRt.setColour (white);
             const Rectangle<float> r (cx, cy, D, D);
-            const int h = engine.holdMode[(size_t) b].load();
+            const int h = engine.holdMode[(size_t) b].load(), tr = engine.transpose[(size_t) b].load() / 12;
             gRt.setFont (hobby::makeFont (typeface, 22.0f).boldened());
             switch (i)
             {
                 case 0: gRt.drawText (h == 1 ? "LM" : h == 2 ? "LP" : h >= 3 ? "AL" : "H", r, Justification::centred, false); break;
-                case 1: gRt.drawLine (cx + 16.0f, cy + D - 16.0f, cx + D - 16.0f, cy + 16.0f, 3.0f); break;
-                case 2: gRt.drawLine (cx + 17.0f, cy + D * 0.5f, cx + D - 17.0f, cy + D * 0.5f, 3.5f); break;   // −
-                case 3:   // +
-                    gRt.drawLine (cx + 17.0f, cy + D * 0.5f, cx + D - 17.0f, cy + D * 0.5f, 3.5f);
-                    gRt.drawLine (cx + D * 0.5f, cy + 17.0f, cx + D * 0.5f, cy + D - 17.0f, 3.5f);
-                    break;
-                case 4:
+                case 1: gRt.drawLine (cx + 18.0f, cy + D - 18.0f, cx + D - 18.0f, cy + 18.0f, 3.0f); break;
+                case 2: gRt.drawText (tr > 0 ? "+" + String (tr) : String (tr), r, Justification::centred, false); break;
+                case 3:
                     gRt.drawText (String::fromUTF8 ("\xe2\x99\xaa"), r, Justification::centred, false);
-                    if (engine.liveSilent[(size_t) b].load() != 0) gRt.drawLine (cx + 14.0f, cy + D - 14.0f, cx + D - 14.0f, cy + 14.0f, 3.0f);
+                    if (engine.liveSilent[(size_t) b].load() != 0) gRt.drawLine (cx + 16.0f, cy + D - 16.0f, cx + D - 16.0f, cy + 16.0f, 3.0f);
                     break;
-                case 5: gRt.drawText (String::fromUTF8 ("\xe2\x87\x84"), r, Justification::centred, false); break;
-                case 6: gRt.drawText ("SP", r, Justification::centred, false); break;
-                case 7: gRt.drawText ("MF", r, Justification::centred, false); break;
-                case 8: gRt.drawText ("f", r, Justification::centred, false); break;
-                case 9: gRt.drawText (String::fromUTF8 ("\xe2\x9f\xb2"), r, Justification::centred, false); break;
+                case 4: gRt.drawText (String::fromUTF8 ("\xe2\x87\x84"), r, Justification::centred, false); break;
+                case 5: gRt.drawText ("SP", r, Justification::centred, false); break;
+                case 6: gRt.drawText ("MF", r, Justification::centred, false); break;
+                case 7: gRt.drawText ("f", r, Justification::centred, false); break;
+                case 8: gRt.drawText (String::fromUTF8 ("\xe2\x9f\xb2"), r, Justification::centred, false); break;
                 default:
                     gRt.setColour (Time::getMillisecondCounter() < s88RemoveArmUntil ? hobby::kRed : white);
-                    gRt.drawLine (cx + 19.0f, cy + 19.0f, cx + D - 19.0f, cy + D - 19.0f, 3.0f);
-                    gRt.drawLine (cx + 19.0f, cy + D - 19.0f, cx + D - 19.0f, cy + 19.0f, 3.0f);
+                    gRt.drawLine (cx + 21.0f, cy + 21.0f, cx + D - 21.0f, cy + D - 21.0f, 3.0f);
+                    gRt.drawLine (cx + 21.0f, cy + D - 21.0f, cx + D - 21.0f, cy + 21.0f, 3.0f);
                     break;
             }
         }
