@@ -1073,6 +1073,7 @@ private:
     // Encoder στη λίστα plugins: περιστροφή = γραμμή, κλίση πάνω/κάτω = instruments/favorites, αριστερά/δεξιά = στήλη, πάτημα = επιλογή.
     void handleS88Control (int ctl, int v)
     {
+        if (ctl >= 35 && ctl <= 42 && v != 0) flow::flowLog ("S88 button " + String (ctl) + " pressed (pending block " + String (engine.pendingBlock()) + ", selected " + String (selected) + ")");
         auto& list = loopsView.getList();
         const bool listOpen = list.isVisible();
         if (ctl == 100)   // περιστροφή: + = δεξιά
