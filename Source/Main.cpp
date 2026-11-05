@@ -1193,7 +1193,57 @@ private:
     Image s88Art;                 // το σχέδιο της οθόνης 2 (960 × 246), νέο σε κάθε σύνδεση των οθονών
     uint32 s88SplashUntil = 0;    // μέχρι πότε μένει το λογότυπο μετά τη σύνδεση
 
-    // πλατιά εκδοχή της γεννήτριας: λίγα, μεγάλα σχήματα σε μία σειρά, με χρώματα Wada
+    // κοινά σχήματα των δύο γεννητριών: το σχήμα μπαίνει σε τετράγωνο (x, y, s), σχεδιασμένο σε μία θέση και περιστρεφόμενο κατά r·90°
+    // 0 τεταρτοκύκλιο, 1 ημικύκλιο, 2 κύκλος, 3 δαχτυλίδι (η τρύπα παίρνει το χρώμα hole), 4 τρίγωνο, 5 κορυφή, 6 αψίδα, 7 φακός, 8 μπάρα, 9 τετράγωνο
+    static bool orbKindIsCurved (int k) { return k <= 3 || k == 6 || k == 7; }
+
+    static int orbPickKind (Random& rnd, int last)
+    {
+        static const int wt[10] = { 16, 14, 12, 10, 12, 6, 9, 6, 5, 3 };
+        for (;;)
+        {
+            int roll = rnd.nextInt (105), k = 0;
+            while (k < 9 && roll >= wt[k]) { roll -= wt[k]; ++k; }
+            if (k != last) return k;
+        }
+    }
+
+    static void orbShape (Graphics& g, int kind, float x, float y, float s, Colour col, Colour hole, int r)
+    {
+        const float hp = MathConstants<float>::halfPi, pi = MathConstants<float>::pi;
+        Path p;
+        switch (kind)
+        {
+            case 0: p.addPieSegment (x - s, y - s, 2.0f * s, 2.0f * s, hp, pi, 0.0f); break;                  // γωνία πάνω-αριστερά
+            case 1: p.addPieSegment (x, y, s, s, 0.0f, pi, 0.0f); break;                                      // δεξί μισό του κύκλου
+            case 2: p.addEllipse (x, y, s, s); break;
+            case 3: p.addEllipse (x, y, s, s); break;                                                         // η τρύπα ζωγραφίζεται μετά
+            case 4: p.addTriangle (x, y, x + s, y, x, y + s); break;
+            case 5: p.addTriangle (x, y + s, x + s, y + s, x + s * 0.5f, y); break;
+            case 6: { const float w = s * 0.6f, x0 = x + (s - w) * 0.5f;
+                      p.addRectangle (x0, y + w * 0.5f, w, s - w * 0.5f);
+                      p.addPieSegment (x0, y, w, w, -hp, hp, 0.0f); break; }
+            case 7: break;                                                                                    // φακός: με clip, παρακάτω
+            case 8: p.addRectangle (x + s * 0.36f, y, s * 0.28f, s); break;
+            default: p.addRectangle (x, y, s, s); break;
+        }
+        const auto rot = AffineTransform::rotation ((float) r * hp, x + s * 0.5f, y + s * 0.5f);
+        g.setColour (col);
+        if (kind == 7)
+        {
+            Path a, b;
+            a.addPieSegment (x - s, y - s, 2.0f * s, 2.0f * s, hp, pi, 0.0f);
+            b.addPieSegment (x, y, 2.0f * s, 2.0f * s, 1.5f * pi, 2.0f * pi, 0.0f);
+            a.applyTransform (rot); b.applyTransform (rot);
+            g.saveState(); g.reduceClipRegion (a); g.fillPath (b); g.restoreState();
+            return;
+        }
+        if (kind != 2 && kind != 3 && kind != 9) p.applyTransform (rot);
+        g.fillPath (p);
+        if (kind == 3) { g.setColour (hole); const float m = s * 0.28f; g.fillEllipse (x + m, y + m, s - 2.0f * m, s - 2.0f * m); }
+    }
+
+    // πλατιά εκδοχή της γεννήτριας για τις οθόνες του hardware: μαύρο φόντο, 2 χρώματα Wada, 2-3 μεγάλα σχήματα σε 4 θέσεις κατά πλάτος
     static Image orbGeneratedWide (Random& rnd, int w, int h)
     {
         int cand[348], nc = 0;
@@ -1202,28 +1252,23 @@ private:
         const int np = combo.n;
         Colour pal[4];
         for (int i = 0; i < np; ++i) pal[i] = Colour ((uint32) (0xff000000u | wada::kColours[combo.idx[i]]));
+        const int c0 = rnd.nextInt (np), c1 = (c0 + 1 + rnd.nextInt (np - 1)) % np;
+        const Colour use[2] = { pal[c0], pal[c1] };
         Image out (Image::RGB, w, h, true);
         Graphics g (out);
-        g.fillAll (pal[0]);
-        const int c = h;
-        int last = 0;
-        for (int gx = 0; gx * c < w; ++gx)
+        g.fillAll (Colours::black);
+        int slot[4] = { 0, 1, 2, 3 };
+        for (int i = 3; i > 0; --i) std::swap (slot[i], slot[rnd.nextInt (i + 1)]);
+        const int n = 2 + rnd.nextInt (2);
+        const float sw = (float) w / 4.0f;
+        int last = -1;
+        for (int i = 0; i < n; ++i)
         {
-            if (rnd.nextFloat() < 0.25f) continue;
-            int k = 1 + rnd.nextInt (np - 1);
-            if (k == last) k = 1 + (k % (np - 1));
-            last = k;
-            g.setColour (pal[k]);
-            const int x0 = gx * c;
-            const float roll = rnd.nextFloat();
-            if (roll < 0.5f)
-            {
-                const float a0 = (float) rnd.nextInt (4) * MathConstants<float>::halfPi;
-                Path p; p.addPieSegment ((float) (x0 - c), (float) (-c), 2.0f * (float) c, 2.0f * (float) c, a0, a0 + MathConstants<float>::halfPi, 0.0f);
-                g.fillPath (p);
-            }
-            else if (roll < 0.75f) g.fillRect (x0, 0, c, h);
-            else g.fillEllipse ((float) x0 + (float) c * 0.15f, (float) c * 0.15f, (float) c * 0.7f, (float) c * 0.7f);
+            const int kind = orbPickKind (rnd, last); last = kind;
+            const float sz = (float) h * (rnd.nextInt (3) == 2 ? 0.75f : 1.0f);
+            const float x = (float) slot[i] * sw + (sw - sz) * 0.5f + (rnd.nextFloat() - 0.5f) * 60.0f;
+            const float y = ((float) h - sz) * 0.5f + (rnd.nextFloat() - 0.5f) * 20.0f;
+            orbShape (g, kind, x, y, sz, use[rnd.nextInt (2)], Colours::black, rnd.nextInt (4));
         }
         return out;
     }
@@ -2033,7 +2078,7 @@ private:
     }
 
     // Γεννήτρια: γεωμετρική σύνθεση σε στυλ Bauhaus με συνδυασμό χρωμάτων Wada (μόνο συνδυασμοί με 3-4 χρώματα). Τρεις πυκνότητες: λίγα και μεγάλα (πλέγμα 3x3, 3-5 σχήματα), μεσαία (4x4, 7-10), πολλά και μικρά (5x5, 12-18).
-    // Σχήματα: τεταρτοκύκλια 55%, ημικύκλια 20%, ορθογώνια 25%, πάντα με τουλάχιστον ένα τόξο. Έως 8 δοκιμές: κρατιέται η πρώτη όπου κανένα χρώμα δεν πιάνει πάνω από ~42-50% και κάθε χρώμα φαίνεται τουλάχιστον 8%.
+    // Σχήματα (orbShape): τεταρτοκύκλιο, ημικύκλιο, κύκλος, δαχτυλίδι, τρίγωνο, κορυφή, αψίδα, φακός, μπάρα και λίγα τετράγωνα, σε 4 περιστροφές, πάντα με τουλάχιστον ένα καμπύλο. Δεν υπάρχει «στόχος» (δαχτυλίδι με τελεία μέσα). Έως 8 δοκιμές: κρατιέται η πρώτη όπου κανένα χρώμα δεν πιάνει πάνω από ~42-50% και κάθε χρώμα φαίνεται τουλάχιστον 8%.
     // Όλες οι ευθείες ακμές πέφτουν σε ακέραια pixel (χωρίς εξομάλυνση ακμών), ώστε να μη φαίνονται λεπτές γραμμές στα όρια των κελιών· μόνο οι καμπύλες εξομαλύνονται. Στο τέλος λεπτός κόκκος.
     static Image orbGenerated (Random& rnd)
     {
@@ -2056,6 +2101,7 @@ private:
             Graphics g (out);
             g.fillAll (pal[0]);   // αδιαφανές από την αρχή: καμία ημιδιαφανής γραμμή
             int cell[5][5] = {};
+            int lastKind = -1;
             for (int r = 0; r < grid; ++r)
                 for (int c = 0; c < grid; ++c)
                 {
@@ -2067,30 +2113,19 @@ private:
                 }
             int last = -1, arcs = 0;
             const int nShapes = smin + rnd.nextInt (smax - smin + 1);
-            for (int i = 0; i <= nShapes; ++i)   // το τελευταίο (i == nShapes) μπαίνει μόνο αν λείπει τόξο
+            for (int i = 0; i <= nShapes; ++i)   // το τελευταίο (i == nShapes) μπαίνει μόνο αν λείπει καμπύλο σχήμα
             {
                 if (i == nShapes && arcs > 0) break;
                 int k = rnd.nextInt (np);
                 if (k == last) k = (k + 1 + rnd.nextInt (np - 1)) % np;
                 last = k;
-                g.setColour (pal[k]);
-                const int ix = rnd.nextInt (grid + 1), iy = rnd.nextInt (grid + 1);
-                const float roll = i == nShapes ? 0.0f : rnd.nextFloat();   // το αναγκαστικό σχήμα είναι τεταρτοκύκλιο
-                if (roll < 0.75f)
-                {
-                    const int rc = (dens != 2 && rnd.nextFloat() < 0.3f) ? 2 : 1;   // ακτίνα 1 ή 2 κελιά
-                    const float R = (float) e[jmin (grid, rc)];
-                    const float a0 = (float) rnd.nextInt (4) * MathConstants<float>::halfPi;
-                    const float span = roll < 0.55f ? MathConstants<float>::halfPi : MathConstants<float>::pi;
-                    Path pth; pth.addPieSegment ((float) e[ix] - R, (float) e[iy] - R, 2.0f * R, 2.0f * R, a0, a0 + span, 0.0f);
-                    g.fillPath (pth);
-                    ++arcs;
-                }
-                else
-                {
-                    const int w = 1 + rnd.nextInt (2), h = 1 + rnd.nextInt (2);
-                    g.fillRect (Rectangle<int> (e[ix], e[iy], e[jmin (grid, ix + w)] - e[ix], e[jmin (grid, iy + h)] - e[iy]));
-                }
+                const int sc = (dens != 2 && rnd.nextFloat() < 0.3f) ? 2 : 1;   // πλάτος 1 ή 2 κελιά
+                const int ix = rnd.nextInt (grid - sc + 1), iy = rnd.nextInt (grid - sc + 1);
+                const int kind = i == nShapes ? 0 : orbPickKind (rnd, lastKind);
+                lastKind = kind;
+                const float s = (float) (e[ix + sc] - e[ix]);
+                orbShape (g, kind, (float) e[ix], (float) e[iy], s, pal[k], pal[cell[iy][ix]], rnd.nextInt (4));
+                if (orbKindIsCurved (kind)) ++arcs;
             }
         };
 
