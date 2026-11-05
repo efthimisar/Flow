@@ -8,6 +8,7 @@
 // Οι δύο έγχρωμες οθόνες (480x272, BGR565 big-endian) του Komplete Kontrol S-series MK2 μέσω USB (interface 3, bulk out 0x03).
 // Πρωτόκολλο όπως καταγράφεται στο έργο Encdr (nullobject/Encdr, GPL-3.0): ένα bulk transfer = [20-byte header][480*272*2 bytes][8-byte footer],
 // με το byte[2] του header να διαλέγει οθόνη (0 = αριστερά, 1 = δεξιά). Η υλοποίηση είναι στο KeyScreens.cpp (macOS, IOUSBLib).
+// Πρώτα δοκιμάζεται ο agent της NI (CFMessagePort, όπως στο Encdr)· αν δεν συνδεθεί, πέφτει στο άμεσο USB.
 // ΠΕΙΡΑΜΑΤΙΚΟ: δεν έχει δοκιμαστεί σε πραγματικό S88 MK2 από τον προγραμματιστή.
 class KeyScreens
 {

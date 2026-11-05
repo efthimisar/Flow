@@ -4,6 +4,10 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
 #include <mutex>
 #include <thread>
 
@@ -14,12 +18,230 @@
  #include <IOKit/usb/IOUSBLib.h>
 #endif
 
+#if JUCE_MAC
+// ---- Δρόμος μέσω του agent της NI (NIHostIntegrationAgent), με CFMessagePort ----
+// Πρωτόκολλο όπως στο Encdr (RufusIbiza/Encdr, GPL-3.0-or-later, αρχεία usb/ni_service/protocol.rs και macos.rs). Τα bytes του καρέ είναι τα ίδια με το USB bulk transfer.
+// Το Encdr το έχει επαληθεύσει σε πραγματικό υλικό (Maschine Mk3, macOS) και το δηλώνει για το Komplete Kontrol S-series MK2· για το S88 MK2 δεν έχει δοκιμαστεί από εμάς.
+// Οι υπηρεσίες της NI πρέπει να τρέχουν· αν δεν τρέχουν ή η σύνδεση αποτύχει, το KeyScreens πέφτει στο άμεσο USB.
+namespace niservice
+{
+    static const uint32_t kTrue = 0x74727565, kClientKind = 0x4e694d32, kClientRole = 0x70726d79;
+    static const uint32_t kMsgDeviceConnect = 0x03447500, kMsgInstanceConnect = 0x03444900, kMsgAckNotification = 0x03404300,
+                          kMsgDeviceState = 0x03447143, kMsgDisplay = 0x03647344, kNoteDeviceOn = 0x03444e2b;
+
+    using Bytes = std::vector<uint8_t>;
+    static void putW (Bytes& v, uint32_t w) { for (int i = 0; i < 4; ++i) v.push_back ((uint8_t) (w >> (8 * i))); }
+    static Bytes words (std::initializer_list<uint32_t> ws) { Bytes v; for (auto w : ws) putW (v, w); return v; }
+    static bool le32 (const Bytes& d, size_t at, uint32_t& out)
+    {
+        if (at + 4 > d.size()) return false;
+        out = (uint32_t) d[at] | ((uint32_t) d[at + 1] << 8) | ((uint32_t) d[at + 2] << 16) | ((uint32_t) d[at + 3] << 24);
+        return true;
+    }
+    static std::string text (const Bytes& d, size_t at, size_t len)
+    {
+        if (at + len > d.size()) return {};
+        std::string s ((const char*) d.data() + at, len);
+        while (! s.empty() && s.back() == '\0') s.pop_back();
+        return s;
+    }
+
+    struct Port
+    {
+        CFMessagePortRef p = nullptr;
+        ~Port() { close(); }
+        void close() { if (p != nullptr) { CFMessagePortInvalidate (p); CFRelease (p); p = nullptr; } }
+        bool open (const std::string& name, int attempts)
+        {
+            CFStringRef n = CFStringCreateWithCString (kCFAllocatorDefault, name.c_str(), kCFStringEncodingUTF8);
+            for (int a = 0; a < attempts && p == nullptr; ++a)
+            {
+                p = CFMessagePortCreateRemote (kCFAllocatorDefault, n);
+                if (p == nullptr && a + 1 < attempts) std::this_thread::sleep_for (std::chrono::milliseconds (200));
+            }
+            CFRelease (n);
+            return p != nullptr;
+        }
+        // στέλνει ένα μήνυμα· η απάντηση (αν υπάρχει) επιστρέφεται αντιγραμμένη. Επιστρέφει το status του CFMessagePort (0 = επιτυχία)
+        int request (const Bytes& msg, double timeoutSecs, Bytes& reply)
+        {
+            reply.clear();
+            CFDataRef data = CFDataCreate (kCFAllocatorDefault, msg.data(), (CFIndex) msg.size());
+            if (data == nullptr) return -4;
+            CFDataRef rep = nullptr;
+            const SInt32 st = CFMessagePortSendRequest (p, 0, data, timeoutSecs, timeoutSecs, kCFRunLoopDefaultMode, &rep);
+            CFRelease (data);
+            if (rep != nullptr)
+            {
+                const CFIndex n = CFDataGetLength (rep);
+                if (n > 0) reply.assign (CFDataGetBytePtr (rep), CFDataGetBytePtr (rep) + n);
+                CFRelease (rep);
+            }
+            return (int) st;
+        }
+    };
+
+    struct Queue { std::mutex m; std::vector<Bytes> items; };
+
+    static CFDataRef onNote (CFMessagePortRef, SInt32, CFDataRef data, void* info)
+    {
+        auto* q = (Queue*) info;
+        Bytes b;
+        if (data != nullptr) { const CFIndex n = CFDataGetLength (data); if (n > 0) b.assign (CFDataGetBytePtr (data), CFDataGetBytePtr (data) + n); }
+        std::lock_guard<std::mutex> lk (q->m);
+        q->items.push_back (std::move (b));
+        return nullptr;   // κενή απάντηση = επιβεβαίωση
+    }
+
+    // θύρα ειδοποιήσεων που ο agent συνδέεται πίσω σε αυτήν· εξυπηρετείται στο δικό της νήμα
+    struct NoteServer
+    {
+        std::thread th;
+        std::atomic<bool> stop { false };
+        std::atomic<int> ready { 0 };
+        ~NoteServer() { stop = true; if (th.joinable()) th.join(); }
+        bool start (const std::string& name, Queue* q)
+        {
+            th = std::thread ([this, name, q]
+            {
+                CFStringRef n = CFStringCreateWithCString (kCFAllocatorDefault, name.c_str(), kCFStringEncodingUTF8);
+                CFMessagePortContext ctx = { 0, q, nullptr, nullptr, nullptr };
+                Boolean freeInfo = false;
+                CFMessagePortRef port = CFMessagePortCreateLocal (kCFAllocatorDefault, n, onNote, &ctx, &freeInfo);
+                CFRelease (n);
+                if (port == nullptr) { ready = -1; return; }
+                CFRunLoopSourceRef src = CFMessagePortCreateRunLoopSource (kCFAllocatorDefault, port, 0);
+                CFRunLoopRef rl = CFRunLoopGetCurrent();
+                if (src == nullptr) { CFMessagePortInvalidate (port); CFRelease (port); ready = -1; return; }
+                CFRunLoopAddSource (rl, src, kCFRunLoopDefaultMode);
+                ready = 1;
+                while (! stop.load()) CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.2, false);
+                CFRunLoopRemoveSource (rl, src, kCFRunLoopDefaultMode);
+                CFMessagePortInvalidate (port);
+                CFRelease (src);
+                CFRelease (port);
+            });
+            for (int i = 0; i < 100 && ready.load() == 0; ++i) std::this_thread::sleep_for (std::chrono::milliseconds (20));
+            return ready.load() == 1;
+        }
+    };
+
+    struct Session
+    {
+        Queue queue;
+        Port deviceReq, instanceReq;
+        std::unique_ptr<NoteServer> deviceNote, instanceNote;
+        std::string serial, bootstrapUsed;
+        int rejected = 0;
+
+        // «register»: ζητά θύρες από το bootstrap, στήνει τη θύρα ειδοποιήσεων και δηλώνει το όνομά της
+        std::string registerWith (const std::string& bootstrapName, const Bytes& request, Port& reqOut, std::unique_ptr<NoteServer>& noteOut)
+        {
+            Port boot;
+            if (! boot.open (bootstrapName, 10)) return "could not open the NI service port '" + bootstrapName + "'";
+            Bytes reply;
+            const int st = boot.request (request, 2.0, reply);
+            if (st != 0) return "the NI service did not answer (status " + std::to_string (st) + ")";
+            if (reply.empty()) return "the NI service sent an empty reply";
+            boot.close();
+            uint32_t w = 0, reqLen = 0, noteLen = 0;
+            if (! le32 (reply, 0, w) || w != kTrue) return "the NI service refused the connection";
+            if (! le32 (reply, 4, reqLen)) return "short reply";
+            const std::string reqName = text (reply, 8, reqLen);
+            if (! le32 (reply, 8 + reqLen, noteLen)) return "short reply (notification)";
+            const std::string noteName = text (reply, 12 + reqLen, noteLen);
+            if (reqName.empty() || noteName.empty()) return "unusable port names in the reply";
+
+            noteOut.reset (new NoteServer());
+            if (! noteOut->start (noteName, &queue)) return "could not create the notification port '" + noteName + "'";
+            if (! reqOut.open (reqName, 10)) return "could not open the request port '" + reqName + "'";
+            Bytes ack = words ({ kMsgAckNotification, kTrue, 0, (uint32_t) noteName.size() });
+            ack.insert (ack.end(), noteName.begin(), noteName.end()); ack.push_back (0);
+            Bytes ignore;
+            reqOut.request (ack, 0.5, ignore);
+            return {};
+        }
+
+        std::string connectVia (const std::string& bootstrapName, uint32_t pid, const std::function<void (const std::string&)>& say)
+        {
+            auto err = registerWith (bootstrapName, words ({ kMsgDeviceConnect, pid, kClientKind, kClientRole, 0 }), deviceReq, deviceNote);
+            if (! err.empty()) return err;
+            Bytes ignore;
+            deviceReq.request (words ({ kMsgDeviceState }), 0.5, ignore);
+
+            // περιμένει να αναφέρει ο agent τη συσκευή (serial)
+            serial.clear();
+            const auto t0 = std::chrono::steady_clock::now();
+            while (serial.empty() && std::chrono::steady_clock::now() - t0 < std::chrono::seconds (3))
+            {
+                {
+                    std::lock_guard<std::mutex> lk (queue.m);
+                    for (auto& d : queue.items)
+                    {
+                        uint32_t w = 0, len = 0;
+                        if (le32 (d, 0, w) && w == kNoteDeviceOn && le32 (d, 12, len)) { serial = text (d, 16, len); if (! serial.empty()) break; }
+                    }
+                    queue.items.clear();
+                }
+                if (serial.empty()) std::this_thread::sleep_for (std::chrono::milliseconds (20));
+            }
+            if (serial.empty()) return "the NI service did not report a connected device (pid 0x" + juce::String::toHexString ((int) pid).toStdString() + ")";
+            say ("NI service reports device " + serial + "; registering for its screens");
+
+            Bytes inst = words ({ kMsgInstanceConnect, pid, kClientKind, kClientRole, (uint32_t) serial.size() + 1 });
+            inst.insert (inst.end(), serial.begin(), serial.end()); inst.push_back (0);
+            err = registerWith (bootstrapName, inst, instanceReq, instanceNote);
+            if (! err.empty()) return err;
+
+            Bytes project = words ({ 0x0349734e, 0x70001006, 0xf6b24000, 5 });
+            const char* nm = "Flow";
+            project.insert (project.end(), nm, nm + 5);   // με το τελικό NUL
+            const std::vector<Bytes> setup = {
+                words ({ 0x03566775, 0x4b657973 }), words ({ 0x03566775, 0x524b6579 }), words ({ 0x03436753 }), project,
+                words ({ 0x0344674d, pid }), words ({ 0x03434300, 0x73747274 }), words ({ 0x03497354, 0 }), words ({ 0x03436746 }),
+                words ({ 0x03497374, kTrue }), words ({ 0x03445200, 2 }), words ({ 0x03444100, 3, 0, 0x04e297b0 }) };
+            for (auto& m : setup) instanceReq.request (m, 0.04, ignore);   // κάποια απαντιούνται, άλλα όχι: καμία δεν χρειάζεται
+            return {};
+        }
+
+        std::string connect (uint32_t pid, const std::function<void (const std::string&)>& say)
+        {
+            std::string last = "the NI hardware service is not running";
+            for (const char* name : { "com.native-instruments.NIHostIntegrationAgent", "NIHWMainHandler" })
+            {
+                { Port probe; if (! probe.open (name, 1)) continue; }
+                bootstrapUsed = name;
+                const auto e = connectVia (name, pid, say);
+                if (e.empty()) return {};
+                say (std::string ("NI service bootstrap '") + name + "' did not connect: " + e);
+                last = e;
+            }
+            return last;
+        }
+
+        // στέλνει ένα καρέ (τα ίδια bytes με το USB bulk transfer) στην οθόνη screen· επιστρέφει κενό αν έγινε δεκτό
+        std::string sendDisplay (int screen, const Bytes& commands)
+        {
+            Bytes msg = words ({ kMsgDisplay, (uint32_t) screen, 0, (480u << 16) | 272u, (uint32_t) commands.size() });
+            msg.insert (msg.end(), commands.begin(), commands.end());
+            Bytes reply;
+            const int st = instanceReq.request (msg, 1.5, reply);
+            if (st != 0) return "the NI service did not accept a frame (status " + std::to_string (st) + ")";
+            uint32_t w = 0;
+            if (! le32 (reply, 0, w) || w != kTrue) return "the NI service rejected a frame (another client may hold the screens)";
+            return {};
+        }
+    };
+}
+#endif
+
 struct KeyScreens::Impl
 {
 #if JUCE_MAC
     IOUSBDeviceInterface300** dev = nullptr;
     IOUSBInterfaceInterface300** intf = nullptr;
     UInt8 pipe = 0;
+    std::unique_ptr<niservice::Session> svc;   // δρόμος μέσω του agent της NI (αν συνδέθηκε)
 #endif
     std::thread worker;
     std::mutex m;
@@ -143,8 +365,22 @@ bool KeyScreens::start()
 #if JUCE_MAC
     if (active) return true;
     status = {};
-    const auto err = openScreenInterface (impl->dev, impl->intf, impl->pipe, [this] (const juce::String& s) { log (s); });
-    if (err.isNotEmpty()) { status = err; log (err); stop(); return false; }
+    // 1ος δρόμος: ο agent της NI (οι υπηρεσίες NI πρέπει να τρέχουν). Αν δεν συνδεθεί, 2ος δρόμος: άμεσο USB.
+    for (uint32_t pid : { 0x1630u, 0x1620u, 0x1610u })
+    {
+        auto session = std::make_unique<niservice::Session>();
+        const auto serr = session->connect (pid, [this] (const std::string& s) { log (juce::String (s)); });
+        if (serr.empty()) { impl->svc = std::move (session); log ("NI service route connected (" + juce::String (impl->svc->bootstrapUsed) + ", pid 0x" + juce::String::toHexString ((int) pid) + ")"); break; }
+        log ("NI service route not available for pid 0x" + juce::String::toHexString ((int) pid) + ": " + juce::String (serr));
+        if (serr.find ("not running") != std::string::npos) break;
+    }
+    const bool viaService = impl->svc != nullptr;
+    if (! viaService)
+    {
+        log ("falling back to direct USB");
+        const auto err = openScreenInterface (impl->dev, impl->intf, impl->pipe, [this] (const juce::String& s) { log (s); });
+        if (err.isNotEmpty()) { status = err; log (err); stop(); return false; }
+    }
 
     impl->quit = false;
     impl->sent = impl->failed = 0;
@@ -172,6 +408,13 @@ bool KeyScreens::start()
                 buf.insert (buf.end(), ftr, ftr + 8);
                 impl->has[screen] = false;
             }
+            if (impl->svc != nullptr)   // μέσω του agent της NI: ολόκληρο το καρέ ως ένα μήνυμα
+            {
+                const auto e = impl->svc->sendDisplay (screen, buf);
+                if (e.empty()) { if (++impl->sent == 1) log ("first frame sent OK (NI service)"); }
+                else if (++impl->failed <= 3) log (juce::String (e));
+                continue;
+            }
             // κομμάτια πολλαπλάσια των 512 bytes (μέγιστο πακέτο USB high-speed), ώστε το τελευταίο κοντό πακέτο να σημαίνει το τέλος του transfer
             const UInt32 chunk = 32768;
             IOReturn r = kIOReturnSuccess;
@@ -186,7 +429,7 @@ bool KeyScreens::start()
     });
 
     active = true;
-    status = "OK (2 screens 480x272)";
+    status = viaService ? "OK (2 screens 480x272, via NI service)" : "OK (2 screens 480x272)";
     log (status);
     return true;
 #else
@@ -210,6 +453,7 @@ void KeyScreens::stop()
     }
     impl->cv.notify_all();
     if (impl->worker.joinable()) impl->worker.join();
+    impl->svc.reset();
     if (impl->intf != nullptr)
     {
         (*impl->intf)->USBInterfaceClose (impl->intf);
