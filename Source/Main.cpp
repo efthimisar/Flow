@@ -1462,53 +1462,40 @@ private:
     String s88BlockSig()
     {
         const int b = selected;
+        String pn; bool hasSnap = false;
+        if (auto* pl = engine.getPlugin (b)) { pn = pl->getName(); hasSnap = thumbFor (pn).isValid(); }
         String s = "B" + String (b) + "," + String (s88MenuSel) + "," + String (engine.lo[(size_t) b].load()) + "," + String (engine.hi[(size_t) b].load()) + ","
-                   + String ((int) (engine.volPos[(size_t) b].load() * 200.0f)) + "," + String ((int) engine.pressBits[0].load()) + "," + String ((int) engine.pressBits[1].load()) + ",";
+                   + String ((int) (engine.volPos[(size_t) b].load() * 200.0f)) + "," + pn + "," + String ((int) hasSnap) + ",";
         for (int i = 0; i < 10; ++i) s += s88MenuLabel (i, b) + "|";
         return s;
     }
 
     void drawS88Block (Graphics& gl, Graphics& gRt)
     {
-        drawS88Art (gl, gRt);
+        drawS88DimArt (gl, gRt);
         const int b = jlimit (0, flow::numBlocks - 1, selected);
         const Colour bcol = blockLight (b), white (0xffffffff);
-        for (auto* g : { &gl, &gRt })
+        // ---- αριστερά: μεγάλο snapshot του VST, αριθμός πάνω αριστερά, range (κάτω νότα από πάνω, πάνω νότα από κάτω) πάνω δεξιά, γραμμή έντασης κάτω ----
         {
-            g->setColour (Colour (0xff1c1a19).withAlpha (0.8f));
-            g->fillRoundedRectangle (14.0f, 50.0f, 452.0f, 208.0f, 14.0f);
+            const Rectangle<float> tr (100.0f, 50.0f, 280.0f, 187.0f);
+            Path clip; clip.addRoundedRectangle (tr, 10.0f);
+            gl.saveState(); gl.reduceClipRegion (clip, AffineTransform());
+            gl.setColour (Colour (0xff3a3430)); gl.fillRect (tr);
+            Image snap;
+            if (auto* pl = engine.getPlugin (b)) snap = thumbFor (pl->getName());
+            if (snap.isValid()) { gl.setColour (Colours::white); gl.setImageResamplingQuality (Graphics::highResamplingQuality); gl.drawImage (snap, tr, RectanglePlacement::centred); }
+            gl.restoreState();
         }
-        // ---- αριστερά ----
-        gl.setColour (bcol); gl.fillEllipse (26.0f, 62.0f, 44.0f, 44.0f);
+        gl.setColour (bcol); gl.fillEllipse (26.0f, 54.0f, 44.0f, 44.0f);
         gl.setColour (Colour (0xff1c1a19)); gl.setFont (hobby::makeFont (typeface, 26.0f).boldened());
-        gl.drawText (String (b + 1), Rectangle<float> (26.0f, 62.0f, 44.0f, 44.0f), Justification::centred, false);
+        gl.drawText (String (b + 1), Rectangle<float> (26.0f, 54.0f, 44.0f, 44.0f), Justification::centred, false);
         const int lo = engine.lo[(size_t) b].load(), hi = engine.hi[(size_t) b].load();
-        gl.setColour (white); gl.setFont (hobby::makeFont (typeface, 30.0f).boldened());
-        gl.drawText (noteName (lo) + String::fromUTF8 (" \xe2\x80\x93 ") + noteName (hi), Rectangle<float> (150.0f, 62.0f, 304.0f, 44.0f), Justification::centredRight, false);
+        gl.setColour (white); gl.setFont (hobby::makeFont (typeface, 26.0f).boldened());
+        gl.drawText (noteName (lo), Rectangle<float> (380.0f, 50.0f, 74.0f, 32.0f), Justification::centredRight, false);
+        gl.drawText (noteName (hi), Rectangle<float> (380.0f, 86.0f, 74.0f, 32.0f), Justification::centredRight, false);
         const float kx0 = 28.0f, kw = 424.0f;
-        gl.setColour (Colour (0xff3a3430)); gl.fillRoundedRectangle (kx0, 118.0f, kw, 6.0f, 3.0f);
-        gl.setColour (Colour (0xffe8b94a)); gl.fillRoundedRectangle (kx0, 118.0f, jmax (6.0f, kw * jlimit (0.0f, 1.0f, engine.volPos[(size_t) b].load())), 6.0f, 3.0f);   // γραμμή volume: κινείται με το πετάλι
-        int whites = 0;
-        for (int n = lo; n <= hi; ++n) if (! flow::isBlackKey (n)) ++whites;
-        whites = jmax (1, whites);
-        const float ww = kw / (float) whites, ky = 134.0f, kh = 112.0f;
-        const uint64_t p0 = engine.pressBits[0].load(), p1 = engine.pressBits[1].load();
-        auto pressed = [&] (int n) { return ((n >> 6) == 0 ? p0 : p1) >> (n & 63) & 1; };
-        int wi = 0;
-        for (int n = lo; n <= hi; ++n)
-            if (! flow::isBlackKey (n))
-            {
-                gl.setColour (pressed (n) ? bcol : Colour (0xfff0ece6));
-                gl.fillRect (kx0 + (float) wi * ww, ky, ww - 1.0f, kh);
-                ++wi;
-            }
-        wi = 0;
-        for (int n = lo; n <= hi; ++n)
-        {
-            if (! flow::isBlackKey (n)) { ++wi; continue; }
-            gl.setColour (pressed (n) ? bcol : Colour (0xff15130f));
-            gl.fillRect (kx0 + (float) wi * ww - ww * 0.3f, ky, ww * 0.6f, kh * 0.6f);
-        }
+        gl.setColour (Colour (0xff3a3430)); gl.fillRoundedRectangle (kx0, 252.0f, kw, 6.0f, 3.0f);
+        gl.setColour (Colour (0xffe8b94a)); gl.fillRoundedRectangle (kx0, 252.0f, jmax (6.0f, kw * jlimit (0.0f, 1.0f, engine.volPos[(size_t) b].load())), 6.0f, 3.0f);   // γραμμή volume: κινείται με το πετάλι
 
         // ---- δεξιά: 10 κυκλάκια, 5×2 ----
         const float D = 64.0f, gap = 14.0f, gx = 14.0f + (452.0f - (5.0f * D + 4.0f * gap)) * 0.5f;
