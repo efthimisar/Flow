@@ -128,7 +128,7 @@ namespace flow
         {
             for (int b = 0; b < numBlocks; ++b)
             {
-                active[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
+                active[b] = 0; emptyZone[b] = 0; zoneState[b] = 0; zoneFirst[b] = 0; zoneSeq[b] = 0;
                 lo[b] = firstPlayNote; hi[b] = firstPlayNote;
                 holdMode[b] = 0; latchBits[(size_t) b * 2] = 0; latchBits[(size_t) b * 2 + 1] = 0; swBits[(size_t) b * 2] = 0; swBits[(size_t) b * 2 + 1] = 0; autoReadyOut[(size_t) b] = 0; autoPausedOut[(size_t) b] = 0;
                 liveSilent[b] = 1;
@@ -162,7 +162,7 @@ namespace flow
         std::array<std::atomic<uint64_t>, numBlocks * 2> swBits;      // AL: πλήκτρα που είναι key switch (πορτοκαλί), για την οθόνη
         std::array<std::atomic<uint64_t>, 2> pressBits {};              // πλήκτρα που πατιούνται τώρα (φυσικά), για την οθόνη
         std::array<std::atomic<uint64_t>, numBlocks * 2> latchBits;   // πλήκτρα που κρατιούνται από το Latch (και νότες συγχορδίας), για την οθόνη
-        std::array<std::atomic<int>, numBlocks> active, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, blockOff, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
+        std::array<std::atomic<int>, numBlocks> active, emptyZone, zoneState, zoneFirst, zoneSeq, lo, hi, holdMode, arpMode, curveMode, transpose, blockOff, chordMode, chordType, chordMinor, chordTonic, pcMaskOut, bassOut,
                                                 volMap, loopStateOut, loopLayersOut, loopMuteOut, loopTapsOut,
                                                 cmdMain, cmdUndo, cmdStop, cmdMute, rerecReq, loopStoppedOut;
         std::array<std::atomic<double>, numBlocks> loopBeatsOut, recStartBeatOut, loopAnchorOut;
@@ -324,6 +324,9 @@ namespace flow
 
         // ζώνη block: το επόμενο ζευγάρι πλήκτρων που θα πατηθούν την ορίζει
         void startZone (int b)          { zoneFirst[b] = 0; zoneState[b] = 1; }
+        // zones first: block με ζώνη αλλά χωρίς plugin ακόμα (δεν παίζει ήχο, φαίνεται μόνο στα πλήκτρα)
+        void reserveZone (int b)        { emptyZone[b] = 1; zoneFirst[b] = 0; zoneState[b] = 1; }
+        void clearEmptyZone (int b)     { emptyZone[b] = 0; zoneFirst[b] = 0; zoneState[b] = 0; }
         // AL: συγχορδίες key switch ως κείμενο "πλήκτρο=νότα,νότα,νότα;..." (για αποθήκευση στο set)
         juce::String getAlText (int b)
         {
@@ -375,7 +378,7 @@ namespace flow
         bool capturing() const
         {
             for (int b = 0; b < numBlocks; ++b)
-                if (active[b].load() != 0 && zoneState[b].load() != 0) return true;
+                if ((active[b].load() != 0 || emptyZone[b].load() != 0) && zoneState[b].load() != 0) return true;
             return false;
         }
 
@@ -389,7 +392,7 @@ namespace flow
                        && n >= lo[(size_t) mf].load() && n <= hi[(size_t) mf].load();
             return blockForNote (n) == mf;
         }
-        int blockForNote (int n, bool ignorePedal = false) const   // ignorePedal: για τα φωτάκια, να μην αλλάζουν με το sustain
+        int blockForNote (int n, bool ignorePedal = false, bool includeEmpty = false) const   // ignorePedal: για τα φωτάκια, να μην αλλάζουν με το sustain
         {
             if (! ignorePedal && shiftHeld.load() != 0 && n >= firstPlayNote)
             {
@@ -403,7 +406,7 @@ namespace flow
             }
             int best = -1, bestSeq = -1;
             for (int b = 0; b < numBlocks; ++b)
-                if (! isSp (b) && active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
+                if (! isSp (b) && (active[b].load() != 0 || (includeEmpty && emptyZone[b].load() != 0)) && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
                     && zoneSeq[b].load() > bestSeq)
                 {
                     best = b;
@@ -454,6 +457,7 @@ namespace flow
                 for (auto& o : owner)
                     if (o == b) o = -1;
                 active[b] = B.plugin != nullptr ? 1 : 0;
+                if (B.plugin != nullptr) emptyZone[b] = 0;
                 zoneFirst[b] = 0;
                 zoneState[b] = (B.plugin != nullptr && captureZone) ? 1 : 0;
                 B.prevGain = -1.0f;
@@ -1380,10 +1384,10 @@ namespace flow
         int captureTarget() const
         {
             const int sel = selectedBlock.load();
-            if (sel >= 0 && sel < numBlocks && active[(size_t) sel].load() != 0 && zoneState[(size_t) sel].load() != 0)
+            if (sel >= 0 && sel < numBlocks && (active[(size_t) sel].load() != 0 || emptyZone[(size_t) sel].load() != 0) && zoneState[(size_t) sel].load() != 0)
                 return sel;
             for (int b = 0; b < numBlocks; ++b)
-                if (active[(size_t) b].load() != 0 && zoneState[(size_t) b].load() != 0)
+                if ((active[(size_t) b].load() != 0 || emptyZone[(size_t) b].load() != 0) && zoneState[(size_t) b].load() != 0)
                     return b;
             return -1;
         }

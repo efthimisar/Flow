@@ -1856,7 +1856,7 @@ public:
         int wi = 0, prev = -1;
         for (int n = flow::lowestNote; n <= flow::highestNote; ++n)
         {
-            const int b = engine.blockForNote (n);
+            const int b = engine.blockForNote (n, false, true);   // και τα block με ζώνη χωρίς plugin (zones first)
             const bool black = flow::isBlackKey (n);
             const float l = x0 + (black ? ((float) wi - 0.3f) * ww : (float) wi * ww);
             const float r = x0 + (black ? ((float) wi + 0.3f) * ww : (float) (wi + 1) * ww);

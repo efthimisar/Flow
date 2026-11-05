@@ -107,7 +107,7 @@ public:
         soundCount = countSounds();
         paletteTile.setDiceOn (soundCount > 0);
 
-        blockTile.onClick = [this] { if (learnClick (flow::ctlSpecial)) return; chooseAndLoadPlugin(); };
+        blockTile.onClick = [this] { if (learnClick (flow::ctlSpecial)) return; if (firstSetup()) { startZoneFirst(); return; } chooseAndLoadPlugin(); };
         vstTile.onClick = [this] { onVstClick(); };
         mfxTile.onClick = [this] { onMidiFxClick(); };
         fxTile.onClick = [this] { onFxClick(); };
@@ -418,7 +418,7 @@ private:
 
     void selectBlock (int b)
     {
-        if (b != -1 && ! isActive (b)) return;
+        if (b != -1 && ! isActive (b) && ! isEmptyZone (b)) return;
         selected = b;
         engine.selectedBlock = b;
         updateEditor();
@@ -992,7 +992,7 @@ private:
     {
         if (! isActive (selected))
         {
-            chooseAndLoadPlugin();
+            chooseAndLoadPlugin (true);
             return;
         }
         const bool same = panelMode == panelInstrument;
@@ -1311,6 +1311,49 @@ private:
     int s88Ring = 0, s88Slot = 0;   // επιλεγμένο ring (0..3) και θέση παραμέτρου (0..3)
     int s88WallTop = 0;   // πρώτη ορατή σειρά του τοίχου
 
+    // Set zone: αριστερά «Block n» και οδηγία, δεξιά μικρό πληκτρολόγιο· μετά το πρώτο πλήκτρο φαίνεται στο χρώμα του block
+    void drawS88SetZone (Graphics& gl, Graphics& gRt)
+    {
+        drawS88Art (gl, gRt);
+        const int b = jlimit (0, flow::numBlocks - 1, engine.pendingBlock());
+        const bool second = engine.zoneState[(size_t) b].load() == 2;
+        const int first = second ? engine.zoneFirst[(size_t) b].load() : -1;
+        const Colour white (0xffffffff), dim (0xffb0aaa2), warm (0xffe8b94a);
+        for (auto* g : { &gl, &gRt })
+        {
+            g->setColour (Colour (0xff1c1a19).withAlpha (0.8f));
+            g->fillRoundedRectangle (14.0f, 50.0f, 452.0f, 208.0f, 14.0f);
+        }
+        gl.setColour (blockLight (b)); gl.setFont (hobby::makeFont (typeface, 34.0f).boldened());
+        gl.drawText ("Block " + String (b + 1), Rectangle<float> (14.0f, 66.0f, 452.0f, 40.0f), Justification::centred, false);
+        gl.setColour (white); gl.setFont (hobby::makeFont (typeface, 22.0f).boldened());
+        gl.drawText ("Set the zone", Rectangle<float> (14.0f, 124.0f, 452.0f, 30.0f), Justification::centred, false);
+        gl.setColour (dim); gl.setFont (hobby::makeFont (typeface, 17.0f));
+        gl.drawText ("Press the first and the last key", Rectangle<float> (14.0f, 156.0f, 452.0f, 24.0f), Justification::centred, false);
+        gl.drawText ("Same key twice = one note", Rectangle<float> (14.0f, 184.0f, 452.0f, 24.0f), Justification::centred, false);
+
+        // δεξιά: όλο το πληκτρολόγιο (52 άσπρα) σε μικρογραφία
+        const float kx0 = 34.0f, kw = 412.0f / 52.0f, ky = 84.0f, kh = 110.0f;
+        int wi = 0;
+        for (int n = flow::lowestNote; n <= flow::highestNote; ++n)
+            if (! flow::isBlackKey (n))
+            {
+                gRt.setColour (n == first ? blockLight (b) : Colour (0xfff0ece6));
+                gRt.fillRect (kx0 + (float) wi * kw, ky, kw - 1.0f, kh);
+                ++wi;
+            }
+        wi = 0;
+        for (int n = flow::lowestNote; n <= flow::highestNote; ++n)
+        {
+            if (! flow::isBlackKey (n)) { ++wi; continue; }
+            gRt.setColour (n == first ? blockLight (b) : Colour (0xff15130f));
+            gRt.fillRect (kx0 + (float) wi * kw - kw * 0.3f, ky, kw * 0.6f, kh * 0.6f);
+        }
+        gRt.setColour (warm); gRt.setFont (hobby::makeFont (typeface, 16.0f));
+        gRt.drawText ("Zone " + String (b + 1) + String::fromUTF8 (" \xc2\xb7 ") + (second ? "now press the last key" : "press the first key"),
+                      Rectangle<float> (14.0f, 216.0f, 452.0f, 26.0f), Justification::centred, false);
+    }
+
     // Orb Rings: υπογραφή περιεχομένου (επιλογή, learn, ονόματα/τιμές, θέση στα 16 μέτρα): ξαναστέλνεται μόνο αν άλλαξε κάτι
     String s88RingsSig()
     {
@@ -1397,6 +1440,13 @@ private:
             if (s88Sig == "LOGO") return;
             s88Sig = "LOGO";
         }
+        else if (engine.pendingBlock() >= 0)   // το block περιμένει ζώνη (zones first ή μετά από φόρτωση plugin)
+        {
+            const int zb = engine.pendingBlock();
+            const String sig = "Z" + String (zb) + "," + String (engine.zoneState[(size_t) zb].load()) + "," + String (engine.zoneFirst[(size_t) zb].load()) + "," + String ((int) s88Blink);
+            if (sig == s88Sig) return;
+            s88Sig = sig;
+        }
         else if (s88RingsOpen)
         {
             const String sig = s88RingsSig();
@@ -1422,6 +1472,7 @@ private:
         {
             if (! open && s88Sig.startsWith ("ART")) drawS88Art (gl, gRt);
             if (! open && s88Sig.startsWith ("O")) drawS88OrbRings (gl, gRt);
+            if (! open && s88Sig.startsWith ("Z")) drawS88SetZone (gl, gRt);
             if (! open && s88Sig == "P") { drawS88Rings (gl, 0); drawS88Rings (gRt, 1); }
             if (open)
             {
@@ -1551,7 +1602,7 @@ private:
         {
             const int idx = n - first;
             if (idx < 0 || idx >= count || idx >= 88) continue;
-            const int b = engine.blockForNote (n, true);
+            const int b = engine.blockForNote (n, true, true);
             if (b < 0) continue;
             if (engine.blockOff[(size_t) b].load() != 0) continue;
             buf[(size_t) idx] = lightByte (blockHue (b), b == selected ? (blockHue (b) == 3 ? 2 : 3) : 1);   // κίτρινο (3) στη φωτεινότητα 3 φαίνεται λευκό στο MK2
@@ -2558,16 +2609,48 @@ private:
         });
     }
 
+    bool isEmptyZone (int b) const { return b >= 0 && b < flow::numBlocks && engine.emptyZone[(size_t) b].load() != 0; }
+    bool firstSetup() const { return firstActive() < 0 && pendingLoads == 0; }   // κανένα plugin ακόμα: πρώτα ορίζονται οι ζώνες
+
+    // zones first: το Block ετοιμάζει ένα νέο block που περιμένει ζώνη (πρώτο και τελευταίο πλήκτρο), χωρίς plugin
+    void startZoneFirst()
+    {
+        if (engine.pendingBlock() >= 0) { setMessage (gr ("Set the zone: press the first and the last key")); return; }
+        const int slot = freeSlot();
+        if (slot < 0) { setMessage (gr ("No free block (maximum 9).")); return; }
+        engine.reserveZone (slot);
+        selected = slot;
+        engine.selectedBlock = slot;
+        refreshAll();
+        setMessage (gr ("Set the zone: press the first and the last key"));
+    }
+
     int freeSlot() const
     {
         for (int b = 0; b < flow::numBlocks; ++b)
-            if (! isActive (b) && ! loadingSlots.contains (b))
+            if (! isActive (b) && ! isEmptyZone (b) && ! loadingSlots.contains (b))
                 return b;
         return -1;
     }
 
-    void chooseAndLoadPlugin()
+    // intoZone: το plugin μπαίνει σε block που έχει ήδη ζώνη (zones first), χωρίς νέο ορισμό ζώνης
+    void chooseAndLoadPlugin (bool intoZone = false)
     {
+        int zoneSlot = -1;
+        if (intoZone)
+        {
+            if (isEmptyZone (selected) && engine.zoneState[(size_t) selected].load() == 0) zoneSlot = selected;
+            else for (int b = 0; b < flow::numBlocks && zoneSlot < 0; ++b)
+                if (isEmptyZone (b) && engine.zoneState[(size_t) b].load() == 0) zoneSlot = b;
+        }
+        if (zoneSlot >= 0)
+        {
+            pickPlugin (gr ("Choose a plugin"), 0, [this, zoneSlot] (const PluginDescription& d)
+            {
+                loadPlugin (zoneSlot, d, MemoryBlock(), true, false, nullptr);
+            });
+            return;
+        }
         const int slot = freeSlot();
         if (slot < 0)
         {
@@ -2845,6 +2928,13 @@ private:
     void removeBlock (int block, bool save = true)
     {
         if (block >= 0 && block < flow::numBlocks) { paletteKept[(size_t) block] = false; paletteFile[(size_t) block] = String(); }
+        if (isEmptyZone (block))   // zones first: σβήνει τη ζώνη που δεν έχει plugin
+        {
+            engine.clearEmptyZone (block);
+            if (selected == block) { selected = firstActive(); engine.selectedBlock = selected; }
+            if (save) { updateEditor(); refreshAll(); saveNow(); }
+            return;
+        }
         if (! isActive (block)) return;
 
         closeEditor();
@@ -3651,6 +3741,16 @@ private:
             }
         }
 
+        for (int b = 0; b < flow::numBlocks; ++b)   // zones first: ζώνες block χωρίς plugin
+            if (isEmptyZone (b) && engine.zoneState[(size_t) b].load() == 0)
+            {
+                auto* ze = root->createNewChildElement ("Zone");
+                ze->setAttribute ("slot", b);
+                ze->setAttribute ("lo", engine.lo[(size_t) b].load());
+                ze->setAttribute ("hi", engine.hi[(size_t) b].load());
+                ze->setAttribute ("seq", engine.zoneSeq[(size_t) b].load());
+            }
+
         {
             captureScene (currentScene);
             auto* sx = root->createNewChildElement ("Scenes");
@@ -3869,6 +3969,14 @@ private:
             auto crashedCopy = crashed;
             loadPlugin (slot, inst.desc, inst.state, false, ! hasZone,
                         [this, slot, copy, crashedCopy] { loadExtras (slot, *copy, crashedCopy); });
+        }
+
+        for (auto* ze : root.getChildWithTagNameIterator ("Zone"))   // zones first
+        {
+            const int sl = ze->getIntAttribute ("slot", -1);
+            if (sl < 0 || sl >= flow::numBlocks || isActive (sl) || loadingSlots.contains (sl)) continue;
+            engine.setZone (sl, ze->getIntAttribute ("lo", flow::lowestNote), ze->getIntAttribute ("hi", flow::lowestNote), ze->getIntAttribute ("seq", 0));
+            engine.emptyZone[(size_t) sl] = 1;
         }
 
         if (auto* m = root.getChildByName ("Master"))
