@@ -1112,10 +1112,10 @@ private:
                 switch (ctl)
                 {
                     case 1: s88MenuActivate(); s88BlockTouch(); return;
-                    case 2: if (s88MenuSel >= 5) s88MenuSel -= 5; s88BlockTouch(); return;
-                    case 3: if (s88MenuSel < 5) s88MenuSel += 5; s88BlockTouch(); return;
-                    case 4: if (s88MenuSel % 5 > 0) --s88MenuSel; s88BlockTouch(); return;
-                    case 5: if (s88MenuSel % 5 < 4) ++s88MenuSel; s88BlockTouch(); return;
+                    case 2: if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, 1); s88BlockTouch(); return;    // transpose επιλεγμένο: κλίση πάνω = +1 οκτάβα
+                    case 3: if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, -1); s88BlockTouch(); return;   // κλίση κάτω = −1 οκτάβα
+                    case 4: s88MenuSel = jmax (0, s88MenuSel - 1); s88BlockTouch(); return;
+                    case 5: s88MenuSel = jmin (9, s88MenuSel + 1); s88BlockTouch(); return;
                     default: break;
                 }
             }
@@ -1300,7 +1300,7 @@ private:
         {
             case 0: { const int h = engine.holdMode[(size_t) b].load(); return "Hold " + String::fromUTF8 ("\xc2\xb7 ") + (h == 0 ? "off" : h == 1 ? "LM" : h == 2 ? "LP" : "AL"); }
             case 1: return "Volume curve";
-            case 2: return "Transpose " + String::fromUTF8 ("\xc2\xb7 ") + (tr > 0 ? "+" : "") + String (tr);
+            case 2: return "Transpose " + String::fromUTF8 ("\xc2\xb7 ") + (tr > 0 ? "+" : "") + String (tr) + "  (tilt up / down)";
             case 3: return "Live " + String::fromUTF8 ("\xc2\xb7 ") + (engine.liveSilent[(size_t) b].load() != 0 ? "silent" : "sounding");
             case 4: return "Change instrument";
             case 5: return "Special " + String::fromUTF8 ("\xc2\xb7 ") + (engine.isSp (b) ? "on" : "off");
@@ -1332,7 +1332,7 @@ private:
         {
             case 0: if (keyboardView.onHold) keyboardView.onHold (b); break;
             case 1: if (keyboardView.onCurve) keyboardView.onCurve (b); break;
-            case 2: if (keyboardView.onTranspose) keyboardView.onTranspose (b, engine.transpose[(size_t) b].load() >= 48 ? 0 : 1); break;   // +1 οκτάβα, μετά το +4 γυρνά στο 0
+            case 2: if (keyboardView.onTranspose) keyboardView.onTranspose (b, 0); break;   // πάτημα: transpose στο 0 (+/− με κλίση πάνω/κάτω)
             case 3: if (keyboardView.onToggleSilent) keyboardView.onToggleSilent (b); break;
             case 4: if (keyboardView.onSwapInstrument) keyboardView.onSwapInstrument (b); break;
             case 5: if (keyboardView.onToggleSpecialBlock) keyboardView.onToggleSpecialBlock (b); break;
