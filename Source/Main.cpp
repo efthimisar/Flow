@@ -107,7 +107,7 @@ public:
         soundCount = countSounds();
         paletteTile.setDiceOn (soundCount > 0);
 
-        blockTile.onClick = [this] { if (learnClick (flow::ctlSpecial)) return; if (firstSetup()) { startZoneFirst(); return; } chooseAndLoadPlugin(); };
+        blockTile.onClick = [this] { if (learnClick (flow::ctlSpecial)) return; startZoneFirst(); };   // zones first: το Block ορίζει πάντα πρώτα τη ζώνη, μετά το VST βάζει plugin στη ζώνη
         vstTile.onClick = [this] { onVstClick(); };
         mfxTile.onClick = [this] { onMidiFxClick(); };
         fxTile.onClick = [this] { onFxClick(); };
@@ -2610,7 +2610,6 @@ private:
     }
 
     bool isEmptyZone (int b) const { return b >= 0 && b < flow::numBlocks && engine.emptyZone[(size_t) b].load() != 0; }
-    bool firstSetup() const { return firstActive() < 0 && pendingLoads == 0; }   // κανένα plugin ακόμα: πρώτα ορίζονται οι ζώνες
 
     // zones first: το Block ετοιμάζει ένα νέο block που περιμένει ζώνη (πρώτο και τελευταίο πλήκτρο), χωρίς plugin
     void startZoneFirst()
