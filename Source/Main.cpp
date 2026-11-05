@@ -1078,7 +1078,8 @@ private:
         if (ctl == 100)   // περιστροφή: + = δεξιά
         {
             if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
-            else if (s88RingsOpen) { s88Ring = jlimit (0, 3, s88Ring + (v > 0 ? 1 : -1)); s88Slot = 0; }   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
+            else if (s88RingsOpen) { s88Ring = jlimit (0, 3, s88Ring + (v > 0 ? 1 : -1)); s88Slot = 0; }
+            else if (engine.pendingBlock() < 0 && s88BlockVisible()) { s88MenuSel = jlimit (0, 9, s88MenuSel + (v > 0 ? 1 : -1)); s88BlockTouch(); }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
             return;
         }
         if (v == 0) return;   // μόνο πάτημα
@@ -1103,6 +1104,22 @@ private:
                 case 3: s88Slot = jmin (3, s88Slot + 1); return;
                 default: break;
             }
+        }
+        if (! listOpen && ! s88RingsOpen && engine.pendingBlock() < 0 && isActive (selected))
+        {
+            if (s88BlockVisible())
+            {
+                switch (ctl)
+                {
+                    case 1: s88MenuActivate(); s88BlockTouch(); return;
+                    case 2: if (s88MenuSel >= 5) s88MenuSel -= 5; s88BlockTouch(); return;
+                    case 3: if (s88MenuSel < 5) s88MenuSel += 5; s88BlockTouch(); return;
+                    case 4: if (s88MenuSel % 5 > 0) --s88MenuSel; s88BlockTouch(); return;
+                    case 5: if (s88MenuSel % 5 < 4) ++s88MenuSel; s88BlockTouch(); return;
+                    default: break;
+                }
+            }
+            else if (ctl == 1) { s88BlockTouch(); return; }   // πάτημα encoder: ανοίγει την οθόνη του block
         }
         if (s88RingsOpen && ctl >= 35 && ctl <= 40 && ctl != 39)   // άλλο κουμπί (Block, VST, MIDI FX, FX, Settings) κλείνει την οθόνη Orb Rings
         {
@@ -1311,6 +1328,154 @@ private:
     int s88Ring = 0, s88Slot = 0;   // επιλεγμένο ring (0..3) και θέση παραμέτρου (0..3)
     int s88WallTop = 0;   // πρώτη ορατή σειρά του τοίχου
 
+    // ---- Οθόνη του block (S88): αριστερά αριθμός/range/volume/πλήκτρα, δεξιά το μενού του block με 10 κυκλάκια ----
+    int s88MenuSel = 0, s88LastSelKey = -2;
+    uint32 s88BlockUntil = 0, s88RemoveArmUntil = 0;
+    bool s88BlockVisible() const { return Time::getMillisecondCounter() < s88BlockUntil && isActive (selected); }
+    void s88BlockTouch() { s88BlockUntil = Time::getMillisecondCounter() + 8000; }
+
+    String s88MenuLabel (int i, int b) const
+    {
+        const bool armed = Time::getMillisecondCounter() < s88RemoveArmUntil;
+        const int tr = engine.transpose[(size_t) b].load() / 12;
+        switch (i)
+        {
+            case 0: { const int h = engine.holdMode[(size_t) b].load(); return "Hold " + String::fromUTF8 ("\xc2\xb7 ") + (h == 0 ? "off" : h == 1 ? "LM" : h == 2 ? "LP" : "AL"); }
+            case 1: return "Volume curve";
+            case 2: return "Transpose " + String::fromUTF8 ("\xc2\xb7 ") + (tr > 0 ? "+" : "") + String (tr);
+            case 3: return "Live " + String::fromUTF8 ("\xc2\xb7 ") + (engine.liveSilent[(size_t) b].load() != 0 ? "silent" : "sounding");
+            case 4: return "Change instrument";
+            case 5: return "Special " + String::fromUTF8 ("\xc2\xb7 ") + (engine.isSp (b) ? "on" : "off");
+            case 6: return "Master flow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.mfBlock.load() == b ? "on" : "off");
+            case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() != 0 ? "on" : "off");
+            case 8: return "Set the zone again";
+            default: return armed ? "Press again to delete" : "Delete block";
+        }
+    }
+    bool s88MenuOn (int i, int b) const
+    {
+        switch (i)
+        {
+            case 0: return engine.holdMode[(size_t) b].load() != 0;
+            case 2: return engine.transpose[(size_t) b].load() != 0;
+            case 3: return engine.liveSilent[(size_t) b].load() != 0;
+            case 5: return engine.isSp (b);
+            case 6: return engine.mfBlock.load() == b;
+            case 7: return engine.followBlock[(size_t) b].load() != 0;
+            default: return false;
+        }
+    }
+
+    void s88MenuActivate()
+    {
+        const int b = selected;
+        if (! isActive (b)) return;
+        switch (s88MenuSel)
+        {
+            case 0: if (keyboardView.onHold) keyboardView.onHold (b); break;
+            case 1: if (keyboardView.onCurve) keyboardView.onCurve (b); break;
+            case 2: if (keyboardView.onTranspose) keyboardView.onTranspose (b, engine.transpose[(size_t) b].load() >= 48 ? 0 : 1); break;   // +1 οκτάβα, μετά το +4 γυρνά στο 0
+            case 3: if (keyboardView.onToggleSilent) keyboardView.onToggleSilent (b); break;
+            case 4: if (keyboardView.onSwapInstrument) keyboardView.onSwapInstrument (b); break;
+            case 5: if (keyboardView.onToggleSpecialBlock) keyboardView.onToggleSpecialBlock (b); break;
+            case 6: if (keyboardView.onToggleMf) keyboardView.onToggleMf (b); break;
+            case 7: if (keyboardView.onToggleFollowBlock) keyboardView.onToggleFollowBlock (b); break;
+            case 8: if (keyboardView.onRedoZone) keyboardView.onRedoZone (b); break;
+            default:
+                if (Time::getMillisecondCounter() < s88RemoveArmUntil) { s88RemoveArmUntil = 0; removeBlock (b); }   // σβήσιμο: δύο πατήματα, όπως στον Mac
+                else { s88RemoveArmUntil = Time::getMillisecondCounter() + 3000; setMessage (gr ("Press again to delete the block")); }
+                break;
+        }
+    }
+
+    String s88BlockSig()
+    {
+        const int b = selected;
+        String s = "B" + String (b) + "," + String (s88MenuSel) + "," + String (engine.lo[(size_t) b].load()) + "," + String (engine.hi[(size_t) b].load()) + ","
+                   + String ((int) (engine.volPos[(size_t) b].load() * 200.0f)) + "," + String ((int) engine.pressBits[0].load()) + "," + String ((int) engine.pressBits[1].load()) + ",";
+        for (int i = 0; i < 10; ++i) s += s88MenuLabel (i, b) + "|";
+        return s;
+    }
+
+    void drawS88Block (Graphics& gl, Graphics& gRt)
+    {
+        drawS88Art (gl, gRt);
+        const int b = jlimit (0, flow::numBlocks - 1, selected);
+        const Colour bcol = blockLight (b), white (0xffffffff);
+        for (auto* g : { &gl, &gRt })
+        {
+            g->setColour (Colour (0xff1c1a19).withAlpha (0.8f));
+            g->fillRoundedRectangle (14.0f, 50.0f, 452.0f, 208.0f, 14.0f);
+        }
+        // ---- αριστερά ----
+        gl.setColour (bcol); gl.fillEllipse (26.0f, 62.0f, 44.0f, 44.0f);
+        gl.setColour (Colour (0xff1c1a19)); gl.setFont (hobby::makeFont (typeface, 26.0f).boldened());
+        gl.drawText (String (b + 1), Rectangle<float> (26.0f, 62.0f, 44.0f, 44.0f), Justification::centred, false);
+        const int lo = engine.lo[(size_t) b].load(), hi = engine.hi[(size_t) b].load();
+        gl.setColour (white); gl.setFont (hobby::makeFont (typeface, 30.0f).boldened());
+        gl.drawText (noteName (lo) + String::fromUTF8 (" \xe2\x80\x93 ") + noteName (hi), Rectangle<float> (150.0f, 62.0f, 304.0f, 44.0f), Justification::centredRight, false);
+        const float kx0 = 28.0f, kw = 424.0f;
+        gl.setColour (Colour (0xff3a3430)); gl.fillRoundedRectangle (kx0, 118.0f, kw, 6.0f, 3.0f);
+        gl.setColour (Colour (0xffe8b94a)); gl.fillRoundedRectangle (kx0, 118.0f, jmax (6.0f, kw * jlimit (0.0f, 1.0f, engine.volPos[(size_t) b].load())), 6.0f, 3.0f);   // γραμμή volume: κινείται με το πετάλι
+        int whites = 0;
+        for (int n = lo; n <= hi; ++n) if (! flow::isBlackKey (n)) ++whites;
+        whites = jmax (1, whites);
+        const float ww = kw / (float) whites, ky = 134.0f, kh = 112.0f;
+        const uint64_t p0 = engine.pressBits[0].load(), p1 = engine.pressBits[1].load();
+        auto pressed = [&] (int n) { return ((n >> 6) == 0 ? p0 : p1) >> (n & 63) & 1; };
+        int wi = 0;
+        for (int n = lo; n <= hi; ++n)
+            if (! flow::isBlackKey (n))
+            {
+                gl.setColour (pressed (n) ? bcol : Colour (0xfff0ece6));
+                gl.fillRect (kx0 + (float) wi * ww, ky, ww - 1.0f, kh);
+                ++wi;
+            }
+        wi = 0;
+        for (int n = lo; n <= hi; ++n)
+        {
+            if (! flow::isBlackKey (n)) { ++wi; continue; }
+            gl.setColour (pressed (n) ? bcol : Colour (0xff15130f));
+            gl.fillRect (kx0 + (float) wi * ww - ww * 0.3f, ky, ww * 0.6f, kh * 0.6f);
+        }
+
+        // ---- δεξιά: 10 κυκλάκια, 5×2 ----
+        const float D = 64.0f, gap = 14.0f, gx = 14.0f + (452.0f - (5.0f * D + 4.0f * gap)) * 0.5f;
+        for (int i = 0; i < 10; ++i)
+        {
+            const float cx = gx + (float) (i % 5) * (D + gap), cy = 62.0f + (float) (i / 5) * (D + 12.0f);
+            gRt.setColour (Colours::black); gRt.fillEllipse (cx, cy, D, D);
+            if (s88MenuOn (i, b)) { gRt.setColour (bcol); gRt.drawEllipse (cx + 1.5f, cy + 1.5f, D - 3.0f, D - 3.0f, 3.0f); }
+            if (i == s88MenuSel) { gRt.setColour (white); gRt.drawEllipse (cx - 3.0f, cy - 3.0f, D + 6.0f, D + 6.0f, 3.0f); }
+            gRt.setColour (white);
+            const Rectangle<float> r (cx, cy, D, D);
+            const int h = engine.holdMode[(size_t) b].load(), tr = engine.transpose[(size_t) b].load() / 12;
+            gRt.setFont (hobby::makeFont (typeface, 22.0f).boldened());
+            switch (i)
+            {
+                case 0: gRt.drawText (h == 1 ? "LM" : h == 2 ? "LP" : h >= 3 ? "AL" : "H", r, Justification::centred, false); break;
+                case 1: gRt.drawLine (cx + 18.0f, cy + D - 18.0f, cx + D - 18.0f, cy + 18.0f, 3.0f); break;
+                case 2: gRt.drawText (tr > 0 ? "+" + String (tr) : String (tr), r, Justification::centred, false); break;
+                case 3:
+                    gRt.drawText (String::fromUTF8 ("\xe2\x99\xaa"), r, Justification::centred, false);
+                    if (engine.liveSilent[(size_t) b].load() != 0) gRt.drawLine (cx + 16.0f, cy + D - 16.0f, cx + D - 16.0f, cy + 16.0f, 3.0f);
+                    break;
+                case 4: gRt.drawText (String::fromUTF8 ("\xe2\x87\x84"), r, Justification::centred, false); break;
+                case 5: gRt.drawText ("SP", r, Justification::centred, false); break;
+                case 6: gRt.drawText ("MF", r, Justification::centred, false); break;
+                case 7: gRt.drawText ("f", r, Justification::centred, false); break;
+                case 8: gRt.drawText (String::fromUTF8 ("\xe2\x9f\xb2"), r, Justification::centred, false); break;
+                default:
+                    gRt.setColour (Time::getMillisecondCounter() < s88RemoveArmUntil ? hobby::kRed : white);
+                    gRt.drawLine (cx + 21.0f, cy + 21.0f, cx + D - 21.0f, cy + D - 21.0f, 3.0f);
+                    gRt.drawLine (cx + 21.0f, cy + D - 21.0f, cx + D - 21.0f, cy + 21.0f, 3.0f);
+                    break;
+            }
+        }
+        gRt.setColour (white); gRt.setFont (hobby::makeFont (typeface, 18.0f).boldened());
+        gRt.drawText (s88MenuLabel (s88MenuSel, b), Rectangle<float> (14.0f, 222.0f, 452.0f, 28.0f), Justification::centred, false);
+    }
+
     // Set zone: αριστερά «Block n» και οδηγία, δεξιά μικρό πληκτρολόγιο· μετά το πρώτο πλήκτρο φαίνεται στο χρώμα του block
     void drawS88SetZone (Graphics& gl, Graphics& gRt)
     {
@@ -1425,6 +1590,10 @@ private:
         const bool open = list.isVisible();
         list.alwaysShowSel = true;
         s88Blink = orbRecArmed && ((Time::getMillisecondCounter() / 400) & 1) != 0;
+        {   // όταν αλλάζει το επιλεγμένο block (π.χ. παίζοντας) ή φορτώνεται plugin, η οθόνη του block εμφανίζεται για λίγο
+            const int selKey = selected * 2 + (isActive (selected) ? 1 : 0);
+            if (selKey != s88LastSelKey) { s88LastSelKey = selKey; if (isActive (selected)) s88BlockTouch(); }
+        }
         const bool splash = Time::getMillisecondCounter() < s88SplashUntil;
         std::vector<int> vis; int cols = 1, rows = 1;
         bool animated = false;
@@ -1453,6 +1622,12 @@ private:
             if (sig == s88Sig) return;
             s88Sig = sig;
         }
+        else if (s88BlockVisible())
+        {
+            const String sig = s88BlockSig();
+            if (sig == s88Sig) return;
+            s88Sig = sig;
+        }
         else if (anyS88Loop()) { s88Sig = "P"; animated = true; }   // δαχτυλίδια: κινούνται, ξανασχεδιάζονται σε κάθε tick
         else
         {
@@ -1473,6 +1648,7 @@ private:
             if (! open && s88Sig.startsWith ("ART")) drawS88Art (gl, gRt);
             if (! open && s88Sig.startsWith ("O")) drawS88OrbRings (gl, gRt);
             if (! open && s88Sig.startsWith ("Z")) drawS88SetZone (gl, gRt);
+            if (! open && s88Sig.startsWith ("B")) drawS88Block (gl, gRt);
             if (! open && s88Sig == "P") { drawS88Rings (gl, 0); drawS88Rings (gRt, 1); }
             if (open)
             {
@@ -2506,6 +2682,37 @@ private:
 
     StringArray favPlugins;   // favorites (σήμα f): κλειδιά plugins, κοινά για instruments και effects
 
+    // τύπος plugin που όρισε ο χρήστης (προσωρινή σελίδα Settings): -1 = δεν ορίστηκε, 0 = VST, 1 = MIDI FX, 2 = FX
+    int pluginTypeOf (const String& key) const
+    {
+        auto* settings = const_cast<juce::ApplicationProperties&> (properties).getUserSettings();
+        return settings != nullptr ? jlimit (-1, 2, settings->getIntValue ("ptype:" + key, -1)) : -1;
+    }
+    void setPluginType (const String& key, int t)
+    {
+        if (auto* settings = properties.getUserSettings())
+        {
+            if (t < 0) settings->removeValue ("ptype:" + key); else settings->setValue ("ptype:" + key, jlimit (0, 2, t));
+            settings->saveIfNeeded();
+        }
+        exportPluginTypes();
+    }
+    // αναγνώσιμο αρχείο Music/Flow/Plugin-types.txt: το στέλνεις στον προγραμματιστή για να μπουν οι τύποι μόνιμα
+    void exportPluginTypes()
+    {
+        const auto dir = File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow");
+        dir.createDirectory();
+        static const char* names[3] { "VST", "MIDI FX", "FX" };
+        StringArray lines;
+        for (const auto& d : knownPlugins.getTypes())
+        {
+            const int t = pluginTypeOf (d.createIdentifierString());
+            lines.add (d.name + "\t" + d.pluginFormatName + "\t" + (t < 0 ? String ("not set") : String (names[t])));
+        }
+        lines.sort (true);
+        dir.getChildFile ("Plugin-types.txt").replaceWithText (lines.joinIntoString ("\n") + "\n");
+    }
+
     void pickPlugin (const String& title, int kind, std::function<void (const PluginDescription&)> chosen)
     {
         if (scanning)
@@ -2534,7 +2741,9 @@ private:
         {
             flow::flowLog ("plugin: " + d.name + " [" + d.pluginFormatName + "] instrument=" + String ((int) d.isInstrument) + " in=" + String (d.numInputChannels)
                            + " out=" + String (d.numOutputChannels) + " category=" + d.category);
-            (fits (d) ? primary : others).push_back (d);
+            const int ut = pluginTypeOf (d.createIdentifierString());   // τύπος που όρισε ο χρήστης: μόνο στη λίστα του· χωρίς τύπο: φαίνεται σε όλες
+            if (ut >= 0 && ut != kind) continue;
+            (ut == kind || (ut < 0 && fits (d)) ? primary : others).push_back (d);
         }
         auto byName = [] (const PluginDescription& a, const PluginDescription& b) { return a.name.compareIgnoreCase (b.name) < 0; };
         std::sort (primary.begin(), primary.end(), byName);
@@ -3416,6 +3625,21 @@ private:
         h.chooseRecFolder = [this] { chooseTapeFolder(); };
         h.scanPlugins = [this] { if (scanning) return; knownPlugins.clear(); startPluginScan(); };
         h.scanBusy = [this] { return scanning; };
+        h.pluginTypes = [this]
+        {
+            std::vector<SettingsScreen::PluginTypeRow> rows;
+            StringArray seen;
+            for (const auto& d : knownPlugins.getTypes())
+            {
+                const String key = d.createIdentifierString();
+                if (seen.contains (key)) continue;
+                seen.add (key);
+                rows.push_back ({ d.name, d.pluginFormatName, key, pluginTypeOf (key) });
+            }
+            std::sort (rows.begin(), rows.end(), [] (const auto& a, const auto& b) { return a.name.compareIgnoreCase (b.name) < 0; });
+            return rows;
+        };
+        h.pluginTypeSet = [this] (const String& key, int t) { setPluginType (key, t); };
         h.masterGet = [this] { return engine.masterPos.load(); };
         h.masterSet = [this] (float v) { engine.masterPos = v; };
         h.masterCcText = [this]() -> String { const int c = engine.masterCc.load(); return c != 0 ? pedalCodeText (c) : String(); };

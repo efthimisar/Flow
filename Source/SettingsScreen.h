@@ -24,10 +24,13 @@ public:
     struct SetInfo { juce::String name, date; juce::Image thumb; bool current = false; juce::File file; };
 
     struct ToolItem { juce::String glyph, label, tip; juce::Colour colour; bool enabled = true, armed = false; std::function<void()> fn; };
+    struct PluginTypeRow { juce::String name, format, key; int type = -1; };   // type: -1 = δεν ορίστηκε, 0 = VST, 1 = MIDI FX, 2 = FX
     struct OrbKnob { bool bound = false; juce::String name; float value = 0.0f; };
 
     struct Host
     {
+        std::function<std::vector<PluginTypeRow>()> pluginTypes;   // προσωρινή σελίδα: τύπος ανά plugin
+        std::function<void (const juce::String&, int)> pluginTypeSet;
         std::function<std::vector<ToolItem>()> tools;          // εργαλεία του επιλεγμένου block
         std::function<std::vector<OrbKnob>()> orbKnobs;        // 16 αναθέσεις του orb
         std::function<void (int)> orbAssign, orbClear;
@@ -141,7 +144,7 @@ public:
         g.setColour (hobby::kScreen);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 
-        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW", "BLOCK TOOLS", "ORB KNOBS", "SETS" };
+        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW", "BLOCK TOOLS", "ORB KNOBS", "SETS", "PLUGIN TYPES" };
         g.setColour (dim()); g.setFont (font (13.0f, true));
         g.drawText (titles[(int) page], 40, 26, 500, 20, Justification::centredLeft, false);
         {
@@ -171,6 +174,7 @@ public:
             case Tools:  paintTools (g); break;
             case OrbKnobs: paintOrbKnobs (g); break;
             case Sets:   paintSets (g); break;
+            case PluginTypes: paintPluginTypes (g); break;
         }
     }
 
@@ -205,13 +209,13 @@ public:
     }
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override
     {
-        if (page != Load) return;
+        if (page != Load && page != PluginTypes) return;
         loadScroll = juce::jlimit (0, juce::jmax (0, loadMaxScroll), loadScroll - (int) (w.deltaY * 220.0f));
         repaint();
     }
 
 private:
-    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs, Sets };
+    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs, Sets, PluginTypes };
     struct Hit { juce::Rectangle<int> r; std::function<void()> fn; };
     Page backPage() const { return (page == Save || page == Load || page == Restore) ? Sets : Home; }
 
@@ -322,6 +326,7 @@ private:
                 g.strokePath (m, st);
                 break;
             }
+            case 19: for (int i = 0; i < 3; ++i) g.fillEllipse (c.x - 16.0f + (float) i * 12.0f, c.y - 4.0f, 8.0f, 8.0f); break;   // τρεις τελείες: VST / MIDI FX / FX
             case 15: g.drawEllipse (c.x - 11.0f, c.y - 11.0f, 22.0f, 22.0f, 2.2f); g.fillEllipse (c.x - 3.0f, c.y - 3.0f, 6.0f, 6.0f); break;
             default: break;
         }
@@ -349,6 +354,7 @@ private:
             { 17, "Help", host.helpGet && host.helpGet(), false, [this] { if (host.helpToggle) host.helpToggle(); repaint(); } },
             { 7, "Panic", false, false, [this] { showPage (Panic); } },
             { 18, "Scan plugins", host.scanBusy && host.scanBusy(), false, [this] { if (host.scanPlugins) host.scanPlugins(); repaint(); } },
+            { 19, "Plugin types", false, false, [this] { showPage (PluginTypes); } },
         };
         (void) hasSet;
         // κύκλοι στη μέση· το περιεχόμενο του επιλεγμένου ανοίγει αριστερά και δεξιά
@@ -643,6 +649,51 @@ private:
             }
         }
         note (g, "Press + learn, then touch a parameter of the plugin. The ring around the orb does the same.", getHeight() - 28);
+    }
+
+    // ---------- προσωρινή σελίδα: τύπος ανά plugin (VST / MIDI FX / FX) ----------
+    void paintPluginTypes (juce::Graphics& g)
+    {
+        using namespace juce;
+        const auto rows = host.pluginTypes ? host.pluginTypes() : std::vector<PluginTypeRow>();
+        const int W = getWidth(), top = 112, bottom = getHeight() - 40, rowH = 38;
+        g.setColour (dim()); g.setFont (font (13.0f));
+        g.drawText ("Choose what each plugin is. Plugins left unmarked still show in every list.", 40, 58, W - 80, 20, Justification::centredLeft, false);
+        const int colX[3] { W - 40 - 200, W - 40 - 120, W - 40 - 40 };
+        static const char* heads[3] { "VST", "MIDI FX", "FX" };
+        g.setFont (font (12.0f, true));
+        for (int c = 0; c < 3; ++c) g.drawText (heads[c], colX[c] - 40, 88, 80, 18, Justification::centred, false);
+        loadMaxScroll = jmax (0, (int) rows.size() * rowH - (bottom - top));
+        loadScroll = jlimit (0, loadMaxScroll, loadScroll);
+        g.saveState();
+        g.reduceClipRegion (Rectangle<int> (0, top, W, bottom - top));
+        for (int i = 0; i < (int) rows.size(); ++i)
+        {
+            const auto& r = rows[(size_t) i];
+            const int y = top + i * rowH - loadScroll;
+            if (y + rowH < top || y > bottom) continue;
+            const Rectangle<int> rr (40, y, W - 80, rowH - 6);
+            g.setColour (card()); g.fillRoundedRectangle (rr.toFloat(), 10.0f);
+            g.setColour (txt()); g.setFont (font (15.0f));
+            g.drawText (r.name, rr.getX() + 14, rr.getY(), W / 2 - 80, rr.getHeight(), Justification::centredLeft, true);
+            g.setColour (dim()); g.setFont (font (11.0f));
+            g.drawText (r.format, W / 2 - 20, rr.getY(), 90, rr.getHeight(), Justification::centredLeft, false);
+            if (r.type < 0) g.drawText ("not set", W / 2 + 80, rr.getY(), 70, rr.getHeight(), Justification::centredLeft, false);
+            for (int c = 0; c < 3; ++c)
+            {
+                const Rectangle<int> cr (colX[c] - 12, rr.getCentreY() - 12, 24, 24);
+                g.setColour (Colours::black); g.fillEllipse (cr.toFloat());
+                if (r.type == c)
+                {
+                    g.setColour (Colours::white); g.drawEllipse (cr.toFloat().reduced (1.0f), 2.0f);
+                    g.fillEllipse (cr.toFloat().reduced (8.0f));
+                }
+                const auto hitR = cr.expanded (6).getIntersection (Rectangle<int> (0, top, W, bottom - top));
+                hits.push_back ({ hitR, [this, key = r.key, c, cur = r.type] { if (host.pluginTypeSet) host.pluginTypeSet (key, cur == c ? -1 : c); repaint(); } });   // ξαναπάτημα στον επιλεγμένο: ξανά «not set»
+            }
+        }
+        g.restoreState();
+        if (rows.empty()) { g.setColour (dim()); g.setFont (font (14.0f)); g.drawText ("No plugins yet. Use Scan plugins first.", 40, top + 10, 400, 24, Justification::centredLeft, false); }
     }
 
     // ---------- Sets: Update, Save, Load, Restore ----------
