@@ -42,6 +42,8 @@ namespace hobby
     inline float kBrandY = 50.0f;   // ύψος του Flow και του π (ορίζεται από τη γεωμετρία του παραθύρου)
     void drawEmbossedText (juce::Graphics&, const juce::Typeface::Ptr&, const juce::String&, float x);   // ανάγλυφο γράμμα στο χρώμα του φόντου (αριστερά, πάνω)
     // ανάγλυφο πλαίσιο με βαθουλωμένη οθόνη (οθόνη: innerShadow ~18, λωρίδα: ~15)
+    // σκιά με cache (το θάμπωμα DropShadow ήταν το πιο ακριβό σημείο της ζωγραφικής): ξαναϋπολογίζεται μόνο όταν αλλάζει μέγεθος/χρώμα. kind = σχήμα του path (0 πλαίσιο, 1 πλακίδιο, 2 έλλειψη)
+    void drawShadowCached (juce::Graphics&, const juce::DropShadow&, const juce::Path&, int kind);
     void drawBezel (juce::Graphics&, juce::Rectangle<float> bezel, juce::Rectangle<float> screen,
                     juce::Colour screenColour, float innerShadow);
     void drawGlass (juce::Graphics&, juce::Rectangle<int> screen);   // ελαφρύ τζάμι πάνω από οθόνη (προσωρινή εικόνα, ζωγραφίζεται μία φορά ανά μέγεθος)

@@ -1,4 +1,6 @@
 #include "HobbyStyle.h"
+#include <array>
+#include <map>
 #include "BinaryData.h"
 #include <cmath>
 #include <map>
@@ -74,11 +76,35 @@ namespace hobby
         }
     }
 
+    void drawShadowCached (juce::Graphics& g, const juce::DropShadow& ds, const juce::Path& p, int kind)
+    {
+        const auto b = p.getBounds();
+        const int pad = ds.radius + juce::jmax (std::abs (ds.offset.x), std::abs (ds.offset.y)) + 2;
+        const int w = (int) std::ceil (b.getWidth()), h = (int) std::ceil (b.getHeight());
+        if (w <= 0 || h <= 0) return;
+        static std::map<std::array<int, 8>, juce::Image> cache;
+        const std::array<int, 8> key { kind, w, h, (int) ds.colour.getARGB(), ds.radius, ds.offset.x, ds.offset.y, 0 };
+        auto it = cache.find (key);
+        if (it == cache.end())
+        {
+            if (cache.size() > 200) cache.clear();
+            juce::Image img (juce::Image::ARGB, w + 2 * pad, h + 2 * pad, true);
+            {
+                juce::Graphics ig (img);
+                auto q = p;
+                q.applyTransform (juce::AffineTransform::translation ((float) pad - b.getX(), (float) pad - b.getY()));
+                ds.drawForPath (ig, q);
+            }
+            it = cache.emplace (key, img).first;
+        }
+        g.drawImageAt (it->second, (int) std::floor (b.getX()) - pad, (int) std::floor (b.getY()) - pad);
+    }
+
     void drawTileShadow (juce::Graphics& g, juce::Rectangle<float> tile)
     {
         juce::Path tp;
         tp.addRoundedRectangle (tile, 9.0f);
-        juce::DropShadow (juce::Colours::black.withAlpha (0.55f), 4, { 0, 3 }).drawForPath (g, tp);
+        drawShadowCached (g, juce::DropShadow (juce::Colours::black.withAlpha (0.55f), 4, { 0, 3 }), tp, 1);
     }
 
     // ανάγλυφο πλαίσιο με βαθουλωμένη οθόνη μέσα του
@@ -137,7 +163,7 @@ namespace hobby
     {
         juce::Path bp;
         bp.addRoundedRectangle (bezel, 17.0f);
-        juce::DropShadow (juce::Colour (0xff503c28).withAlpha (0.28f), 6, { 0, 3 }).drawForPath (g, bp);
+        drawShadowCached (g, juce::DropShadow (juce::Colour (0xff503c28).withAlpha (0.28f), 6, { 0, 3 }), bp, 0);
 
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffbf8f3), bezel.getX(), bezel.getY(),
                                                  juce::Colour (0xffcfc3b4), bezel.getRight(), bezel.getBottom(), false));

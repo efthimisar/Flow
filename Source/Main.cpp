@@ -377,7 +377,7 @@ public:
             {
                 Path p;
                 p.addEllipse (r);
-                DropShadow (Colours::black.withAlpha (0.55f), 4, { 0, 3 }).drawForPath (g, p);
+                hobby::drawShadowCached (g, DropShadow (Colours::black.withAlpha (0.55f), 4, { 0, 3 }), p, 2);
             }
             else
             {
