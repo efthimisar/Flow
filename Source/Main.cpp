@@ -264,6 +264,8 @@ public:
             engine.knobCc[(size_t) k] = settings->getIntValue ("knobcc" + String (k), 0);
             engine.knobIn[(size_t) k] = -1.0f;
         }
+        for (int i = 0; i < flow::Engine::numPedals; ++i)
+            engine.pedalCc[(size_t) i] = settings->getIntValue ("pedalcc" + String (i), 20 + i);
         for (int b = 0; b < flow::numBlocks; ++b)
             for (int c = 0; c < 4; ++c) { orbPos[(size_t) b][(size_t) c] = orbDefault (c); orbAutoPat[(size_t) b][(size_t) c] = -1; }
         loopsView.onOrbAssign = [this] (int slot) { startKnobLearn (slot); };
@@ -3674,6 +3676,16 @@ private:
         h.chooseRecFolder = [this] { chooseTapeFolder(); };
         h.scanPlugins = [this] { if (scanning) return; knownPlugins.clear(); startPluginScan(); };
         h.scanBusy = [this] { return scanning; };
+        h.pedalCcGet = [this] (int i) { return engine.pedalCc[(size_t) i].load(); };
+        h.pedalLearning = [this] { return engine.pedalLearn.load(); };
+        h.pedalLearn = [this] (int i)
+        {
+            if (engine.pedalLearn.load() == i) { engine.cancelLearns(); return; }
+            engine.cancelLearns();
+            engine.startPedalLearn (i);
+            setMessage (gr ("Move pedal ") + String (i + 1));
+        };
+        h.pedalClear = [this] (int i) { engine.cancelLearns(); engine.pedalCc[(size_t) i] = -1; saveNow(); };
         h.masterGet = [this] { return engine.masterPos.load(); };
         h.masterSet = [this] (float v) { engine.masterPos = v; };
         h.masterCcText = [this]() -> String { const int c = engine.masterCc.load(); return c != 0 ? pedalCodeText (c) : String(); };
@@ -4632,6 +4644,8 @@ private:
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
         for (int k = 0; k < 8; ++k)
             settings->setValue ("knobcc" + String (k), engine.knobCc[(size_t) k].load());
+        for (int i = 0; i < flow::Engine::numPedals; ++i)
+            settings->setValue ("pedalcc" + String (i), engine.pedalCc[(size_t) i].load());
         {
             XmlElement lib ("OrbLib");
             for (auto& kv : knobLibrary)
@@ -4935,6 +4949,14 @@ private:
                 setMessage (String (controlName (target)) + " " + String::fromUTF8 ("\xe2\x86\x90") + " " + pedalCodeText (engine.learnedCode.load()));
         }
 
+        const int plearned = engine.pedalLearnedCount.load();
+        if (plearned != lastPedalLearned)
+        {
+            lastPedalLearned = plearned;
+            setMessage ("Pedal " + String (engine.pedalLearnedSlot.load() + 1) + " " + String::fromUTF8 ("\xe2\x86\x90") + " CC " + String (engine.pedalLearnedNum.load()));
+            saveNow();
+        }
+
         const int vlearned = engine.volLearnedCount.load();
         if (vlearned != lastVolLearned)
         {
@@ -5016,7 +5038,7 @@ private:
     float editorScale = 1.0f;
     Rectangle<int> loopsBezel, pluginBezel, stripBezel, keysBezel;
     String message;
-    int lastLearned = 0, lastVolLearned = 0, lastChange = 0;
+    int lastLearned = 0, lastVolLearned = 0, lastPedalLearned = 0, lastChange = 0;
     int messageTicks = 0, stateTicks = 0, smartDiagTicks = 0;
     bool dirty = false;
     uint32 lastSaveMs = 0;

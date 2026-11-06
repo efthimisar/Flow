@@ -48,6 +48,9 @@ public:
         std::function<void()> chooseRecFolder;
         std::function<float()> masterGet;
         std::function<void (float)> masterSet;
+        std::function<int (int)> pedalCcGet;          // CC του πεταλιού i (0..5), -1 = δεν έχει οριστεί
+        std::function<int()> pedalLearning;           // πεντάλ που περιμένει κίνηση, αλλιώς -1
+        std::function<void (int)> pedalLearn, pedalClear;
         std::function<juce::String()> masterCcText;   // κενό = δεν έχει ανατεθεί
         std::function<void()> masterAssign, masterRemove;
         std::function<bool()> linkAvailable, linkGet;
@@ -141,7 +144,7 @@ public:
         g.setColour (hobby::kScreen);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 
-        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW", "BLOCK TOOLS", "ORB KNOBS", "SETS" };
+        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW", "BLOCK TOOLS", "ORB KNOBS", "SETS", "VOLUME PEDALS" };
         g.setColour (dim()); g.setFont (font (13.0f, true));
         g.drawText (titles[(int) page], 40, 26, 500, 20, Justification::centredLeft, false);
         {
@@ -171,6 +174,7 @@ public:
             case Tools:  paintTools (g); break;
             case OrbKnobs: paintOrbKnobs (g); break;
             case Sets:   paintSets (g); break;
+            case Pedals: paintPedals (g); break;
         }
     }
 
@@ -211,7 +215,7 @@ public:
     }
 
 private:
-    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs, Sets };
+    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs, Sets, Pedals };
     struct Hit { juce::Rectangle<int> r; std::function<void()> fn; };
     Page backPage() const { return (page == Save || page == Load || page == Restore) ? Sets : Home; }
 
@@ -322,6 +326,15 @@ private:
                 g.strokePath (m, st);
                 break;
             }
+            case 20:   // expression pedal: βάση, κεκλιμένη πλάκα, μεντεσές, καλώδιο
+            {
+                Path b1; b1.addRectangle (c.x - 13.0f, c.y + 5.0f, 26.0f, 4.0f); g.fillPath (b1);
+                Path t; t.startNewSubPath (c.x - 13.0f, c.y + 3.0f); t.lineTo (c.x + 13.0f, c.y - 9.0f); t.lineTo (c.x + 13.0f, c.y - 5.0f); t.lineTo (c.x - 13.0f, c.y + 7.0f); t.closeSubPath(); g.fillPath (t);
+                g.fillEllipse (c.x - 15.0f, c.y + 2.0f, 6.0f, 6.0f);
+                Path cb; cb.startNewSubPath (c.x + 13.0f, c.y + 7.0f); cb.lineTo (c.x + 17.0f, c.y + 7.0f); cb.lineTo (c.x + 17.0f, c.y - 1.0f);
+                g.strokePath (cb, PathStrokeType (2.0f));
+                break;
+            }
             case 15: g.drawEllipse (c.x - 11.0f, c.y - 11.0f, 22.0f, 22.0f, 2.2f); g.fillEllipse (c.x - 3.0f, c.y - 3.0f, 6.0f, 6.0f); break;
             default: break;
         }
@@ -348,6 +361,7 @@ private:
             { 6, "Ableton Link", linkOn, ! linkAv, [this, linkAv] { if (linkAv && host.linkToggle) host.linkToggle(); } },
             { 17, "Help", host.helpGet && host.helpGet(), false, [this] { if (host.helpToggle) host.helpToggle(); repaint(); } },
             { 7, "Panic", false, false, [this] { showPage (Panic); } },
+            { 20, "Volume pedals", false, false, [this] { showPage (Pedals); } },
             { 18, "Scan plugins", host.scanBusy && host.scanBusy(), false, [this] { if (host.scanPlugins) host.scanPlugins(); repaint(); } },
         };
         (void) hasSet;
@@ -876,6 +890,44 @@ private:
         if (cc.isNotEmpty())
             pill (g, { 40, 152, 260, 40 }, "Remove assignment", false, true, [this] { if (host.masterRemove) host.masterRemove(); repaint(); });
         note (g, "Move the knob on your keyboard after pressing Assign.", getHeight() - 28);
+    }
+
+    // ---------- volume pedals ----------
+    void paintPedals (juce::Graphics& g)
+    {
+        using namespace juce;
+        const int W = getWidth();
+        g.setColour (dim()); g.setFont (font (13.0f));
+        g.drawText ("Pedal 1 controls block 1, pedal 2 block 2, and so on. Default: CC 20 to 25 on any channel.", 40, 52, W - 80, 20, Justification::centredLeft, false);
+        const int waiting = host.pedalLearning ? host.pedalLearning() : -1;
+        for (int i = 0; i < 6; ++i)
+        {
+            const int y = 84 + i * 52, cc = host.pedalCcGet ? host.pedalCcGet (i) : -1;
+            const Rectangle<int> row (40, y, W - 80, 44);
+            g.setColour (card()); g.fillRoundedRectangle (row.toFloat(), 12.0f);
+            g.setColour (txt()); g.setFont (font (16.0f, true));
+            g.drawText ("Pedal " + String (i + 1), row.getX() + 18, y, 110, 44, Justification::centredLeft, false);
+            g.setColour (dim()); g.setFont (font (16.0f));
+            g.drawText (String::fromUTF8 ("\xe2\x86\x92") + " Block " + String (i + 1), row.getX() + 130, y, 130, 44, Justification::centredLeft, false);
+            const bool w = waiting == i;
+            g.setColour (w ? Colour (0xfff0be3c) : cc < 0 ? dim().withAlpha (0.6f) : dim());
+            g.drawText (w ? String ("move the pedal...") : cc < 0 ? String ("not set") : "CC " + String (cc), row.getX() + 290, y, 200, 44, Justification::centredLeft, false);
+            const Rectangle<int> lr (row.getRight() - 100, y + 7, 30, 30), cr (row.getRight() - 50, y + 7, 30, 30);
+            g.setColour (Colours::black); g.fillEllipse (lr.toFloat());
+            if (w) { g.setColour (Colour (0xffe07050)); g.drawEllipse (lr.toFloat().reduced (1.0f), 2.0f); }
+            g.setColour (Colours::white); g.fillEllipse (lr.toFloat().reduced (11.0f));
+            hits.push_back ({ lr.expanded (4), [this, i] { if (host.pedalLearn) host.pedalLearn (i); repaint(); } });
+            g.setColour (Colours::black); g.fillEllipse (cr.toFloat());
+            if (cc >= 0)
+            {
+                const auto m = cr.toFloat().getCentre();
+                g.setColour (Colours::white);
+                g.drawLine (m.x - 5.0f, m.y - 5.0f, m.x + 5.0f, m.y + 5.0f, 2.0f);
+                g.drawLine (m.x - 5.0f, m.y + 5.0f, m.x + 5.0f, m.y - 5.0f, 2.0f);
+                hits.push_back ({ cr.expanded (4), [this, i] { if (host.pedalClear) host.pedalClear (i); repaint(); } });
+            }
+        }
+        note (g, "Press the circle, then move the pedal. The cross clears it.", getHeight() - 28);
     }
 
     // ---------- panic ----------

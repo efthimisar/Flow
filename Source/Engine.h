@@ -138,6 +138,7 @@ namespace flow
                 transpose[b] = 0;
                 volPos[b] = 1.0f; gainOut[b] = 1.0f;
                 volMap[b] = 0;
+                if (b < numPedals) pedalCc[(size_t) b] = 20 + b;
                 followBlock[b] = 1;
                 smartType[b] = 0; smartWidth[b] = 0.0f; smartNeedWidth[b] = 1.0f;
                 smartAutoT[b] = 0; for (int q = 0; q < 4; ++q) smartFeat[b][(size_t) q] = 0.0f;
@@ -171,6 +172,10 @@ namespace flow
         std::array<std::atomic<int>, numControls> mapCode;   // MIDI learn πεταλιών / πλήκτρων
         std::atomic<int> mapLearnTarget { -1 }, learnedCount { 0 }, learnedTarget { -1 }, learnedCode { 0 };
         std::atomic<int> volLearn { -1 }, volLearnedCount { 0 }, volLearnedBlock { -1 }, volLearnedCode { 0 };
+        // 6 πετάλια έντασης (standard): πετάλι N ελέγχει πάντα το block N. Αριθμός CC (οποιοδήποτε κανάλι)· -1 = δεν έχει οριστεί. Προεπιλογή CC 20..25.
+        static constexpr int numPedals = 6;
+        std::array<std::atomic<int>, numPedals> pedalCc {};
+        std::atomic<int> pedalLearn { -1 }, pedalLearnedCount { 0 }, pedalLearnedSlot { -1 }, pedalLearnedNum { 0 };
         // 8 φυσικά ποτενσιόμετρα (CC): κωδικός ανά θέση (0 = καμία ανάθεση), τιμή που περιμένει το UI (-1 = τίποτα), learn
         std::array<std::atomic<int>, 8> knobCc {};
         std::array<std::atomic<float>, 8> knobIn {};
@@ -420,7 +425,8 @@ namespace flow
         int specialForNote (int) const { return -1; }
 
         void startVolumeLearn (int b) { mapLearnTarget = -1; volLearn = b; }
-        void cancelLearns()           { mapLearnTarget = -1; volLearn = -1; knobLearnSlot = -1; masterLearn = 0; }
+        void startPedalLearn (int i)  { mapLearnTarget = -1; volLearn = -1; knobLearnSlot = -1; masterLearn = 0; pedalLearn = i; }
+        void cancelLearns()           { mapLearnTarget = -1; volLearn = -1; knobLearnSlot = -1; masterLearn = 0; pedalLearn = -1; }
 
         double getSampleRate() const { return sampleRate.load(); }
 
@@ -1580,6 +1586,43 @@ namespace flow
             if (kind == 0) return false;
 
             const int code = (kind << 16) | (msg.getChannel() << 8) | num;
+
+            // τα 6 standard πετάλια έντασης: ένα CC (οποιοδήποτε κανάλι) = ένα block. Έχουν προτεραιότητα έναντι knobs/κουμπιών με το ίδιο CC.
+            if (kind == 2)
+            {
+                const auto sameCc = [num] (int c) { return (c >> 16) == 2 && (c & 0xff) == num; };
+                const int pl = pedalLearn.load();
+                if (pl >= 0 && pl < numPedals)
+                {
+                    for (int j = 0; j < numPedals; ++j)
+                        if (pedalCc[(size_t) j].load() == num) pedalCc[(size_t) j] = -1;
+                    for (int i = 0; i < numControls; ++i)
+                        if (sameCc (mapCode[(size_t) i].load())) mapCode[(size_t) i] = 0;
+                    for (int k = 0; k < 8; ++k)
+                        if (sameCc (knobCc[(size_t) k].load())) knobCc[(size_t) k] = 0;
+                    for (int b = 0; b < numBlocks; ++b)
+                        if (sameCc (volMap[(size_t) b].load())) volMap[(size_t) b] = 0;
+                    if (sameCc (masterCc.load())) masterCc = 0;
+                    pedalCc[(size_t) pl] = num;
+                    pedalLearnedSlot = pl;
+                    pedalLearnedNum = num;
+                    ++pedalLearnedCount;
+                    pedalLearn = -1;
+                    ++changeCount;
+                    return true;
+                }
+                for (int i = 0; i < numPedals; ++i)
+                    if (pedalCc[(size_t) i].load() == num)
+                    {
+                        if (active[(size_t) i].load() != 0)
+                        {
+                            volPos[(size_t) i] = (float) msg.getControllerValue() / 127.0f;
+                            lastVolMoveMs = juce::Time::getMillisecondCounter();
+                            volMoveDirty = 1;
+                        }
+                        return true;
+                    }
+            }
 
             // MIDI learn πεταλιού έντασης (πρώτο, ώστε να μην το καταναλώσει knob ή master): η πρώτη κίνηση ενός CC το αναθέτει στο block.
             // Το ίδιο CC σβήνεται από knobs, master και κουμπιά: ένα CC ανήκει σε ένα μόνο χειριστήριο.
