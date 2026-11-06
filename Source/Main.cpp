@@ -264,6 +264,8 @@ public:
             engine.knobCc[(size_t) k] = settings->getIntValue ("knobcc" + String (k), 0);
             engine.knobIn[(size_t) k] = -1.0f;
         }
+        auOn = settings->getBoolValue ("auOn", false);
+        pluginOff = StringArray::fromLines (settings->getValue ("pluginOff"));
         for (int i = 0; i < flow::Engine::numPedals; ++i)
             engine.pedalCc[(size_t) i] = settings->getIntValue ("pedalcc" + String (i), 20 + i);
         for (int b = 0; b < flow::numBlocks; ++b)
@@ -2790,6 +2792,16 @@ private:
 
     StringArray favPlugins;   // favorites (σήμα f): κλειδιά plugins, κοινά για instruments και effects
 
+    // «My plugins»: τα AU κρύβονται όταν είναι off (προεπιλογή), και κάθε plugin μπορεί να σβηστεί μόνο του (τα νέα είναι πάντα επιλεγμένα)
+    static String pluginKey (const PluginDescription& d) { return d.name + "|" + d.pluginFormatName; }
+    bool pluginAllowed (const PluginDescription& d) const
+    {
+        if (d.pluginFormatName == "AudioUnit" && ! auOn) return false;
+        return ! pluginOff.contains (pluginKey (d));
+    }
+    StringArray pluginOff;
+    bool auOn = false;
+
     void pickPlugin (const String& title, int kind, std::function<void (const PluginDescription&)> chosen)
     {
         if (scanning)
@@ -2818,6 +2830,7 @@ private:
         {
             flow::flowLog ("plugin: " + d.name + " [" + d.pluginFormatName + "] instrument=" + String ((int) d.isInstrument) + " in=" + String (d.numInputChannels)
                            + " out=" + String (d.numOutputChannels) + " category=" + d.category);
+            if (! pluginAllowed (d)) continue;
             const int ut = flow::pluginTypeByName (d.name);   // τύπος που όρισε ο χρήστης: μόνο στη λίστα του· χωρίς τύπο: φαίνεται σε όλες
             if (ut >= 0 && ut != kind) continue;
             (ut == kind || (ut < 0 && fits (d)) ? primary : others).push_back (d);
@@ -3676,6 +3689,38 @@ private:
         h.chooseRecFolder = [this] { chooseTapeFolder(); };
         h.scanPlugins = [this] { if (scanning) return; knownPlugins.clear(); startPluginScan(); };
         h.scanBusy = [this] { return scanning; };
+        h.plugins = [this]
+        {
+            std::vector<SettingsScreen::PluginRow> rows;
+            StringArray seen;
+            for (const auto& d : knownPlugins.getTypes())
+            {
+                if (d.pluginFormatName == "AudioUnit" && ! auOn) continue;
+                const String key = pluginKey (d);
+                if (seen.contains (key)) continue;
+                seen.add (key);
+                const int t = flow::pluginTypeByName (d.name);
+                rows.push_back ({ d.name, d.pluginFormatName, key, t, ! pluginOff.contains (key) });
+            }
+            std::sort (rows.begin(), rows.end(), [] (const auto& a, const auto& b) { return a.name.compareIgnoreCase (b.name) < 0; });
+            return rows;
+        };
+        h.auGet = [this] { return auOn; };
+        h.auSet = [this] (bool on) { auOn = on; saveNow(); };
+        h.pluginOnSet = [this] (const String& key, bool on)
+        {
+            if (on) pluginOff.removeString (key); else pluginOff.addIfNotAlreadyThere (key);
+            saveNow();
+        };
+        h.pluginAllSet = [this] (bool on)
+        {
+            for (const auto& d : knownPlugins.getTypes())
+            {
+                if (d.pluginFormatName == "AudioUnit" && ! auOn) continue;
+                if (on) pluginOff.removeString (pluginKey (d)); else pluginOff.addIfNotAlreadyThere (pluginKey (d));
+            }
+            saveNow();
+        };
         h.pedalCcGet = [this] (int i) { return engine.pedalCc[(size_t) i].load(); };
         h.pedalLearning = [this] { return engine.pedalLearn.load(); };
         h.pedalLearn = [this] (int i)
@@ -4644,6 +4689,8 @@ private:
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
         for (int k = 0; k < 8; ++k)
             settings->setValue ("knobcc" + String (k), engine.knobCc[(size_t) k].load());
+        settings->setValue ("auOn", auOn);
+        settings->setValue ("pluginOff", pluginOff.joinIntoString ("\n"));
         for (int i = 0; i < flow::Engine::numPedals; ++i)
             settings->setValue ("pedalcc" + String (i), engine.pedalCc[(size_t) i].load());
         {

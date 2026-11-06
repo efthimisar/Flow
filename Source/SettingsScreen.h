@@ -26,6 +26,8 @@ public:
     struct ToolItem { juce::String glyph, label, tip; juce::Colour colour; bool enabled = true, armed = false; std::function<void()> fn; };
     struct OrbKnob { bool bound = false; juce::String name; float value = 0.0f; };
 
+    struct PluginRow { juce::String name, format, key; int type = -1; bool on = true; };   // type: 0 = VST, 1 = FX, 2 = MIDI FX, -1 = άγνωστο
+
     struct Host
     {
         std::function<std::vector<ToolItem>()> tools;          // εργαλεία του επιλεγμένου block
@@ -48,6 +50,11 @@ public:
         std::function<void()> chooseRecFolder;
         std::function<float()> masterGet;
         std::function<void (float)> masterSet;
+        std::function<std::vector<PluginRow>()> plugins;   // «My plugins»: όλα τα plugins (τα AU μόνο όταν είναι ανοιχτά)
+        std::function<bool()> auGet;
+        std::function<void (bool)> auSet;
+        std::function<void (const juce::String&, bool)> pluginOnSet;
+        std::function<void (bool)> pluginAllSet;           // όλα / κανένα (μόνο όσα φαίνονται)
         std::function<int (int)> pedalCcGet;          // CC του πεταλιού i (0..5), -1 = δεν έχει οριστεί
         std::function<int()> pedalLearning;           // πεντάλ που περιμένει κίνηση, αλλιώς -1
         std::function<void (int)> pedalLearn, pedalClear;
@@ -144,7 +151,7 @@ public:
         g.setColour (hobby::kScreen);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 
-        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW", "BLOCK TOOLS", "ORB KNOBS", "SETS", "VOLUME PEDALS" };
+        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW", "BLOCK TOOLS", "ORB KNOBS", "SETS", "VOLUME PEDALS", "MY PLUGINS" };
         g.setColour (dim()); g.setFont (font (13.0f, true));
         g.drawText (titles[(int) page], 40, 26, 500, 20, Justification::centredLeft, false);
         {
@@ -175,6 +182,7 @@ public:
             case OrbKnobs: paintOrbKnobs (g); break;
             case Sets:   paintSets (g); break;
             case Pedals: paintPedals (g); break;
+            case Plugins: paintPlugins (g); break;
         }
     }
 
@@ -209,13 +217,13 @@ public:
     }
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override
     {
-        if (page != Load) return;
+        if (page != Load && page != Plugins) return;
         loadScroll = juce::jlimit (0, juce::jmax (0, loadMaxScroll), loadScroll - (int) (w.deltaY * 220.0f));
         repaint();
     }
 
 private:
-    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs, Sets, Pedals };
+    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs, Sets, Pedals, Plugins };
     struct Hit { juce::Rectangle<int> r; std::function<void()> fn; };
     Page backPage() const { return (page == Save || page == Load || page == Restore) ? Sets : Home; }
 
@@ -335,6 +343,7 @@ private:
                 g.strokePath (cb, PathStrokeType (2.0f));
                 break;
             }
+            case 21: for (int i = 0; i < 3; ++i) g.fillEllipse (c.x - 16.0f + (float) i * 12.0f, c.y - 4.0f, 8.0f, 8.0f); break;   // τρεις τελείες: τα plugins που διαλέγω
             case 15: g.drawEllipse (c.x - 11.0f, c.y - 11.0f, 22.0f, 22.0f, 2.2f); g.fillEllipse (c.x - 3.0f, c.y - 3.0f, 6.0f, 6.0f); break;
             default: break;
         }
@@ -362,6 +371,7 @@ private:
             { 17, "Help", host.helpGet && host.helpGet(), false, [this] { if (host.helpToggle) host.helpToggle(); repaint(); } },
             { 7, "Panic", false, false, [this] { showPage (Panic); } },
             { 20, "Volume pedals", false, false, [this] { showPage (Pedals); } },
+            { 21, "My plugins", false, false, [this] { showPage (Plugins); } },
             { 18, "Scan plugins", host.scanBusy && host.scanBusy(), false, [this] { if (host.scanPlugins) host.scanPlugins(); repaint(); } },
         };
         (void) hasSet;
@@ -928,6 +938,59 @@ private:
             }
         }
         note (g, "Press the circle, then move the pedal. The cross clears it.", getHeight() - 28);
+    }
+
+    // ---------- My plugins: ποια plugins φαίνονται στις λίστες ----------
+    void paintPlugins (juce::Graphics& g)
+    {
+        using namespace juce;
+        const int W = getWidth(), H = getHeight();
+        const bool au = host.auGet && host.auGet();
+        const auto rows = host.plugins ? host.plugins() : std::vector<PluginRow>();
+        g.setColour (dim()); g.setFont (font (13.0f));
+        g.drawText ("Only the plugins marked here appear in the VST, MIDI FX and FX lists.", 40, 50, W - 80, 20, Justification::centredLeft, false);
+        auto dot = [&] (Rectangle<int> r, bool on)
+        {
+            g.setColour (Colours::black); g.fillEllipse (r.toFloat());
+            if (on) { g.setColour (Colours::white); g.fillEllipse (r.toFloat().reduced (r.getWidth() * 0.34f)); }
+        };
+        const Rectangle<int> auRow (40, 78, W - 80, 40);
+        g.setColour (card()); g.fillRoundedRectangle (auRow.toFloat(), 12.0f);
+        g.setColour (txt()); g.setFont (font (15.0f, true));
+        g.drawText ("Audio Units (AU)", auRow.getX() + 18, auRow.getY(), 180, 40, Justification::centredLeft, false);
+        g.setColour (dim()); g.setFont (font (13.0f));
+        g.drawText ("the built-in Apple plugins (AUDelay, AUReverb2...)", auRow.getX() + 200, auRow.getY(), W - 420, 40, Justification::centredLeft, false);
+        const Rectangle<int> auDot (auRow.getRight() - 46, auRow.getY() + 8, 24, 24);
+        dot (auDot, au);
+        hits.push_back ({ auRow, [this, au] { if (host.auSet) host.auSet (! au); repaint(); } });
+
+        pill (g, { 40, 126, 90, 32 }, "All", false, true, [this] { if (host.pluginAllSet) host.pluginAllSet (true); repaint(); });
+        pill (g, { 138, 126, 90, 32 }, "None", false, true, [this] { if (host.pluginAllSet) host.pluginAllSet (false); repaint(); });
+
+        const int top = 168, bottom = H - 30, rowH = 38;
+        loadMaxScroll = jmax (0, (int) rows.size() * rowH - (bottom - top));
+        loadScroll = jlimit (0, loadMaxScroll, loadScroll);
+        g.saveState();
+        g.reduceClipRegion (Rectangle<int> (0, top, W, bottom - top));
+        static const char* types[3] { "VST", "FX", "MIDI FX" };
+        for (int i = 0; i < (int) rows.size(); ++i)
+        {
+            const auto& r = rows[(size_t) i];
+            const int y = top + i * rowH - loadScroll;
+            if (y + rowH < top || y > bottom) continue;
+            const Rectangle<int> rr (40, y, W - 80, rowH - 6);
+            g.setColour (card()); g.fillRoundedRectangle (rr.toFloat(), 10.0f);
+            g.setColour (r.on ? txt() : dim().withAlpha (0.6f)); g.setFont (font (15.0f));
+            g.drawText (r.name, rr.getX() + 16, rr.getY(), W / 2 - 80, rr.getHeight(), Justification::centredLeft, true);
+            g.setColour (dim()); g.setFont (font (12.0f));
+            g.drawText (r.type >= 0 && r.type < 3 ? String (types[r.type]) : String(), W / 2 + 20, rr.getY(), 90, rr.getHeight(), Justification::centredLeft, false);
+            g.drawText (r.format, W / 2 + 120, rr.getY(), 90, rr.getHeight(), Justification::centredLeft, false);
+            const Rectangle<int> dr (rr.getRight() - 40, rr.getCentreY() - 12, 24, 24);
+            dot (dr, r.on);
+            hits.push_back ({ rr.getIntersection (Rectangle<int> (0, top, W, bottom - top)), [this, key = r.key, on = r.on] { if (host.pluginOnSet) host.pluginOnSet (key, ! on); repaint(); } });
+        }
+        g.restoreState();
+        if (rows.empty()) { g.setColour (dim()); g.setFont (font (14.0f)); g.drawText ("No plugins yet. Use Scan plugins first.", 40, top + 10, 400, 24, Justification::centredLeft, false); }
     }
 
     // ---------- panic ----------
