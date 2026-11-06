@@ -295,6 +295,7 @@ public:
         favPlugins.removeEmptyStrings();
         engine.masterPos = 1.0f;   // το master volume είναι πάντα 100%
         engine.followSetScale (settings->getIntValue ("followRoot", 9), settings->getIntValue ("followType", 1));
+        engine.followPoly = settings->getIntValue ("followPoly", 0);
         engine.smartOn = settings->getIntValue ("smartOn", 0) != 0 ? 1 : 0;
         engine.smartAccept = jlimit (0.0f, 1.0f, (float) settings->getDoubleValue ("smartAccept", 0.6));
         engine.masterCc = 0;
@@ -3779,6 +3780,8 @@ private:
         h.followOnSet = [this] (int v) { engine.setFollow (v); saveNow(); refreshSmartTile(); };
         h.followRootGet = [this] { return engine.followRoot.load(); };
         h.followTypeGet = [this] { return engine.followType.load(); };
+        h.followPolyGet = [this] { return engine.followPoly.load(); };
+        h.followPolySet = [this] (int v) { engine.followPoly = v != 0 ? 1 : 0; saveNow(); };
         h.followRootSet = [this] (int v) { engine.followSetScale (v, engine.followType.load()); saveNow(); };
         h.followTypeSet = [this] (int v) { engine.followSetScale (engine.followRoot.load(), v); saveNow(); };
         h.followBlockSet = [this] (int b, bool excluded) { engine.followBlock[(size_t) b] = excluded ? 0 : 1; saveNow(); };
@@ -4677,6 +4680,7 @@ private:
         settings->setValue ("favPlugins", favPlugins.joinIntoString ("\n"));
         settings->setValue ("followRoot", engine.followRoot.load());
         settings->setValue ("followType", engine.followType.load());
+        settings->setValue ("followPoly", engine.followPoly.load());
         settings->setValue ("smartOn", engine.smartOn.load());
         settings->setValue ("smartAccept", (double) engine.smartAccept.load());
         settings->setValue ("metroChannel", engine.metroChannel.load());

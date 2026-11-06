@@ -187,6 +187,10 @@ namespace flow
         std::atomic<int> followOn { 0 };                                  // γενικός διακόπτης (πλήκτρο B7 / οθόνη Follow)
         std::atomic<int> followRoot { 9 }, followType { 1 };             // κλίμακα των λουπών που ηχογράφησες: ρίζα 0..11, τύπος 0..5
         std::atomic<int> followTRoot { 9 }, followTType { 1 };
+        // Πολυφωνική μετάθεση: κάθε νότα που κρατάς (έως 3, οι χαμηλότερες) παίζει τη λούπα μεταφερμένη στη δική της ρίζα, με μειωμένη ένταση (1/√n)
+        static constexpr int maxPolyVoices = 3;
+        std::atomic<int> followPoly { 0 }, followVoiceN { 0 };
+        std::array<std::atomic<int>, maxPolyVoices> followVoiceRoot {};
         std::atomic<int> followHomeRoot { 9 }, followHomeType { 1 }, followHomeSet { 0 };   // τελευταία συγχορδία με σβηστό Follow (τονικότητα πηγής)           // κλίμακα-στόχος (από τη συγχορδία)
         std::array<std::atomic<int>, numBlocks> followBlock;             // 1 = το block ακολουθεί
         // Follow on/off (πλήκτρο B0 ή οθόνη): όταν ανάβει, η τελευταία συγχορδία που κράτησες με σβηστό Follow γίνεται η τονικότητα πηγής
@@ -201,7 +205,7 @@ namespace flow
             ++changeCount;
         }
         // μόνο Major (0) και Minor (1): οι παλιές κλίμακες γίνονται η πιο κοντινή (Dorian, Phrygian → Minor, Mixolydian, Lydian → Major)
-        static int followTypeNorm (int t) { return (t == 1 || t == 2 || t == 4) ? 1 : 0; }
+        static int followTypeNorm (int t) { return juce::jlimit (0, 2, t); }   // 0 Major, 1 Minor, 2 Harmonic minor
         void followSetScale (int root, int type)
         {
             followRoot = juce::jlimit (0, 11, root); followType = followTypeNorm (type);
@@ -951,7 +955,8 @@ namespace flow
             unsigned loopSusMask = 0, loopBendMask = 0;
             int64_t lastTap = 0;
             std::array<uint8_t, 128> vel {};
-            std::array<uint8_t, 128> outNote {}, loopOut {};
+            std::array<uint8_t, 128> outNote {}, loopOut {}, loopVoiceN {};
+            std::array<std::array<uint8_t, 3>, 128> loopOutV {};   // πολυφωνική μετάθεση: οι έξοδοι κάθε νότας της λούπας
             std::array<std::array<uint8_t, 6>, 128> chordNotes {};   // νότες συγχορδίας ανά πλήκτρο (εκτός της βασικής)
             std::array<uint8_t, 128> chordCount {};
             float prevGain = -1.0f;
@@ -981,7 +986,7 @@ namespace flow
                 alSwitch.reset(); alGroup.reset(); alPending.reset(); alMute.reset(); alOpen = false; alHavePending = false; alEnd = 0;
                 hist.clear(); lastDetect = 0; autoReady = false; autoPaused = false; autoHit = AutoHit();
                 vel.fill (0);
-                outNote.fill (0); loopOut.fill (0); chordCount.fill (0);
+                outNote.fill (0); loopOut.fill (0); loopVoiceN.fill (0); chordCount.fill (0);
                 lastLatched = -1; prevHold = 0; prevArp = 0; arpIndex = 0;
                 loopState = loopOff; recStart = 0.0; loopBeats = 0.0; loopAnchor = 0.0;
                 rec.clear();
@@ -1013,20 +1018,21 @@ namespace flow
 
         static const int* followScale (int type)
         {
-            static const int t[6][7] = { { 0, 2, 4, 5, 7, 9, 11 },    // Major
-                                         { 0, 2, 3, 5, 7, 8, 10 },    // Minor
-                                         { 0, 2, 3, 5, 7, 9, 10 },    // Dorian
-                                         { 0, 2, 4, 5, 7, 9, 10 },    // Mixolydian
-                                         { 0, 1, 3, 5, 7, 8, 10 },    // Phrygian
-                                         { 0, 2, 4, 6, 7, 9, 11 } };  // Lydian
-            return t[juce::jlimit (0, 5, type)];
+            static const int t[3][7] = { { 0, 2, 4, 5, 7, 9, 11 },    // Major
+                                         { 0, 2, 3, 5, 7, 8, 10 },    // Minor (natural)
+                                         { 0, 2, 3, 5, 7, 8, 11 } };  // Harmonic minor
+            return t[juce::jlimit (0, 2, type)];
         }
 
         // η νότα της λούπας μεταφέρεται από την κλίμακα που ηχογράφησες στην κλίμακα της συγχορδίας, βαθμίδα προς βαθμίδα
         int followMapNote (int b, int note) const
         {
             if (followOn.load() == 0 || followBlock[(size_t) b].load() == 0 || b == mfBlock.load()) return note;   // το MF block είναι η πηγή: δεν ακολουθεί
-            const int sR = followRoot.load(), sT = followType.load(), tR = followTRoot.load(), tT = followTType.load();
+            return followMapNoteTo (note, followRoot.load(), followType.load(), followTRoot.load(), followTType.load());
+        }
+
+        static int followMapNoteTo (int note, int sR, int sT, int tR, int tT)
+        {
             if (sR == tR && sT == tT) return note;
             const int* sI = followScale (sT);
             const int* tI = followScale (tT);
@@ -1048,6 +1054,25 @@ namespace flow
             {
                 const bool p = n < 64 ? ((lo >> n) & 1u) != 0 : ((hi >> (n - 64)) & 1u) != 0;
                 if (p && (mfBlock.load() < 0 || noteBelongsToMf (n))) { mask |= 1 << (n % 12); if (lowest < 0) lowest = n; }   // με MF: μόνο οι νότες του MF block
+            }
+            if (followPoly.load() != 0 && followOn.load() != 0)
+            {
+                // πολυφωνικά: οι (έως 3) χαμηλότερες διαφορετικές νότες που κρατάς γίνονται οι φωνές. Όταν τις αφήσεις, μένουν οι τελευταίες.
+                int cnt = 0, seen = 0;
+                for (int n = 0; n < 128 && cnt < maxPolyVoices; ++n)
+                {
+                    const bool p = n < 64 ? ((lo >> n) & 1u) != 0 : ((hi >> (n - 64)) & 1u) != 0;
+                    if (! p || (mfBlock.load() >= 0 && ! noteBelongsToMf (n)) || ((seen >> (n % 12)) & 1) != 0) continue;
+                    seen |= 1 << (n % 12);
+                    followVoiceRoot[(size_t) cnt++] = n % 12;
+                }
+                if (cnt > 0)
+                {
+                    followVoiceN = cnt;
+                    followTRoot = followVoiceRoot[0].load();
+                    followTType = followType.load();
+                }
+                return;
             }
             if (std::bitset<12> ((unsigned) mask).count() < 3) return;
             const int root = lowest % 12;
@@ -2120,7 +2145,14 @@ namespace flow
         {
             for (int n = 0; n < 128; ++n)
                 if (B.loopSounding[(size_t) n])
-                    B.out.addEvent (juce::MidiMessage::noteOff (1, B.loopOut[(size_t) n]), 0);
+                {
+                    if (B.loopVoiceN[(size_t) n] > 0)
+                        for (int v = 0; v < B.loopVoiceN[(size_t) n]; ++v)
+                            B.out.addEvent (juce::MidiMessage::noteOff (1, B.loopOutV[(size_t) n][(size_t) v]), 0);
+                    else
+                        B.out.addEvent (juce::MidiMessage::noteOff (1, B.loopOut[(size_t) n]), 0);
+                    B.loopVoiceN[(size_t) n] = 0;
+                }
 
             B.loopSounding.reset();
 
@@ -3000,12 +3032,41 @@ namespace flow
                         }
                         if (a.on)
                         {
-                            B.loopOut[(size_t) a.note] = (uint8_t) juce::jlimit (0, 127, followMapNote (b, a.note) + transpose[(size_t) b].load());
-                            B.out.addEvent (juce::MidiMessage::noteOn (1, B.loopOut[(size_t) a.note], (juce::uint8) a.vel), a.pos);
+                            const bool poly = followPoly.load() != 0 && followOn.load() != 0 && followBlock[(size_t) b].load() != 0
+                                              && b != mfBlock.load() && followVoiceN.load() > 0;
+                            if (poly)
+                            {
+                                const int nv = juce::jlimit (1, maxPolyVoices, followVoiceN.load());
+                                const int vel = juce::jlimit (1, 127, (int) std::lround ((float) a.vel / std::sqrt ((float) nv)));
+                                int cnt = 0;
+                                for (int v = 0; v < nv; ++v)
+                                {
+                                    const int o = juce::jlimit (0, 127, followMapNoteTo (a.note, followRoot.load(), followType.load(), followVoiceRoot[(size_t) v].load(), followType.load()) + transpose[(size_t) b].load());
+                                    bool dup = false;
+                                    for (int k = 0; k < cnt; ++k) dup = dup || B.loopOutV[(size_t) a.note][(size_t) k] == o;
+                                    if (dup) continue;
+                                    B.loopOutV[(size_t) a.note][(size_t) cnt++] = (uint8_t) o;
+                                    B.out.addEvent (juce::MidiMessage::noteOn (1, o, (juce::uint8) vel), a.pos);
+                                }
+                                B.loopVoiceN[(size_t) a.note] = (uint8_t) cnt;
+                            }
+                            else
+                            {
+                                B.loopVoiceN[(size_t) a.note] = 0;
+                                B.loopOut[(size_t) a.note] = (uint8_t) juce::jlimit (0, 127, followMapNote (b, a.note) + transpose[(size_t) b].load());
+                                B.out.addEvent (juce::MidiMessage::noteOn (1, B.loopOut[(size_t) a.note], (juce::uint8) a.vel), a.pos);
+                            }
                         }
                         else
                         {
-                            B.out.addEvent (juce::MidiMessage::noteOff (1, B.loopOut[(size_t) a.note]), a.pos);
+                            if (B.loopVoiceN[(size_t) a.note] > 0)
+                            {
+                                for (int v = 0; v < B.loopVoiceN[(size_t) a.note]; ++v)
+                                    B.out.addEvent (juce::MidiMessage::noteOff (1, B.loopOutV[(size_t) a.note][(size_t) v]), a.pos);
+                                B.loopVoiceN[(size_t) a.note] = 0;
+                            }
+                            else
+                                B.out.addEvent (juce::MidiMessage::noteOff (1, B.loopOut[(size_t) a.note]), a.pos);
                         }
                         B.loopSounding.set ((size_t) a.note, a.on);
                         break;

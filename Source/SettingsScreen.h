@@ -71,8 +71,8 @@ public:
         std::function<int()> autoLoopGet;
         std::function<void (int)> autoLoopSet;
         std::function<std::vector<FollowBlock>()> followBlocks;
-        std::function<int()> followOnGet, followRootGet, followTypeGet;
-        std::function<void (int)> followOnSet, followRootSet, followTypeSet;
+        std::function<int()> followOnGet, followRootGet, followTypeGet, followPolyGet;
+        std::function<void (int)> followOnSet, followRootSet, followTypeSet, followPolySet;
         std::function<void (int, bool)> followBlockSet;
         std::function<std::vector<SmartBlock>()> smartBlocks;
         std::function<int()> smartOnGet;
@@ -1130,7 +1130,7 @@ private:
         const int root = host.followRootGet ? host.followRootGet() : 9;
         const int type = host.followTypeGet ? host.followTypeGet() : 1;
         static const char* notes[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-        static const char* types[] = { "Major", "Minor", "Dorian", "Mixolydian", "Phrygian", "Lydian" };
+        static const char* types[] = { "Major", "Minor", "Harmonic minor" };
         g.setColour (txt()); g.setFont (font (14.0f, true));
         g.drawText ("Scale of the loops you record", 40, 52, 400, 20, Justification::centredLeft, false);
         const int cwid = jmin (52, (W - 80 - 280) / 12);
@@ -1144,8 +1144,8 @@ private:
             g.drawText (notes[i], r, Justification::centred, false);
             hits.push_back ({ r, [this, i] { if (host.followRootSet) host.followRootSet (i); repaint(); } });
         }
-        const int tw = jmin (104, (W - 80 - 280) / 6);
-        for (int i = 0; i < 6; ++i)
+        const int tw = jmin (130, (W - 80 - 280) / 3);
+        for (int i = 0; i < 3; ++i)
         {
             const Rectangle<int> r (40 + i * tw, 116, tw - 6, 30);
             const bool sel = i == type;
@@ -1156,7 +1156,7 @@ private:
             hits.push_back ({ r, [this, i] { if (host.followTypeSet) host.followTypeSet (i); repaint(); } });
         }
         g.setColour (ok); g.setFont (font (22.0f, true));
-        g.drawText (String (notes[jlimit (0, 11, root)]) + " " + String (types[jlimit (0, 5, type)]).toLowerCase(), W - 40 - 230, 52, 230, 30, Justification::centredRight, false);
+        g.drawText (String (notes[jlimit (0, 11, root)]) + " " + String (types[jlimit (0, 2, type)]).toLowerCase(), W - 40 - 230, 52, 230, 30, Justification::centredRight, false);
         {   // γενικός διακόπτης (το ίδιο κάνει το πλήκτρο B7)
             const Rectangle<int> o (W - 40 - 150, 96, 150, 40);
             g.setColour (on ? Colour (0xff3c5a46) : Colour (0xff2a2725)); g.fillRoundedRectangle (o.toFloat(), 20.0f);
@@ -1165,11 +1165,22 @@ private:
             g.drawText (on ? "Follow On" : "Follow Off", o, Justification::centred, false);
             hits.push_back ({ o, [this, on] { if (host.followOnSet) host.followOnSet (on ? 0 : 1); repaint(); } });
         }
+        {   // πολυφωνική μετάθεση: κάθε νότα που κρατάς (έως 3) παίζει τη λούπα στη δική της ρίζα, πιο σιγά
+            const bool poly = host.followPolyGet && host.followPolyGet() != 0;
+            const Rectangle<int> o (W - 40 - 150, 142, 150, 40);
+            g.setColour (poly ? Colour (0xff3c5a46) : Colour (0xff2a2725)); g.fillRoundedRectangle (o.toFloat(), 20.0f);
+            g.setColour (poly ? ok : lineC()); g.drawRoundedRectangle (o.toFloat().reduced (1.0f), 20.0f, poly ? 2.0f : 1.0f);
+            g.setColour (poly ? txt() : dim()); g.setFont (font (14.0f, true));
+            g.drawText (String::fromUTF8 ("Polyphonic \xc3\x973"), o, Justification::centred, false);
+            hits.push_back ({ o, [this, poly] { if (host.followPolySet) host.followPolySet (poly ? 0 : 1); repaint(); } });
+            g.setColour (dim()); g.setFont (font (12.0f));
+            g.drawText ("Polyphonic: hold up to 3 notes and each followed loop plays once per note, quieter.", 40, 160, W - 260, 18, Justification::centredLeft, false);
+        }
         // κάρτες block
         const auto blocks = host.followBlocks ? host.followBlocks() : std::vector<FollowBlock>();
         std::vector<int> idx;
         for (int b = 0; b < (int) blocks.size(); ++b) if (blocks[(size_t) b].active) idx.push_back (b);
-        const int top = 166, bottom = H - 30;
+        const int top = 196, bottom = H - 30;
         if (idx.empty())
         {
             g.setColour (dim()); g.setFont (font (14.0f));
