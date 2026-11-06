@@ -10,6 +10,7 @@
 #include <algorithm>
 #include "AudioPanel.h"
 #include "SettingsScreen.h"
+#include "PluginTypes.h"
 #include "RoleCard.h"
 #include <map>
 
@@ -2787,37 +2788,6 @@ private:
 
     StringArray favPlugins;   // favorites (σήμα f): κλειδιά plugins, κοινά για instruments και effects
 
-    // τύπος plugin που όρισε ο χρήστης (προσωρινή σελίδα Settings): -1 = δεν ορίστηκε, 0 = VST, 1 = MIDI FX, 2 = FX
-    int pluginTypeOf (const String& key) const
-    {
-        auto* settings = const_cast<juce::ApplicationProperties&> (properties).getUserSettings();
-        return settings != nullptr ? jlimit (-1, 2, settings->getIntValue ("ptype:" + key, -1)) : -1;
-    }
-    void setPluginType (const String& key, int t)
-    {
-        if (auto* settings = properties.getUserSettings())
-        {
-            if (t < 0) settings->removeValue ("ptype:" + key); else settings->setValue ("ptype:" + key, jlimit (0, 2, t));
-            settings->saveIfNeeded();
-        }
-        exportPluginTypes();
-    }
-    // αναγνώσιμο αρχείο Music/Flow/Plugin-types.txt: το στέλνεις στον προγραμματιστή για να μπουν οι τύποι μόνιμα
-    void exportPluginTypes()
-    {
-        const auto dir = File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow");
-        dir.createDirectory();
-        static const char* names[3] { "VST", "MIDI FX", "FX" };
-        StringArray lines;
-        for (const auto& d : knownPlugins.getTypes())
-        {
-            const int t = pluginTypeOf (d.createIdentifierString());
-            lines.add (d.name + "\t" + d.pluginFormatName + "\t" + (t < 0 ? String ("not set") : String (names[t])));
-        }
-        lines.sort (true);
-        dir.getChildFile ("Plugin-types.txt").replaceWithText (lines.joinIntoString ("\n") + "\n");
-    }
-
     void pickPlugin (const String& title, int kind, std::function<void (const PluginDescription&)> chosen)
     {
         if (scanning)
@@ -2846,7 +2816,7 @@ private:
         {
             flow::flowLog ("plugin: " + d.name + " [" + d.pluginFormatName + "] instrument=" + String ((int) d.isInstrument) + " in=" + String (d.numInputChannels)
                            + " out=" + String (d.numOutputChannels) + " category=" + d.category);
-            const int ut = pluginTypeOf (d.createIdentifierString());   // τύπος που όρισε ο χρήστης: μόνο στη λίστα του· χωρίς τύπο: φαίνεται σε όλες
+            const int ut = flow::pluginTypeByName (d.name);   // τύπος που όρισε ο χρήστης: μόνο στη λίστα του· χωρίς τύπο: φαίνεται σε όλες
             if (ut >= 0 && ut != kind) continue;
             (ut == kind || (ut < 0 && fits (d)) ? primary : others).push_back (d);
         }
@@ -3704,21 +3674,6 @@ private:
         h.chooseRecFolder = [this] { chooseTapeFolder(); };
         h.scanPlugins = [this] { if (scanning) return; knownPlugins.clear(); startPluginScan(); };
         h.scanBusy = [this] { return scanning; };
-        h.pluginTypes = [this]
-        {
-            std::vector<SettingsScreen::PluginTypeRow> rows;
-            StringArray seen;
-            for (const auto& d : knownPlugins.getTypes())
-            {
-                const String key = d.createIdentifierString();
-                if (seen.contains (key)) continue;
-                seen.add (key);
-                rows.push_back ({ d.name, d.pluginFormatName, key, pluginTypeOf (key) });
-            }
-            std::sort (rows.begin(), rows.end(), [] (const auto& a, const auto& b) { return a.name.compareIgnoreCase (b.name) < 0; });
-            return rows;
-        };
-        h.pluginTypeSet = [this] (const String& key, int t) { setPluginType (key, t); };
         h.masterGet = [this] { return engine.masterPos.load(); };
         h.masterSet = [this] (float v) { engine.masterPos = v; };
         h.masterCcText = [this]() -> String { const int c = engine.masterCc.load(); return c != 0 ? pedalCodeText (c) : String(); };
