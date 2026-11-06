@@ -2239,7 +2239,7 @@ private:
     // Εικόνα από τον φάκελο του χρήστη (Music/Flow/Orb): τυχαίο αρχείο, κεντραρισμένο τετράγωνο, βαμμένο ολόκληρο με χρώματα Wada.
     // Το φωτεινό περιεχόμενο της εικόνας (luma, με αυτόματη επέκταση 2%–98%) αντιστοιχίζεται σε διαβάθμιση ανάμεσα στα 3-4 χρώματα ενός συνδυασμού Wada, ταξινομημένα από σκούρο σε ανοιχτό. Στο τέλος ο ίδιος λεπτός κόκκος με τη γεννήτρια.
     // Αν ο φάκελος δεν υπάρχει ή δεν έχει εικόνες, επιστρέφει κενή εικόνα (τότε δουλεύει η γεννήτρια).
-    static Image orbFromFolder (Random& rnd)
+    static Image orbFromFolder (Random& rnd, StringArray& used)
     {
         constexpr int N = 512;
         const auto dir = File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Orb");
@@ -2247,7 +2247,18 @@ private:
         Array<File> files;
         for (const auto& ext : { "*.png", "*.jpg", "*.jpeg" }) dir.findChildFiles (files, File::findFiles, false, ext);
         if (files.isEmpty()) return {};
-        const Image src = ImageFileFormat::loadFrom (files[rnd.nextInt (files.size())]);
+        // Χωρίς επανάληψη: διαλέγει μόνο από όσες δεν έχουν χρησιμοποιηθεί ακόμα· όταν τελειώσουν, ξαναρχίζει (χωρίς να βάλει πρώτη την τελευταία)
+        auto unused = [&] { Array<File> u; for (const auto& f : files) if (! used.contains (f.getFileName())) u.add (f); return u; };
+        auto pool = unused();
+        if (pool.isEmpty())
+        {
+            const String last = used.isEmpty() ? String() : used[used.size() - 1];
+            used.clear();
+            for (const auto& f : files) if (files.size() < 2 || f.getFileName() != last) pool.add (f);
+        }
+        const File chosen = pool[rnd.nextInt (pool.size())];
+        used.add (chosen.getFileName());
+        const Image src = ImageFileFormat::loadFrom (chosen);
         if (! src.isValid() || src.getWidth() < 2 || src.getHeight() < 2) return {};
 
         Image sq (Image::RGB, N, N, true);   // κεντραρισμένο τετράγωνο, διάφανες περιοχές πάνω σε λευκό
@@ -2302,7 +2313,10 @@ private:
     void autoOrbImage()
     {
         Random rnd;
-        Image im = orbFromFolder (rnd);                    // 1) δική σου εικόνα από Music/Flow/Orb, βαμμένη με Wada
+        auto* st = properties.getUserSettings();
+        StringArray used = StringArray::fromLines (st->getValue ("orbUsed"));
+        Image im = orbFromFolder (rnd, used);
+        st->setValue ("orbUsed", used.joinIntoString ("\n"));                    // 1) δική σου εικόνα από Music/Flow/Orb, βαμμένη με Wada
         if (! im.isValid()) im = orbGenerated (rnd);       // 2) αλλιώς η γεννήτρια
         setOrbImage (im, false);
     }
