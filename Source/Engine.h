@@ -139,7 +139,7 @@ namespace flow
                 volPos[b] = 1.0f; gainOut[b] = 1.0f;
                 volMap[b] = 0;
                 if (b < numPedals) pedalCc[(size_t) b] = 20 + b;
-                followBlock[b] = 1;
+                followBlock[b] = 1; followPolyBlock[b] = 0;
                 smartType[b] = 0; smartWidth[b] = 0.0f; smartNeedWidth[b] = 1.0f;
                 smartAutoT[b] = 0; for (int q = 0; q < 4; ++q) smartFeat[b][(size_t) q] = 0.0f;
                 for (int k = 0; k < smartBands; ++k) { smartBand[b][(size_t) k] = 0.0f; smartNeed[b][(size_t) k] = 0.0f; }
@@ -189,10 +189,12 @@ namespace flow
         std::atomic<int> followTRoot { 9 }, followTType { 1 };
         // Πολυφωνική μετάθεση: κάθε νότα που κρατάς (έως 3, οι χαμηλότερες) παίζει τη λούπα μεταφερμένη στη δική της ρίζα, με μειωμένη ένταση (1/√n)
         static constexpr int maxPolyVoices = 3;
-        std::atomic<int> followPoly { 0 }, followVoiceN { 0 };
+        std::atomic<int> followVoiceN { 0 };
         std::array<std::atomic<int>, maxPolyVoices> followVoiceRoot {};
         std::atomic<int> followHomeRoot { 9 }, followHomeType { 1 }, followHomeSet { 0 };   // τελευταία συγχορδία με σβηστό Follow (τονικότητα πηγής)           // κλίμακα-στόχος (από τη συγχορδία)
         std::array<std::atomic<int>, numBlocks> followBlock;             // 1 = το block ακολουθεί
+        std::array<std::atomic<int>, numBlocks> followPolyBlock;         // 1 = το block ακολουθεί πολυφωνικά (μόνο με followBlock = 1)
+        bool anyFollowPoly() const { for (int i = 0; i < numBlocks; ++i) if (followBlock[(size_t) i].load() != 0 && followPolyBlock[(size_t) i].load() != 0) return true; return false; }
         // Follow on/off (πλήκτρο B0 ή οθόνη): όταν ανάβει, η τελευταία συγχορδία που κράτησες με σβηστό Follow γίνεται η τονικότητα πηγής
         void toggleFollow() { setFollow (followOn.load() != 0 ? 0 : 1); }
         // Το κράτημα (Hold) μένει ενεργό: οι κρατημένες νότες μεταφέρονται στη νέα κλίμακα όταν αλλάζει η συγχορδία (βλ. followRetune)
@@ -1055,7 +1057,7 @@ namespace flow
                 const bool p = n < 64 ? ((lo >> n) & 1u) != 0 : ((hi >> (n - 64)) & 1u) != 0;
                 if (p && (mfBlock.load() < 0 || noteBelongsToMf (n))) { mask |= 1 << (n % 12); if (lowest < 0) lowest = n; }   // με MF: μόνο οι νότες του MF block
             }
-            if (followPoly.load() != 0 && followOn.load() != 0)
+            if (anyFollowPoly() && followOn.load() != 0)
             {
                 // πολυφωνικά: οι (έως 3) χαμηλότερες διαφορετικές νότες που κρατάς γίνονται οι φωνές. Όταν τις αφήσεις, μένουν οι τελευταίες.
                 int cnt = 0, seen = 0;
@@ -3032,7 +3034,7 @@ namespace flow
                         }
                         if (a.on)
                         {
-                            const bool poly = followPoly.load() != 0 && followOn.load() != 0 && followBlock[(size_t) b].load() != 0
+                            const bool poly = followPolyBlock[(size_t) b].load() != 0 && followOn.load() != 0 && followBlock[(size_t) b].load() != 0
                                               && b != mfBlock.load() && followVoiceN.load() > 0;
                             if (poly)
                             {

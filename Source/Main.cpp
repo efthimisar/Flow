@@ -195,7 +195,14 @@ public:
         loopsView.getTempoBox().onChange = [this] { dirty = true; };
         keyboardView.onSelect = [this] (int b) { selectBlock (b); };
         keyboardView.onRedoZone = [this] (int b) { selectBlock (b); engine.startZone (b); refreshAll(); };   // ⟲ στη σειρά του block: ξαναορίζει τη ζώνη
-        keyboardView.onToggleFollowBlock = [this] (int b) { engine.followBlock[(size_t) b] = engine.followBlock[(size_t) b].load() != 0 ? 0 : 1; saveNow(); keyboardView.repaint(); };
+        keyboardView.onToggleFollowBlock = [this] (int b)
+        {
+            // κύκλος: off → on → poly (πολυφωνική μετάθεση) → off
+            if (engine.followBlock[(size_t) b].load() == 0) { engine.followBlock[(size_t) b] = 1; engine.followPolyBlock[(size_t) b] = 0; }
+            else if (engine.followPolyBlock[(size_t) b].load() == 0) engine.followPolyBlock[(size_t) b] = 1;
+            else { engine.followBlock[(size_t) b] = 0; engine.followPolyBlock[(size_t) b] = 0; }
+            saveNow(); keyboardView.repaint();
+        };
         keyboardView.onToggleMf = [this] (int b) { engine.mfBlock = engine.mfBlock.load() == b ? -1 : b; saveNow(); refreshAll(); keyboardView.repaint(); };
         keyboardView.onHold = [this] (int b) { selectBlock (b); cycleHold (b); };
         keyboardView.onRemoveBlock = [this] (int b) { removeBlock (b); };
@@ -295,7 +302,6 @@ public:
         favPlugins.removeEmptyStrings();
         engine.masterPos = 1.0f;   // το master volume είναι πάντα 100%
         engine.followSetScale (settings->getIntValue ("followRoot", 9), settings->getIntValue ("followType", 1));
-        engine.followPoly = settings->getIntValue ("followPoly", 0);
         engine.smartOn = settings->getIntValue ("smartOn", 0) != 0 ? 1 : 0;
         engine.smartAccept = jlimit (0.0f, 1.0f, (float) settings->getDoubleValue ("smartAccept", 0.6));
         engine.masterCc = 0;
@@ -1416,7 +1422,7 @@ private:
             case 4: return "Change instrument";
             case 5: return "Special " + String::fromUTF8 ("\xc2\xb7 ") + (engine.isSp (b) ? "on" : "off");
             case 6: return "Master flow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.mfBlock.load() == b ? "on" : "off");
-            case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() != 0 ? "on" : "off");
+            case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() == 0 ? "off" : engine.followPolyBlock[(size_t) b].load() != 0 ? "poly" : "on");
             case 8: return "Set the zone again";
             default: return armed ? "Press again to delete" : "Delete block";
         }
@@ -3064,7 +3070,7 @@ private:
             engine.holdMode[(size_t) block] = 0;
             engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
             engine.curveMode[(size_t) block] = 0;
-            engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = rememberedSmartType (instName); if (engine.smartType[(size_t) block].load() == 6) engine.followBlock[(size_t) block] = 0; engine.smartResetApp (block); for (int oc = 0; oc < 4; ++oc) { orbAutoPat[(size_t) block][(size_t) oc] = -1; orbSettle[(size_t) block][(size_t) oc] = false; }
+            engine.followBlock[(size_t) block] = 1; engine.followPolyBlock[(size_t) block] = 0; engine.smartType[(size_t) block] = rememberedSmartType (instName); if (engine.smartType[(size_t) block].load() == 6) engine.followBlock[(size_t) block] = 0; engine.smartResetApp (block); for (int oc = 0; oc < 4; ++oc) { orbAutoPat[(size_t) block][(size_t) oc] = -1; orbSettle[(size_t) block][(size_t) oc] = false; }
             engine.volPos[(size_t) block] = 1.0f;
             engine.volMap[(size_t) block] = 0;
             engine.transpose[(size_t) block] = 0;
@@ -3255,7 +3261,7 @@ private:
         engine.holdMode[(size_t) block] = 0;
         engine.chordMode[(size_t) block] = 0; engine.chordTonic[(size_t) block] = -1; engine.blockOff[(size_t) block] = 0;
         engine.curveMode[(size_t) block] = 0;
-        engine.followBlock[(size_t) block] = 1; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block); for (int oc = 0; oc < 4; ++oc) { orbAutoPat[(size_t) block][(size_t) oc] = -1; orbSettle[(size_t) block][(size_t) oc] = false; }
+        engine.followBlock[(size_t) block] = 1; engine.followPolyBlock[(size_t) block] = 0; engine.smartType[(size_t) block] = 0; engine.smartResetApp (block); for (int oc = 0; oc < 4; ++oc) { orbAutoPat[(size_t) block][(size_t) oc] = -1; orbSettle[(size_t) block][(size_t) oc] = false; }
         engine.volPos[(size_t) block] = 1.0f;
         engine.volMap[(size_t) block] = 0;
         engine.transpose[(size_t) block] = 0;
@@ -3780,8 +3786,6 @@ private:
         h.followOnSet = [this] (int v) { engine.setFollow (v); saveNow(); refreshSmartTile(); };
         h.followRootGet = [this] { return engine.followRoot.load(); };
         h.followTypeGet = [this] { return engine.followType.load(); };
-        h.followPolyGet = [this] { return engine.followPoly.load(); };
-        h.followPolySet = [this] (int v) { engine.followPoly = v != 0 ? 1 : 0; saveNow(); };
         h.followRootSet = [this] (int v) { engine.followSetScale (v, engine.followType.load()); saveNow(); };
         h.followTypeSet = [this] (int v) { engine.followSetScale (engine.followRoot.load(), v); saveNow(); };
         h.followBlockSet = [this] (int b, bool excluded) { engine.followBlock[(size_t) b] = excluded ? 0 : 1; saveNow(); };
@@ -4025,6 +4029,7 @@ private:
             e->setAttribute ("curve", engine.curveMode[(size_t) b].load());
             e->setAttribute ("stype", engine.smartType[(size_t) b].load());
             e->setAttribute ("nofollow", engine.followBlock[(size_t) b].load() == 0 ? 1 : 0);
+            e->setAttribute ("fpoly", engine.followPolyBlock[(size_t) b].load());
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
             e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : engine.specialBlock2.load() == b ? 2 : 0);
             e->setAttribute ("mf", engine.mfBlock.load() == b ? 1 : 0);
@@ -4262,6 +4267,7 @@ private:
             // παλιό attribute "follow" αγνοείται: όλα ακολουθούν, εκτός από όσα το έχουν αποκλείσει ή είναι Drums
             engine.followBlock[(size_t) slot] = e->hasAttribute ("nofollow") ? (e->getIntAttribute ("nofollow", 0) != 0 ? 0 : 1)
                                                                               : (engine.smartType[(size_t) slot].load() == 6 ? 0 : 1);
+            engine.followPolyBlock[(size_t) slot] = engine.followBlock[(size_t) slot].load() != 0 ? jlimit (0, 1, e->getIntAttribute ("fpoly", 0)) : 0;
             engine.smartResetApp (slot);
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
             { const int spv = e->getIntAttribute ("special", 0); if (spv == 1) engine.specialBlock = slot; else if (spv >= 2) engine.specialBlock2 = slot; }
@@ -4680,7 +4686,6 @@ private:
         settings->setValue ("favPlugins", favPlugins.joinIntoString ("\n"));
         settings->setValue ("followRoot", engine.followRoot.load());
         settings->setValue ("followType", engine.followType.load());
-        settings->setValue ("followPoly", engine.followPoly.load());
         settings->setValue ("smartOn", engine.smartOn.load());
         settings->setValue ("smartAccept", (double) engine.smartAccept.load());
         settings->setValue ("metroChannel", engine.metroChannel.load());

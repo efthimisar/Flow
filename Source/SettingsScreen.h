@@ -71,8 +71,8 @@ public:
         std::function<int()> autoLoopGet;
         std::function<void (int)> autoLoopSet;
         std::function<std::vector<FollowBlock>()> followBlocks;
-        std::function<int()> followOnGet, followRootGet, followTypeGet, followPolyGet;
-        std::function<void (int)> followOnSet, followRootSet, followTypeSet, followPolySet;
+        std::function<int()> followOnGet, followRootGet, followTypeGet;
+        std::function<void (int)> followOnSet, followRootSet, followTypeSet;
         std::function<void (int, bool)> followBlockSet;
         std::function<std::vector<SmartBlock>()> smartBlocks;
         std::function<int()> smartOnGet;
@@ -1165,17 +1165,8 @@ private:
             g.drawText (on ? "Follow On" : "Follow Off", o, Justification::centred, false);
             hits.push_back ({ o, [this, on] { if (host.followOnSet) host.followOnSet (on ? 0 : 1); repaint(); } });
         }
-        {   // πολυφωνική μετάθεση: κάθε νότα που κρατάς (έως 3) παίζει τη λούπα στη δική της ρίζα, πιο σιγά
-            const bool poly = host.followPolyGet && host.followPolyGet() != 0;
-            const Rectangle<int> o (W - 40 - 150, 142, 150, 40);
-            g.setColour (poly ? Colour (0xff3c5a46) : Colour (0xff2a2725)); g.fillRoundedRectangle (o.toFloat(), 20.0f);
-            g.setColour (poly ? ok : lineC()); g.drawRoundedRectangle (o.toFloat().reduced (1.0f), 20.0f, poly ? 2.0f : 1.0f);
-            g.setColour (poly ? txt() : dim()); g.setFont (font (14.0f, true));
-            g.drawText (String::fromUTF8 ("Polyphonic \xc3\x973"), o, Justification::centred, false);
-            hits.push_back ({ o, [this, poly] { if (host.followPolySet) host.followPolySet (poly ? 0 : 1); repaint(); } });
-            g.setColour (dim()); g.setFont (font (12.0f));
-            g.drawText ("Polyphonic: hold up to 3 notes and each followed loop plays once per note, quieter.", 40, 160, W - 260, 18, Justification::centredLeft, false);
-        }
+        g.setColour (dim()); g.setFont (font (12.0f));
+        g.drawText ("Polyphonic: set it per block with the Follow circle in the block menu (off, on, poly).", 40, 160, W - 80, 18, Justification::centredLeft, false);
         // κάρτες block
         const auto blocks = host.followBlocks ? host.followBlocks() : std::vector<FollowBlock>();
         std::vector<int> idx;
