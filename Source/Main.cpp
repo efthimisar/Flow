@@ -879,7 +879,9 @@ private:
     void openWindowFor (AudioPluginInstance* p)
     {
         flow::flowLog ("openWindowFor: " + p->getName());
+        flow::flowLog ("openWindowFor: hasEditor=" + String (p->hasEditor() ? 1 : 0) + ", creating the editor");
         AudioProcessorEditor* e = p->hasEditor() ? p->createEditorIfNeeded() : nullptr;
+        flow::flowLog ("openWindowFor: editor " + String (e != nullptr ? "created" : "not available (generic editor)"));
         if (e == nullptr)
             e = new GenericAudioProcessorEditor (*p);
 
@@ -889,7 +891,9 @@ private:
         pluginWindows.clear();
 
         const String key = "pwpos_" + p->getName();
+        flow::flowLog ("openWindowFor: creating the window");
         auto w = std::make_unique<PluginWindow> (*this, p, windowTitle (p), e, key);
+        flow::flowLog ("openWindowFor: window created");
 
         docked = false;   // ελεύθερο παράθυρο
         {
@@ -928,6 +932,7 @@ private:
                 w->setTopLeftPosition (at);
             }
         }
+        flow::flowLog ("openWindowFor: showing the window");
         w->setVisible (true);
         w->toFront (true);
         if (w->centreUntil != 0) w->setCentrePosition (w->centreOn);
