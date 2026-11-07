@@ -360,7 +360,6 @@ private:
         std::vector<Tile> tiles {
             { 1, "Sets", false, false, [this] { showPage (Sets); } },
             { 9, "Loop recording", false, false, [this] { showPage (LoopRec); } },
-            { 12, "Follow", host.followOnGet && host.followOnGet() != 0, false, [this] { if (host.followOnSet) host.followOnSet ((host.followOnGet && host.followOnGet() != 0) ? 0 : 1); repaint(); } },
             { 15, "Orb knobs", false, false, {}, true, 13 },
             { 11, "Smart master", false, false, {}, true, 11 },
             { 4, "Rec Audio folder", false, false, [this] { showPage (RecFolder); } },
