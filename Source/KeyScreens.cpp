@@ -242,6 +242,8 @@ struct KeyScreens::Impl
     IOUSBInterfaceInterface300** intf = nullptr;
     UInt8 pipe = 0;
     std::unique_ptr<niservice::Session> svc;   // δρόμος μέσω του agent της NI (αν συνδέθηκε)
+    uint32_t svcPid = 0;                       // pid της συσκευής για την επανασύνδεση
+    int reclaims = 0;
 #endif
     std::thread worker;
     std::mutex m;
@@ -375,7 +377,7 @@ bool KeyScreens::start()
         {
             auto session = std::make_unique<niservice::Session>();
             const auto serr = session->connect (pid, [this] (const std::string& s) { log (juce::String (s)); });
-            if (serr.empty()) { impl->svc = std::move (session); log ("NI service route connected (" + juce::String (impl->svc->bootstrapUsed) + ", pid 0x" + juce::String::toHexString ((int) pid) + ")"); break; }
+            if (serr.empty()) { impl->svc = std::move (session); impl->svcPid = pid; impl->reclaims = 0; log ("NI service route connected (" + juce::String (impl->svc->bootstrapUsed) + ", pid 0x" + juce::String::toHexString ((int) pid) + ")"); break; }
             log ("NI service route not available for pid 0x" + juce::String::toHexString ((int) pid) + ": " + juce::String (serr));
             if (serr.find ("not running") != std::string::npos) break;
         }
@@ -390,6 +392,7 @@ bool KeyScreens::start()
     {
         std::vector<uint8_t> buf;
         int lastScreen = 1;
+        juce::uint32 lastReclaimMs = 0;
         for (;;)
         {
             int screen = -1;
@@ -413,7 +416,24 @@ bool KeyScreens::start()
             {
                 const auto e = impl->svc->sendDisplay (screen, buf);
                 if (e.empty()) { if (++impl->sent == 1) log ("first frame sent OK (NI service)"); }
-                else if (++impl->failed <= 3) log (juce::String (e));
+                else
+                {
+                    if (++impl->failed <= 3) log (juce::String (e));
+                    // Άλλος πελάτης (π.χ. το plugin Komplete Kontrol μέσα σε block) πήρε τις οθόνες: ξαναδηλώνεται το Flow ως πελάτης, το πολύ μία φορά ανά 2 s
+                    const auto nowMs = juce::Time::getMillisecondCounter();
+                    if (nowMs - lastReclaimMs >= 2000)
+                    {
+                        lastReclaimMs = nowMs;
+                        auto fresh = std::make_unique<niservice::Session>();
+                        const auto cerr = fresh->connect (impl->svcPid, [] (const std::string&) {});
+                        if (cerr.empty())
+                        {
+                            impl->svc = std::move (fresh);
+                            if (++impl->reclaims <= 5) log ("screens: re-registered with the NI service to take the screens back (" + juce::String (impl->reclaims) + ")");
+                        }
+                        else if (impl->reclaims++ < 5) log ("screens: re-register failed: " + juce::String (cerr));
+                    }
+                }
                 continue;
             }
             // κομμάτια πολλαπλάσια των 512 bytes (μέγιστο πακέτο USB high-speed), ώστε το τελευταίο κοντό πακέτο να σημαίνει το τέλος του transfer
