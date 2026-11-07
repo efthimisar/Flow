@@ -1124,8 +1124,8 @@ private:
                 switch (ctl)
                 {
                     case 1: s88MenuActivate(); s88BlockTouch(); return;
-                    case 2: if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, 1); s88BlockTouch(); return;    // transpose επιλεγμένο: κλίση πάνω = +1 οκτάβα
-                    case 3: if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, -1); s88BlockTouch(); return;   // κλίση κάτω = −1 οκτάβα
+                    case 2: if (s88MenuSel == 1) s88StepCurve (selected, 1); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, 1); s88BlockTouch(); return;    // transpose επιλεγμένο: κλίση πάνω = +1 οκτάβα
+                    case 3: if (s88MenuSel == 1) s88StepCurve (selected, -1); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, -1); s88BlockTouch(); return;   // κλίση κάτω = −1 οκτάβα
                     case 4: s88MenuSel = jmax (0, s88MenuSel - 1); s88BlockTouch(); return;
                     case 5: s88MenuSel = jmin (9, s88MenuSel + 1); s88BlockTouch(); return;
                     default: break;
@@ -1416,7 +1416,7 @@ private:
         switch (i)
         {
             case 0: { const int h = engine.holdMode[(size_t) b].load(); return "Hold " + String::fromUTF8 ("\xc2\xb7 ") + (h == 0 ? "off" : h == 1 ? "LM" : h == 2 ? "LP" : "AL"); }
-            case 1: return "Volume curve";
+            case 1: return "Volume curve " + String::fromUTF8 ("\xc2\xb7 ") + String (engine.curveMode[(size_t) b].load() + 1) + "/" + String (flow::numCurves) + "  (tilt up / down)";
             case 2: return "Transpose " + String::fromUTF8 ("\xc2\xb7 ") + (tr > 0 ? "+" : "") + String (tr) + "  (tilt up / down)";
             case 3: return "Live " + String::fromUTF8 ("\xc2\xb7 ") + (engine.liveSilent[(size_t) b].load() != 0 ? "silent" : "sounding");
             case 4: return "Change instrument";
@@ -1441,6 +1441,14 @@ private:
         }
     }
 
+    void s88StepCurve (int b, int dir)
+    {
+        if (! isActive (b)) return;
+        engine.curveMode[(size_t) b] = (engine.curveMode[(size_t) b].load() + dir + flow::numCurves) % flow::numCurves;
+        saveNow();
+        refreshAll();
+    }
+
     void s88MenuActivate()
     {
         const int b = selected;
@@ -1448,7 +1456,7 @@ private:
         switch (s88MenuSel)
         {
             case 0: if (keyboardView.onHold) keyboardView.onHold (b); break;
-            case 1: if (keyboardView.onCurve) keyboardView.onCurve (b); break;
+            case 1: engine.curveMode[(size_t) b] = 0; saveNow(); refreshAll(); break;   // πάτημα: πρώτη καμπύλη (+/− με κλίση πάνω/κάτω)
             case 2: if (keyboardView.onTranspose) keyboardView.onTranspose (b, 0); break;   // πάτημα: transpose στο 0 (+/− με κλίση πάνω/κάτω)
             case 3: if (keyboardView.onToggleSilent) keyboardView.onToggleSilent (b); break;
             case 4: if (keyboardView.onSwapInstrument) keyboardView.onSwapInstrument (b); break;
@@ -1516,7 +1524,19 @@ private:
             switch (i)
             {
                 case 0: gRt.drawText (h == 1 ? "LM" : h == 2 ? "LP" : h >= 3 ? "AL" : "H", r, Justification::centred, false); break;
-                case 1: gRt.drawLine (cx + 18.0f, cy + D - 18.0f, cx + D - 18.0f, cy + 18.0f, 3.0f); break;
+                case 1:   // η καμπύλη έντασης του block, όπως είναι τώρα
+                {
+                    const int cm = engine.curveMode[(size_t) b].load();
+                    Path cp;
+                    for (int k = 0; k <= 24; ++k)
+                    {
+                        const float xx = (float) k / 24.0f;
+                        const float px = cx + 16.0f + xx * (D - 32.0f), py = cy + D - 16.0f - flow::curveGain (cm, xx) * (D - 32.0f);
+                        if (k == 0) cp.startNewSubPath (px, py); else cp.lineTo (px, py);
+                    }
+                    gRt.strokePath (cp, PathStrokeType (3.0f));
+                    break;
+                }
                 case 2: gRt.drawText (tr > 0 ? "+" + String (tr) : String (tr), r, Justification::centred, false); break;
                 case 3:
                     gRt.drawText (String::fromUTF8 ("\xe2\x99\xaa"), r, Justification::centred, false);
