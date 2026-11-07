@@ -251,6 +251,7 @@ struct KeyScreens::Impl
     std::vector<uint8_t> pending[2];
     bool has[2] = { false, false };
     std::atomic<bool> quit { false };
+    std::atomic<bool> reclaimNow { false };    // ζητήθηκε χειροκίνητη επανάκτηση των οθονών (κουμπί MIDI του S88)
     int sent = 0, failed = 0;
 };
 
@@ -398,8 +399,24 @@ bool KeyScreens::start()
             int screen = -1;
             {
                 std::unique_lock<std::mutex> lk (impl->m);
-                impl->cv.wait (lk, [this] { return impl->quit.load() || impl->has[0] || impl->has[1]; });
+                impl->cv.wait (lk, [this] { return impl->quit.load() || impl->reclaimNow.load() || impl->has[0] || impl->has[1]; });
                 if (impl->quit.load()) return;
+                if (impl->reclaimNow.exchange (false))
+                {
+                    // χειροκίνητη επανάκτηση: ξαναδηλώνεται το Flow αμέσως και ξαναστέλνονται τα τελευταία καρέ
+                    lk.unlock();
+                    if (impl->svc != nullptr)
+                    {
+                        auto fresh = std::make_unique<niservice::Session>();
+                        const auto cerr = fresh->connect (impl->svcPid, [] (const std::string&) {});
+                        if (cerr.empty()) { impl->svc = std::move (fresh); log ("screens: re-registered by the MIDI button to take the screens back"); }
+                        else log (juce::String ("screens: re-register (MIDI button) failed: ") + juce::String (cerr));
+                    }
+                    lk.lock();
+                    if (! impl->pending[0].empty()) impl->has[0] = true;
+                    if (! impl->pending[1].empty()) impl->has[1] = true;
+                    if (! impl->has[0] && ! impl->has[1]) continue;
+                }
                 const int other = 1 - lastScreen;   // εναλλάσσονται οι οθόνες: αλλιώς η αριστερή, που ανανεώνεται συνεχώς, άφηνε τη δεξιά να παίρνει καρέ σπάνια
                 screen = impl->has[other] ? other : lastScreen;
                 lastScreen = screen;
@@ -488,6 +505,13 @@ void KeyScreens::stop()
     }
 #endif
     active = false;
+}
+
+void KeyScreens::reclaim()
+{
+    if (! active) return;
+    impl->reclaimNow = true;
+    impl->cv.notify_one();
 }
 
 void KeyScreens::submit (int screen, const uint8_t* pixels)

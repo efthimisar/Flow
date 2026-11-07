@@ -26,6 +26,7 @@ public:
     bool start();
     void stop();
     // pixels = 480*272 λέξεις 16 bit, ήδη σε BGR565 big-endian (261.120 bytes). screen: 0 = αριστερά, 1 = δεξιά. Κρατά μόνο το πιο πρόσφατο καρέ.
+    void reclaim();   // ξαναπαίρνει τις οθόνες (όταν τις έχει πάρει άλλος πελάτης, π.χ. το plugin Komplete Kontrol)
     void submit (int screen, const uint8_t* pixels);
 
 private:

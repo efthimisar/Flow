@@ -1084,6 +1084,7 @@ private:
             return;
         }
         if (v == 0) return;   // μόνο πάτημα
+        if (ctl == 10) { keyScreens.reclaim(); return; }   // κουμπί MIDI του S88: ξαναπαίρνει τις οθόνες αν τις έχει πάρει το Komplete Kontrol
         if (listOpen)
         {
             switch (ctl)
