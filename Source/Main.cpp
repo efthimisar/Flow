@@ -2091,15 +2091,14 @@ private:
     {
         auto* p = engine.getPlugin (block);
         if (p == nullptr) return;
-        std::vector<std::pair<int, int>> found;   // (αριθμός macro, δείκτης παραμέτρου)
+        std::vector<std::pair<int, int>> found;   // (σειρά, δείκτης παραμέτρου)
         auto& params = p->getParameters();
         for (int i = 0; i < params.size(); ++i)
         {
             const auto nm = params[i]->getName (64);
             const int at = nm.toLowerCase().indexOf ("macro");
             if (at < 0) continue;
-            const int num = nm.substring (at + 5).retainCharacters ("0123456789").getIntValue();
-            found.push_back ({ num > 0 ? num : 1000 + i, i });
+            found.push_back ({ i, i });   // με τη σειρά που τα δηλώνει το plugin (το Massive X έχει ονόματα σαν «Macro A1», οπότε ο αριθμός μόνος του δεν αρκεί)
         }
         if (found.empty()) return;
         std::sort (found.begin(), found.end());
