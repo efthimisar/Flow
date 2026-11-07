@@ -45,7 +45,6 @@ public:
           metroTile (Symbol::Tempo, typeface),
           folderTile (Symbol::Menu, typeface),
           smartTile (Symbol::Rings, typeface),
-          followTile (Symbol::Follow, typeface),
           motionTile (Symbol::Orb, typeface)
     {
         PropertiesFile::Options options;
@@ -154,17 +153,6 @@ public:
             else { metroSamplePath = {}; engine.setMetroSample (AudioBuffer<float>()); saveNow(); }
         };
         folderTile.onClick = [this] { if (settingsScreen.isVisible()) settingsScreen.close(); else openSettingsScreen(); refreshSmartTile(); };
-        followTile.setTooltip (gr ("Follow: the loops of the blocks you choose follow the chord you play, in the scale you set (fourth screen). Key B7 turns it on and off"));
-        followTile.onClick = [this]
-        {
-            if (settingsScreen.isFollowDirect()) { settingsScreen.close(); return; }
-            loopsView.openMenu (false);
-            if (audioPanel.isVisible()) audioPanel.close();
-            settingsScreen.setBounds (loopsBezel.reduced (5));
-            settingsScreen.openFollow();
-            settingsScreen.grabKeyboardFocus();
-            refreshSmartTile();
-        };
         smartTile.setTooltip (gr ("Smart master: level of six bands and stereo width of every block, with suggestions by sound type (third screen)"));
         smartTile.onClick = [this]
         {
@@ -3686,7 +3674,6 @@ private:
         motionTile.setIconColour (orbRecArmed ? hobby::kRed : dim);
         folderTile.setIconColour (settingsScreen.isVisible() ? white : dim);
         smartTile.setIconColour (settingsScreen.isSmartDirect() ? white : dim);
-        followTile.setIconColour (settingsScreen.isFollowDirect() || engine.followOn.load() != 0 ? white : dim);
     }
 
     void openSettingsScreen()
@@ -3838,24 +3825,6 @@ private:
         h.loopFitSet = [this] (int v) { engine.loopFit = v; saveNow(); };
         h.tapMsGet = [this] { return engine.tapMs.load(); };
         h.tapMsSet = [this] (int v) { engine.tapMs = v; saveNow(); };
-        h.followBlocks = [this]
-        {
-            std::vector<SettingsScreen::FollowBlock> v ((size_t) flow::numBlocks);
-            for (int b = 0; b < flow::numBlocks; ++b)
-            {
-                auto& x = v[(size_t) b];
-                if (auto* p = engine.getPlugin (b)) { x.active = true; x.name = p->getName(); }
-                x.on = engine.followBlock[(size_t) b].load() == 0;   // ON = αποκλείεται (δεν ακολουθεί)
-            }
-            return v;
-        };
-        h.followOnGet = [this] { return engine.followOn.load(); };
-        h.followOnSet = [this] (int v) { engine.setFollow (v); saveNow(); refreshSmartTile(); };
-        h.followRootGet = [this] { return engine.followRoot.load(); };
-        h.followTypeGet = [this] { return engine.followType.load(); };
-        h.followRootSet = [this] (int v) { engine.followSetScale (v, engine.followType.load()); saveNow(); };
-        h.followTypeSet = [this] (int v) { engine.followSetScale (engine.followRoot.load(), v); saveNow(); };
-        h.followBlockSet = [this] (int b, bool excluded) { engine.followBlock[(size_t) b] = excluded ? 0 : 1; saveNow(); };
         h.smartBlocks = [this]
         {
             std::vector<SettingsScreen::SmartBlock> v ((size_t) flow::numBlocks);
@@ -5216,7 +5185,7 @@ private:
         void timerCallback() override { if (f) f(); }
     } paletteTimer;
     bool audioFromSettings = false;
-    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile, smartTile, followTile, motionTile;
+    ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile, smartTile, motionTile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

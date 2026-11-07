@@ -20,7 +20,6 @@ public:
         float width = 0, needW = 1, appW = 1;
         juce::Colour colour { juce::Colour (0xffe6c85f) };   // χρώμα του block
     };
-    struct FollowBlock { bool active = false; juce::String name; bool on = false; };
     struct SetInfo { juce::String name, date; juce::Image thumb; bool current = false; juce::File file; };
 
     struct ToolItem { juce::String glyph, label, tip; juce::Colour colour; bool enabled = true, armed = false; std::function<void()> fn; };
@@ -70,10 +69,6 @@ public:
         std::function<void (int)> startQSet, lengthQSet, tapMsSet, snapQSet, loopFitSet;
         std::function<int()> autoLoopGet;
         std::function<void (int)> autoLoopSet;
-        std::function<std::vector<FollowBlock>()> followBlocks;
-        std::function<int()> followOnGet, followRootGet, followTypeGet;
-        std::function<void (int)> followOnSet, followRootSet, followTypeSet;
-        std::function<void (int, bool)> followBlockSet;
         std::function<std::vector<SmartBlock>()> smartBlocks;
         std::function<int()> smartOnGet;
         std::function<float()> smartAcceptGet;
@@ -114,14 +109,7 @@ public:
         direct = true; page = Smart;
         repaint();
     }
-    void openFollow()
-    {
-        open();
-        direct = true; page = Follow;
-        repaint();
-    }
     bool isSmartDirect() const { return isVisible() && direct && page == Smart; }
-    bool isFollowDirect() const { return isVisible() && direct && page == Follow; }
     void open()
     {
         direct = false;
@@ -151,7 +139,7 @@ public:
         g.setColour (hobby::kScreen);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 
-        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "FOLLOW", "BLOCK TOOLS", "ORB KNOBS", "SETS", "VOLUME PEDALS", "MY PLUGINS" };
+        static const char* titles[] = { "SETTINGS", "SAVE SET", "LOAD SET", "RESTORE LAST SESSION", "REC AUDIO FOLDER", "MASTER OUTPUT", "PANIC", "ORB IMAGES", "LOOP RECORDING", "MIDI LEARN", "WINDOW SIZE", "SMART MASTER", "BLOCK TOOLS", "ORB KNOBS", "SETS", "VOLUME PEDALS", "MY PLUGINS" };
         g.setColour (dim()); g.setFont (font (13.0f, true));
         g.drawText (titles[(int) page], 40, 26, 500, 20, Justification::centredLeft, false);
         {
@@ -177,7 +165,6 @@ public:
             case Learn:  paintLearn (g); break;
             case WindowSize: paintWindowSize (g); break;
             case Smart: paintSmart (g); break;
-            case Follow: paintFollow (g); break;
             case Tools:  paintTools (g); break;
             case OrbKnobs: paintOrbKnobs (g); break;
             case Sets:   paintSets (g); break;
@@ -223,7 +210,7 @@ public:
     }
 
 private:
-    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, OrbImages, LoopRec, Learn, WindowSize, Smart, Follow, Tools, OrbKnobs, Sets, Pedals, Plugins };
+    enum Page { Home = 0, Save, Load, Restore, RecFolder, Master, Panic, OrbImages, LoopRec, Learn, WindowSize, Smart, Tools, OrbKnobs, Sets, Pedals, Plugins };
     struct Hit { juce::Rectangle<int> r; std::function<void()> fn; };
     Page backPage() const { return (page == Save || page == Load || page == Restore) ? Sets : Home; }
 
@@ -471,62 +458,6 @@ private:
             y += rowH;
         }
         if (! any) { g.setColour (dim()); g.setFont (font (13.0f)); g.drawText ("No block has an instrument yet.", rc.getX(), rc.getY(), rc.getWidth(), 20, Justification::centredLeft, false); }
-    }
-
-    void cardsFollow (juce::Graphics& g, juce::Rectangle<int> L, juce::Rectangle<int> R)
-    {
-        using namespace juce;
-        const bool on = host.followOnGet && host.followOnGet() != 0;
-        const int root = host.followRootGet ? host.followRootGet() : 9;
-        const int type = host.followTypeGet ? host.followTypeGet() : 1;
-        static const char* notes[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-        auto c = cardHeader (g, L, "Follow");
-        const int w2 = (c.getWidth() - 8) / 2;
-        smallPill (g, { c.getX(), c.getY(), w2, 34 }, "Off", ! on, [this] { if (host.followOnSet) host.followOnSet (0); repaint(); });
-        smallPill (g, { c.getX() + w2 + 8, c.getY(), w2, 34 }, "On", on, [this] { if (host.followOnSet) host.followOnSet (1); repaint(); });
-        g.setColour (dim()); g.setFont (font (12.0f)); g.drawText ("Scale of the loops you record", c.getX(), c.getY() + 46, c.getWidth(), 16, Justification::centredLeft, false);
-        const int cw = c.getWidth() / 4;
-        const int rd = jmin (36, cw - 6);
-        for (int i = 0; i < 12; ++i)
-        {
-            const Rectangle<int> r (c.getX() + (i % 4) * cw + (cw - rd) / 2, c.getY() + 68 + (i / 4) * (rd + 6), rd, rd);
-            const bool sel = i == root;
-            g.setColour (sel ? Colour (0xff3c5a46) : Colour (0xff36322f)); g.fillEllipse (r.toFloat());
-            g.setColour (sel ? hobby::kOn : lineC()); g.drawEllipse (r.toFloat().reduced (0.5f), sel ? 1.8f : 1.0f);
-            g.setColour (sel ? txt() : dim()); g.setFont (font (13.0f, sel));
-            g.drawText (notes[i], r, Justification::centred, false);
-            hits.push_back ({ r, [this, i] { if (host.followRootSet) host.followRootSet (i); repaint(); } });
-        }
-        const int ty = c.getY() + 68 + 3 * (rd + 6) + 6;
-        smallPill (g, { c.getX(), ty, w2, 34 }, "Major", type == 0, [this] { if (host.followTypeSet) host.followTypeSet (0); repaint(); });
-        smallPill (g, { c.getX() + w2 + 8, ty, w2, 34 }, "Minor", type == 1, [this] { if (host.followTypeSet) host.followTypeSet (1); repaint(); });
-
-        auto rc = cardHeader (g, R, "Blocks that not follow");
-        const auto blocks = host.followBlocks ? host.followBlocks() : std::vector<FollowBlock>();
-        int y = rc.getY();
-        bool any = false;
-        for (int b = 0; b < (int) blocks.size(); ++b)
-        {
-            const auto& B = blocks[(size_t) b];
-            if (! B.active || y + 40 > rc.getBottom() + 6) continue;
-            any = true;
-            g.setColour (Colour (0xff3a3632)); g.fillEllipse ((float) rc.getX(), (float) y + 5.0f, 28.0f, 28.0f);
-            g.setColour (txt()); g.setFont (font (13.0f, true)); g.drawText (String (b + 1), rc.getX(), y + 5, 28, 28, Justification::centred, false);
-            g.setFont (font (13.0f)); g.drawText (B.name, rc.getX() + 36, y + 5, rc.getWidth() - 36 - 70, 28, Justification::centredLeft, true);
-            const Rectangle<int> sw (rc.getRight() - 58, y + 8, 54, 24);
-            g.setColour (B.on ? Colour (0xff5a3c3c) : Colour (0xff242220)); g.fillRoundedRectangle (sw.toFloat(), 12.0f);
-            g.setColour (B.on ? hobby::kRed : lineC()); g.drawRoundedRectangle (sw.toFloat().reduced (0.5f), 12.0f, 1.5f);
-            g.setColour (B.on ? txt() : dim());
-            g.fillEllipse ((float) (B.on ? sw.getRight() - 22 : sw.getX() + 3), (float) sw.getY() + 3.0f, 18.0f, 18.0f);
-            hits.push_back ({ sw.expanded (4), [this, b, on2 = B.on] { if (host.followBlockSet) host.followBlockSet (b, ! on2); repaint(); } });
-            y += 40;
-        }
-        if (! any) { g.setColour (dim()); g.setFont (font (13.0f)); g.drawText ("No block has an instrument yet.", rc.getX(), rc.getY(), rc.getWidth(), 20, Justification::centredLeft, false); }
-        else
-        {
-            g.setColour (dim()); g.setFont (font (11.0f));
-            g.drawFittedText ("All blocks follow. Switch a block ON to leave it out. Hold a chord of 3+ notes. Key B0 turns Follow on and off.", rc.getX(), rc.getBottom() - 30, rc.getWidth(), 30, Justification::centredLeft, 2);
-        }
     }
 
     void toolCircles (juce::Graphics& g, juce::Rectangle<int> c, const std::vector<ToolItem>& items, int from, int to)
@@ -1118,92 +1049,6 @@ private:
             g.setColour (Colour (0xffe6e0d8));
             g.drawLine (cx + dx * (r - thick * 0.5f - 2.0f), cy + dy * (r - thick * 0.5f - 2.0f), cx + dx * (r + thick * 0.5f + 2.0f), cy + dy * (r + thick * 0.5f + 2.0f), 1.6f);
         }
-    }
-
-    void paintFollow (juce::Graphics& g)
-    {
-        using namespace juce;
-        const Colour ok = hobby::kOn;
-        const int W = getWidth(), H = getHeight();
-        const bool on = host.followOnGet && host.followOnGet() != 0;
-        const int root = host.followRootGet ? host.followRootGet() : 9;
-        const int type = host.followTypeGet ? host.followTypeGet() : 1;
-        static const char* notes[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-        static const char* types[] = { "Major", "Minor", "Harmonic minor" };
-        g.setColour (txt()); g.setFont (font (14.0f, true));
-        g.drawText ("Scale of the loops you record", 40, 52, 400, 20, Justification::centredLeft, false);
-        const int cwid = jmin (52, (W - 80 - 280) / 12);
-        for (int i = 0; i < 12; ++i)
-        {
-            const Rectangle<int> r (40 + i * cwid, 78, cwid - 6, 30);
-            const bool sel = i == root;
-            g.setColour (sel ? Colour (0xff3c5a46) : Colour (0xff242220)); g.fillRoundedRectangle (r.toFloat(), 15.0f);
-            g.setColour (sel ? ok : lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 15.0f, sel ? 1.6f : 1.0f);
-            g.setColour (sel ? txt() : dim()); g.setFont (font (12.5f, sel));
-            g.drawText (notes[i], r, Justification::centred, false);
-            hits.push_back ({ r, [this, i] { if (host.followRootSet) host.followRootSet (i); repaint(); } });
-        }
-        const int tw = jmin (130, (W - 80 - 280) / 3);
-        for (int i = 0; i < 3; ++i)
-        {
-            const Rectangle<int> r (40 + i * tw, 116, tw - 6, 30);
-            const bool sel = i == type;
-            g.setColour (sel ? Colour (0xff3c5a46) : Colour (0xff242220)); g.fillRoundedRectangle (r.toFloat(), 15.0f);
-            g.setColour (sel ? ok : lineC()); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 15.0f, sel ? 1.6f : 1.0f);
-            g.setColour (sel ? txt() : dim()); g.setFont (font (12.0f, sel));
-            g.drawText (types[i], r, Justification::centred, false);
-            hits.push_back ({ r, [this, i] { if (host.followTypeSet) host.followTypeSet (i); repaint(); } });
-        }
-        g.setColour (ok); g.setFont (font (22.0f, true));
-        g.drawText (String (notes[jlimit (0, 11, root)]) + " " + String (types[jlimit (0, 2, type)]).toLowerCase(), W - 40 - 230, 52, 230, 30, Justification::centredRight, false);
-        {   // γενικός διακόπτης (το ίδιο κάνει το πλήκτρο B7)
-            const Rectangle<int> o (W - 40 - 150, 96, 150, 40);
-            g.setColour (on ? Colour (0xff3c5a46) : Colour (0xff2a2725)); g.fillRoundedRectangle (o.toFloat(), 20.0f);
-            g.setColour (on ? ok : lineC()); g.drawRoundedRectangle (o.toFloat().reduced (1.0f), 20.0f, on ? 2.0f : 1.0f);
-            g.setColour (on ? txt() : dim()); g.setFont (font (14.0f, true));
-            g.drawText (on ? "Follow On" : "Follow Off", o, Justification::centred, false);
-            hits.push_back ({ o, [this, on] { if (host.followOnSet) host.followOnSet (on ? 0 : 1); repaint(); } });
-        }
-        g.setColour (dim()); g.setFont (font (12.0f));
-        g.drawText ("Polyphonic: set it per block with the Follow circle in the block menu (off, on, poly).", 40, 160, W - 80, 18, Justification::centredLeft, false);
-        // κάρτες block
-        const auto blocks = host.followBlocks ? host.followBlocks() : std::vector<FollowBlock>();
-        std::vector<int> idx;
-        for (int b = 0; b < (int) blocks.size(); ++b) if (blocks[(size_t) b].active) idx.push_back (b);
-        const int top = 196, bottom = H - 30;
-        if (idx.empty())
-        {
-            g.setColour (dim()); g.setFont (font (14.0f));
-            g.drawText ("No block has an instrument yet.", 40, top + 10, W - 80, 24, Justification::centredLeft, false);
-        }
-        else
-        {
-            const int n = (int) idx.size(), gap = 12;
-            const int cw = jmin (260, (W - 80 - (n - 1) * gap) / n), ch = jlimit (70, 130, bottom - top);
-            for (int q = 0; q < n; ++q)
-            {
-                const int b = idx[(size_t) q];
-                const auto& B = blocks[(size_t) b];
-                const Rectangle<int> c (40 + q * (cw + gap), top, cw, ch);
-                g.setColour (card()); g.fillRoundedRectangle (c.toFloat(), 14.0f);
-                g.setColour (B.on ? hobby::kRed : lineC()); g.drawRoundedRectangle (c.toFloat().reduced (1.0f), 14.0f, B.on ? 2.0f : 1.0f);
-                g.setColour (dim()); g.setFont (font (11.0f, true));
-                g.drawText ("Block " + String (b + 1), c.getX() + 14, c.getY() + 10, cw - 28, 14, Justification::centredLeft, false);
-                g.setColour (txt()); g.setFont (font (15.0f, true));
-                g.drawText (B.name, c.getX() + 14, c.getY() + 26, cw - 100, 20, Justification::centredLeft, true);
-                const Rectangle<int> sw (c.getRight() - 14 - 62, c.getY() + 18, 62, 28);
-                g.setColour (B.on ? Colour (0xff5a3c3c) : Colour (0xff242220)); g.fillRoundedRectangle (sw.toFloat(), 14.0f);
-                g.setColour (B.on ? hobby::kRed : lineC()); g.drawRoundedRectangle (sw.toFloat().reduced (0.5f), 14.0f, 1.5f);
-                g.setColour (B.on ? txt() : dim());
-                g.fillEllipse ((float) (B.on ? sw.getRight() - 24 : sw.getX() + 4), (float) sw.getY() + 4.0f, 20.0f, 20.0f);
-                hits.push_back ({ sw.expanded (4), [this, b, B] { if (host.followBlockSet) host.followBlockSet (b, ! B.on); repaint(); } });
-                g.setColour (B.on ? hobby::kRed : ok); g.setFont (font (11.5f));
-                if (ch >= 90) g.drawText (B.on ? "does not follow" : "follows the chord", c.getX() + 14, c.getBottom() - 34, cw - 28, 18, Justification::centredLeft, true);
-            }
-        }
-        g.setColour (dim()); g.setFont (font (11.0f));
-        g.drawFittedText ("All blocks follow; switch a block ON to leave it out (Drums are left out automatically). Hold a chord of 3+ notes to set the scale. Key B7 turns Follow on and off.",
-                          40, H - 24, W - 80, 16, Justification::centredLeft, 1);
     }
 
     void paintSmart (juce::Graphics& g)
