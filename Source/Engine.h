@@ -1155,18 +1155,25 @@ namespace flow
         }
 
         // η συγχορδία που κρατάς (τουλάχιστον 3 διαφορετικές νότες) ορίζει τη νέα ρίζα και τον τύπο (μείζονα / ελάσσονα)
+        uint64_t tgtPrevLo = 0, tgtPrevHi = 0;
         void followUpdateTarget()
         {
             const uint64_t lo = pressBits[0].load(), hi = pressBits[1].load();
+            const bool newPress = ((lo & ~tgtPrevLo) | (hi & ~tgtPrevHi)) != 0;
+            tgtPrevLo = lo; tgtPrevHi = hi;
+            // Ο στόχος αλλάζει μόνο όταν πατηθεί νέο πλήκτρο. Όταν αφήνεις τη συγχορδία, τα πλήκτρα δεν σηκώνονται ταυτόχρονα
+            // και η «χαμηλότερη νότα που έμεινε» θα έσερνε τη ρίζα σε άλλη νότα (τα latched blocks γύριζαν σε λάθος νότα).
+            if (! newPress) return;
             int mask = 0, lowest = -1;
             for (int n = 0; n < 128; ++n)
             {
                 const bool p = n < 64 ? ((lo >> n) & 1u) != 0 : ((hi >> (n - 64)) & 1u) != 0;
                 if (p && (mfBlock.load() < 0 || noteBelongsToMf (n))) { mask |= 1 << (n % 12); if (lowest < 0) lowest = n; }   // με MF: μόνο οι νότες του MF block
             }
+            const int pcs = (int) std::bitset<12> ((unsigned) mask).count();
             if (anyFollowPoly() && followOn.load() != 0)
             {
-                // πολυφωνικά: οι (έως 3) χαμηλότερες διαφορετικές νότες που κρατάς γίνονται οι φωνές. Όταν τις αφήσεις, μένουν οι τελευταίες.
+                // πολυφωνικά (λούπες): οι (έως 3) χαμηλότερες διαφορετικές νότες που κρατάς γίνονται οι φωνές. Όταν τις αφήσεις, μένουν οι τελευταίες.
                 int cnt = 0, seen = 0;
                 for (int n = 0; n < 128 && cnt < maxPolyVoices; ++n)
                 {
@@ -1178,12 +1185,11 @@ namespace flow
                 if (cnt > 0)
                 {
                     followVoiceN = cnt;
-                    followTRoot = followVoiceRoot[0].load();
-                    followTType = followType.load();
+                    if (pcs < 3) { followTRoot = followVoiceRoot[0].load(); followTType = followType.load(); }
                 }
-                return;
+                // με 3+ νότες συνεχίζει παρακάτω: ρίζα και τύπος της συγχορδίας για τα live (latched) blocks
             }
-            if (std::bitset<12> ((unsigned) mask).count() < 3) return;
+            if (pcs < 3) return;
             const int root = lowest % 12;
             const bool m3 = ((mask >> ((root + 3) % 12)) & 1) != 0, M3 = ((mask >> ((root + 4) % 12)) & 1) != 0;
             const int type = (m3 && ! M3) ? 1 : (M3 && ! m3) ? 0 : followType.load();
