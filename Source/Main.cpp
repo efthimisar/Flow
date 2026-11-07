@@ -1085,7 +1085,7 @@ private:
         {
             if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
             else if (s88RingsOpen) { s88Ring = jlimit (0, 3, s88Ring + (v > 0 ? 1 : -1)); s88Slot = 0; }
-            else if (engine.pendingBlock() < 0 && s88BlockVisible()) { s88MenuSel = jlimit (0, 10, s88MenuSel + (v > 0 ? 1 : -1)); s88BlockTouch(); }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
+            else if (engine.pendingBlock() < 0 && s88BlockVisible() && ! s88MacrosOpen) { s88MenuSel = jlimit (0, 10, s88MenuSel + (v > 0 ? 1 : -1)); s88BlockTouch(); }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
             return;
         }
         if (v == 0) return;   // μόνο πάτημα
@@ -1112,7 +1112,7 @@ private:
                 default: break;
             }
         }
-        if (! listOpen && ! s88RingsOpen && engine.pendingBlock() < 0 && isActive (selected))
+        if (! listOpen && ! s88RingsOpen && ! s88MacrosOpen && engine.pendingBlock() < 0 && isActive (selected))
         {
             if (s88BlockVisible())
             {
@@ -1133,6 +1133,7 @@ private:
             s88RingsOpen = false;
             if (knobStage != 0) stopKnobLearn();
         }
+        if (s88MacrosOpen && ctl >= 35 && ctl <= 39) s88MacrosOpen = false;   // άλλο κουμπί (Block, VST, MIDI FX, FX, Orb Rings) κλείνει την οθόνη Macros
         switch (ctl)
         {
             case 35: blockTile.triggerClick(); break;
@@ -1140,7 +1141,10 @@ private:
             case 37: mfxTile.triggerClick(); break;
             case 38: fxTile.triggerClick(); break;
             case 39: if (! s88RingsOpen) { s88RingsOpen = true; s88Ring = 0; s88Slot = 0; } else motionTile.triggerClick(); break;   // 1ο πάτημα: οθόνη Orb Rings· 2ο: Rec motion (η οθόνη μένει)
-            case 40: folderTile.triggerClick(); break;
+            case 40:   // Macros: αριστερά η οθόνη του block, δεξιά τα 8 macros του VST (κουμπιά 1–8). Ξανά πάτημα ή Block τα κλείνει
+                if (s88MacrosOpen) { s88MacrosOpen = false; s88BlockTouch(); }
+                else if (isActive (selected) && engine.pendingBlock() < 0) { ensureKnobs (selected); syncKnobView(); s88MacrosOpen = true; s88BlockTouch(); }
+                break;
             case 41: paletteTile.onDice(); break;
             case 42: paletteTile.onCamera(); break;
             default: break;
@@ -1282,7 +1286,7 @@ private:
 
     void drawS88Strip (Graphics& g, int screen)
     {
-        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "Settings", "Dice", "Keep" };
+        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "Macros", "Dice", "Keep" };
         g.setColour (Colour (0xff1c1a19).withAlpha (0.75f));   // 75% αδιαφάνεια: το σχέδιο φαίνεται αχνά από πίσω
         g.fillRect (0, 0, KeyScreens::width, s88StripH);
         g.setFont (hobby::makeFont (typeface, 22.0f).boldened());
@@ -1290,6 +1294,11 @@ private:
         {
             g.setColour (screen * 4 + i == 4 && s88Blink ? hobby::kRed : Colour (0xffe8e4e0));   // Rec motion οπλισμένο: η λέξη Orb Rings αναβοσβήνει κόκκινη
             g.drawText (words[screen * 4 + i], Rectangle<int> (i * 120 + s88WordShift, 0, 120, s88StripH), Justification::centred, false);
+            if (screen * 4 + i == 5 && s88MacrosOpen)   // οθόνη Macros ενεργή: πλαίσιο γύρω από τη λέξη
+            {
+                g.setColour (Colours::white);
+                g.drawRoundedRectangle ((float) (i * 120 + s88WordShift + 8), 6.0f, 104.0f, (float) s88StripH - 12.0f, 8.0f, 2.0f);
+            }
         }
     }
 
@@ -1394,7 +1403,7 @@ private:
     }
 
     String s88Sig;
-    bool s88RingsOpen = false, s88Blink = false;
+    bool s88RingsOpen = false, s88Blink = false, s88MacrosOpen = false;
     int s88Ring = 0, s88Slot = 0;   // επιλεγμένο ring (0..3) και θέση παραμέτρου (0..3)
     int s88WallTop = 0;   // πρώτη ορατή σειρά του τοίχου
 
@@ -1504,6 +1513,54 @@ private:
         return s;
     }
 
+    // 8 macros του VST (θέσεις 1–8 των κουμπιών): δαχτυλίδι με την τιμή, από κάτω το όνομα. Κενή θέση = παύλα
+    String s88MacrosSig()
+    {
+        const int b = selected;
+        String pn; bool hasSnap = false;
+        if (auto* pl = engine.getPlugin (b)) { pn = pl->getName(); hasSnap = thumbFor (pn).isValid(); }
+        String s = "BM" + String (b) + "," + String (engine.lo[(size_t) b].load()) + "," + String (engine.hi[(size_t) b].load()) + ","
+                   + String ((int) (engine.volPos[(size_t) b].load() * 200.0f)) + "," + pn + "," + String ((int) hasSnap) + ",";
+        for (int k = 0; k < 8; ++k)
+        {
+            if (auto* p = knobTarget (k)) s += p->getName (16) + String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "|";
+            else s += "-|";
+        }
+        return s;
+    }
+
+    void drawS88MacroPanel (Graphics& g, int b, Colour bcol)
+    {
+        const Colour white (0xffffffff), track (0xff3a3430), none (0xff6a645e), grey (0xffb7bbc6);
+        for (int k = 0; k < 8; ++k)
+        {
+            const float cx = 60.0f + (float) (k % 4) * 120.0f, cy = k < 4 ? 94.0f : 196.0f, r = 27.0f;
+            Path tr; tr.addCentredArc (cx, cy, r, r, 0.0f, -2.356f, 2.356f, true);
+            g.setColour (track); g.strokePath (tr, PathStrokeType (6.0f, PathStrokeType::curved, PathStrokeType::rounded));
+            if (auto* p = knobTarget (k))
+            {
+                const float v = jlimit (0.0f, 1.0f, p->getValue());
+                if (v > 0.004f)
+                {
+                    Path a; a.addCentredArc (cx, cy, r, r, 0.0f, -2.356f, -2.356f + 4.712f * v, true);
+                    g.setColour (bcol); g.strokePath (a, PathStrokeType (6.0f, PathStrokeType::curved, PathStrokeType::rounded));
+                }
+                g.setColour (white); g.setFont (hobby::makeFont (typeface, 19.0f).boldened());
+                g.drawText (String (roundToInt (v * 100.0f)), Rectangle<float> (cx - r, cy - 12.0f, 2.0f * r, 24.0f), Justification::centred, false);
+                g.setFont (hobby::makeFont (typeface, 15.0f).boldened());
+                g.drawText (p->getName (14), Rectangle<float> (cx - 56.0f, cy + r + 4.0f, 112.0f, 20.0f), Justification::centred, true);
+            }
+            else
+            {
+                g.setColour (none); g.setFont (hobby::makeFont (typeface, 19.0f));
+                g.drawText (String::fromUTF8 ("\xe2\x80\x94"), Rectangle<float> (cx - r, cy - 12.0f, 2.0f * r, 24.0f), Justification::centred, false);
+            }
+        }
+        g.setColour (grey); g.setFont (hobby::makeFont (typeface, 14.0f));
+        String pn; if (auto* pl = engine.getPlugin (b)) pn = pl->getName();
+        g.drawText ("Macros " + String::fromUTF8 ("\xc2\xb7 ") + pn + "  (knobs 1" + String::fromUTF8 ("\xe2\x80\x93") + "8)", Rectangle<float> (14.0f, 246.0f, 452.0f, 18.0f), Justification::centred, false);
+    }
+
     void drawS88Block (Graphics& gl, Graphics& gRt)
     {
         drawS88DimArt (gl, gRt);
@@ -1530,6 +1587,8 @@ private:
         const float kx0 = 28.0f, kw = 424.0f;
         gl.setColour (Colour (0xff3a3430)); gl.fillRoundedRectangle (kx0, 252.0f, kw, 6.0f, 3.0f);
         gl.setColour (Colour (0xffe8b94a)); gl.fillRoundedRectangle (kx0, 252.0f, jmax (6.0f, kw * jlimit (0.0f, 1.0f, engine.volPos[(size_t) b].load())), 6.0f, 3.0f);   // γραμμή volume: κινείται με το πετάλι
+
+        if (s88MacrosOpen) { drawS88MacroPanel (gRt, b, bcol); return; }
 
         // ---- δεξιά: 10 κυκλάκια, 5×2 ----
         const float D = 54.0f, gap = 11.0f, gx = 14.0f + (452.0f - (6.0f * D + 5.0f * gap)) * 0.5f;
@@ -1758,6 +1817,12 @@ private:
         else if (isEmptyZone (selected))   // ζώνη ορισμένη, χωρίς plugin ακόμη: μένουμε στην οθόνη του block (όχι στο άδειο σχέδιο)
         {
             const String sig = "Z" + String (selected) + ",done," + String (engine.lo[(size_t) selected].load()) + "," + String (engine.hi[(size_t) selected].load()) + "," + String ((int) loadingSlots.contains (selected));
+            if (sig == s88Sig) return;
+            s88Sig = sig;
+        }
+        else if (s88MacrosOpen && isActive (selected))
+        {
+            const String sig = s88MacrosSig();
             if (sig == s88Sig) return;
             s88Sig = sig;
         }
