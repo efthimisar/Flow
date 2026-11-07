@@ -251,6 +251,7 @@ struct KeyScreens::Impl
     std::vector<uint8_t> pending[2];
     bool has[2] = { false, false };
     std::atomic<bool> quit { false };
+    std::atomic<bool> handedOver { false };    // οι οθόνες δόθηκαν στο Komplete Kontrol: το Flow δεν στέλνει τίποτα
     std::atomic<bool> reclaimNow { false };    // ζητήθηκε χειροκίνητη επανάκτηση των οθονών (κουμπί MIDI του S88)
     int sent = 0, failed = 0;
 };
@@ -394,6 +395,7 @@ bool KeyScreens::start()
         std::vector<uint8_t> buf;
         int lastScreen = 1;
         juce::uint32 lastReclaimMs = 0;
+        bool lastRejected = false;
         for (;;)
         {
             int screen = -1;
@@ -403,20 +405,34 @@ bool KeyScreens::start()
                 if (impl->quit.load()) return;
                 if (impl->reclaimNow.exchange (false))
                 {
-                    // χειροκίνητη επανάκτηση: ξαναδηλώνεται το Flow αμέσως και ξαναστέλνονται τα τελευταία καρέ
+                    // κουμπί MIDI: αν το Komplete Kontrol έχει τις οθόνες (ή τις έχουμε δώσει) → τις παίρνει το Flow, αλλιώς τις δίνει στο Komplete Kontrol
+                    const bool take = impl->handedOver.load() || lastRejected;
                     lk.unlock();
-                    if (impl->svc != nullptr)
+                    if (impl->svc != nullptr || impl->handedOver.load())
                     {
-                        auto fresh = std::make_unique<niservice::Session>();
-                        const auto cerr = fresh->connect (impl->svcPid, [] (const std::string&) {});
-                        if (cerr.empty()) { impl->svc = std::move (fresh); log ("screens: re-registered by the MIDI button to take the screens back"); }
-                        else log (juce::String ("screens: re-register (MIDI button) failed: ") + juce::String (cerr));
+                        if (take)
+                        {
+                            auto fresh = std::make_unique<niservice::Session>();
+                            const auto cerr = fresh->connect (impl->svcPid, [] (const std::string&) {});
+                            if (cerr.empty()) { impl->svc = std::move (fresh); impl->handedOver = false; lastRejected = false; log ("screens: re-registered by the MIDI button to take the screens back"); }
+                            else log (juce::String ("screens: re-register (MIDI button) failed: ") + juce::String (cerr));
+                        }
+                        else
+                        {
+                            impl->svc.reset();   // το Flow αποσυνδέεται: ό,τι άλλο πελάτης (το plugin) μπορεί να πάρει τις οθόνες
+                            impl->handedOver = true;
+                            log ("screens: handed over (MIDI button); press MIDI again to take them back");
+                        }
                     }
                     lk.lock();
-                    if (! impl->pending[0].empty()) impl->has[0] = true;
-                    if (! impl->pending[1].empty()) impl->has[1] = true;
-                    if (! impl->has[0] && ! impl->has[1]) continue;
+                    if (! impl->handedOver.load())
+                    {
+                        if (! impl->pending[0].empty()) impl->has[0] = true;
+                        if (! impl->pending[1].empty()) impl->has[1] = true;
+                    }
                 }
+                if (impl->handedOver.load()) { impl->has[0] = impl->has[1] = false; continue; }   // τα καρέ δεν στέλνονται όσο οι οθόνες είναι στο plugin
+                if (! impl->has[0] && ! impl->has[1]) continue;
                 const int other = 1 - lastScreen;   // εναλλάσσονται οι οθόνες: αλλιώς η αριστερή, που ανανεώνεται συνεχώς, άφηνε τη δεξιά να παίρνει καρέ σπάνια
                 screen = impl->has[other] ? other : lastScreen;
                 lastScreen = screen;
@@ -432,6 +448,7 @@ bool KeyScreens::start()
             if (impl->svc != nullptr)   // μέσω του agent της NI: ολόκληρο το καρέ ως ένα μήνυμα
             {
                 const auto e = impl->svc->sendDisplay (screen, buf);
+                lastRejected = ! e.empty();
                 if (e.empty()) { if (++impl->sent == 1) log ("first frame sent OK (NI service)"); }
                 else
                 {
