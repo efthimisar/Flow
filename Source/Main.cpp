@@ -2080,8 +2080,33 @@ private:
         {
             auto it = knobLibrary.find (knobKey (block));
             if (it != knobLibrary.end()) blockKnobs[(size_t) block] = it->second;
+            else autoAssignMacros (block);
         }
         validateKnobs (block);
+    }
+
+    // Plugin χωρίς αναθέσεις που δεν έχει ξαναδεί το Flow: οι παράμετροι που λέγονται «Macro …» πάνε στα πρώτα κουμπιά με τη σειρά του αριθμού τους (έως 8).
+    // Δουλεύει μόνο όσο το plugin τις δηλώνει με τέτοιο όνομα· αλλιώς δεν αναθέτει τίποτα (το log δείχνει τη λίστα των παραμέτρων κάθε plugin).
+    void autoAssignMacros (int block)
+    {
+        auto* p = engine.getPlugin (block);
+        if (p == nullptr) return;
+        std::vector<std::pair<int, int>> found;   // (αριθμός macro, δείκτης παραμέτρου)
+        auto& params = p->getParameters();
+        for (int i = 0; i < params.size(); ++i)
+        {
+            const auto nm = params[i]->getName (64);
+            const int at = nm.toLowerCase().indexOf ("macro");
+            if (at < 0) continue;
+            const int num = nm.substring (at + 5).retainCharacters ("0123456789").getIntValue();
+            found.push_back ({ num > 0 ? num : 1000 + i, i });
+        }
+        if (found.empty()) return;
+        std::sort (found.begin(), found.end());
+        for (size_t k = 0; k < found.size() && k < 8; ++k)
+            blockKnobs[(size_t) block][k] = { found[k].second, params[found[k].second]->getName (64) };
+        rememberKnobs (block);
+        flow::flowLog ("macros: block " + String (block + 1) + " " + p->getName() + ": " + String ((int) juce::jmin ((size_t) 8, found.size())) + " assigned automatically");
     }
 
     void clearKnobsOf (int block)
