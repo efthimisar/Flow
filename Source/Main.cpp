@@ -290,6 +290,7 @@ public:
         favPlugins.removeEmptyStrings();
         engine.masterPos = 1.0f;   // το master volume είναι πάντα 100%
         engine.followSetScale (settings->getIntValue ("followRoot", 9), settings->getIntValue ("followType", 1));
+        engine.followAuto = settings->getIntValue ("followAuto", 1);
         engine.smartOn = settings->getIntValue ("smartOn", 0) != 0 ? 1 : 0;
         engine.smartAccept = jlimit (0.0f, 1.0f, (float) settings->getDoubleValue ("smartAccept", 0.6));
         engine.masterCc = 0;
@@ -1411,7 +1412,7 @@ private:
             case 5: return "Special " + String::fromUTF8 ("\xc2\xb7 ") + (engine.isSp (b) ? "on" : "off");
             case 6: return "Master flow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.mfBlock.load() == b ? "on" : "off");
             case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() == 0 ? "off" : engine.followPolyBlock[(size_t) b].load() != 0 ? "poly" : "on") + "  (tilt up / down)";
-            case 8: return "Scale " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followType.load() == 0 ? "major" : engine.followType.load() == 1 ? "minor" : "harmonic minor") + "  (all blocks)";
+            case 8: return "Scale " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followAuto.load() != 0 ? (engine.followAutoFound.load() != 0 ? String ("auto: ") + String (juce::StringArray { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" }[engine.followRoot.load()]) + " " : String ("auto: listening ")) : String()) + (engine.followAuto.load() != 0 && engine.followAutoFound.load() == 0 ? String() : String (engine.followType.load() == 0 ? "major" : "minor")) + "  (all blocks)";
             case 9: return "Set the zone again";
             default: return armed ? "Press again to delete" : "Delete block";
         }
@@ -1442,12 +1443,15 @@ private:
         refreshAll();
     }
 
-    // κλίμακα των λουπών που ηχογραφείς (Major / Minor / Harmonic minor): ισχύει για όλα τα blocks
+    // κλίμακα των λουπών που ηχογραφείς (Auto / Major / Minor): ισχύει για όλα τα blocks
     void s88StepScale (int dir, bool wrap)
     {
-        const int cur = engine.followType.load();
+        // καταστάσεις: 0 Auto, 1 major, 2 minor
+        const int cur = engine.followAuto.load() != 0 ? 0 : 1 + engine.followType.load();
         const int n = wrap ? (cur + dir + 3) % 3 : jlimit (0, 2, cur + dir);
-        engine.followSetScale (engine.followRoot.load(), n);
+        engine.followAuto = n == 0 ? 1 : 0;
+        if (n == 0) { engine.followAutoFound = 0; engine.keyHist.fill (0.0f); engine.keyHistN = 0.0f; engine.keyHistT = 0.0; }
+        else engine.followSetScale (engine.followRoot.load(), n - 1);
         saveNow();
         refreshAll();
     }
@@ -1558,13 +1562,13 @@ private:
                 case 5: gRt.drawText ("SP", r, Justification::centred, false); break;
                 case 6: gRt.drawText ("MF", r, Justification::centred, false); break;
                 case 7: gRt.drawText ("f", r, Justification::centred, false); break;
-                case 8:   // κλίμακα: τρίγωνο = major, παύλα = minor, παύλα με δίεση = harmonic minor
+                case 8:   // κλίμακα: τρίγωνο = major, παύλα = minor, τελεία = αυτόματη
                 {
                     const int ft = engine.followType.load();
                     const float mx = cx + D * 0.5f, my = cy + D * 0.5f;
                     if (ft == 0) { Path tri; tri.addTriangle (mx, my - 12.0f, mx - 12.0f, my + 9.0f, mx + 12.0f, my + 9.0f); gRt.strokePath (tri, PathStrokeType (3.0f)); }
                     else gRt.drawLine (mx - 13.0f, my, mx + 13.0f, my, 3.5f);
-                    if (ft == 2) gRt.drawText (String::fromUTF8 ("\xe2\x99\xaf"), Rectangle<float> (mx + 4.0f, my - 24.0f, 22.0f, 22.0f), Justification::centred, false);
+                    if (engine.followAuto.load() != 0) gRt.fillEllipse (cx + D - 16.0f, cy + 8.0f, 7.0f, 7.0f);   // τελεία = αυτόματη εύρεση
                     break;
                 }
                 case 9: gRt.drawText (String::fromUTF8 ("\xe2\x9f\xb2"), r, Justification::centred, false); break;
@@ -4722,6 +4726,7 @@ private:
         settings->setValue ("favPlugins", favPlugins.joinIntoString ("\n"));
         settings->setValue ("followRoot", engine.followRoot.load());
         settings->setValue ("followType", engine.followType.load());
+        settings->setValue ("followAuto", engine.followAuto.load());
         settings->setValue ("smartOn", engine.smartOn.load());
         settings->setValue ("smartAccept", (double) engine.smartAccept.load());
         settings->setValue ("metroChannel", engine.metroChannel.load());

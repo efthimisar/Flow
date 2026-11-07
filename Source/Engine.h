@@ -192,6 +192,69 @@ namespace flow
         std::atomic<int> followVoiceN { 0 };
         std::array<std::atomic<int>, maxPolyVoices> followVoiceRoot {};
         std::atomic<int> followHomeRoot { 9 }, followHomeType { 1 }, followHomeSet { 0 };   // τελευταία συγχορδία με σβηστό Follow (τονικότητα πηγής)           // κλίμακα-στόχος (από τη συγχορδία)
+        // Αυτόματη εύρεση κλίμακας από ό,τι παίζεις ζωντανά (με σβηστό Follow): ιστόγραμμα 12 νοτών με εκθετική απομείωση,
+        // σύγκριση (συσχέτιση Pearson) με τα 24 προφίλ Krumhansl–Kessler (Krumhansl–Schmuckler) και υστέρηση. Μόνο major / minor.
+        // [ΧΡΕΙΑΖΕΤΑΙ ΠΗΓΗ] Οι τιμές των προφίλ είναι από δευτερογενή σελίδα· να ελεγχθούν με Krumhansl (1990).
+        std::atomic<int> followAuto { 1 };                               // 1 = η κλίμακα βρίσκεται αυτόματα, 0 = χειροκίνητη
+        std::atomic<int> followAutoFound { 0 };                          // 1 = έχει βρεθεί κλίμακα αυτόματα
+        std::array<float, 12> keyHist {};
+        double keyHistT = 0.0;
+        float keyHistN = 0.0f;
+        uint64_t prevPressLo = 0, prevPressHi = 0;
+        static constexpr float keyHalfLifeSec = 12.0f;                   // ρύθμιση, όχι από μελέτη
+        static constexpr float keyMinNotes = 8.0f;                       // κάτω από αυτό δεν αποφασίζει
+        static constexpr float keySwitchMargin = 0.05f;                  // υστέρηση: η νέα κλίμακα πρέπει να κερδίζει κατά τόσο (συσχέτιση)
+        static float keyCorr (const std::array<float, 12>& h, const float* prof, int root)
+        {
+            float mh = 0.0f, mp = 0.0f;
+            for (int i = 0; i < 12; ++i) { mh += h[(size_t) i]; mp += prof[i]; }
+            mh /= 12.0f; mp /= 12.0f;
+            float sxy = 0.0f, sxx = 0.0f, syy = 0.0f;
+            for (int i = 0; i < 12; ++i)
+            {
+                const float x = h[(size_t) ((root + i) % 12)] - mh, y = prof[i] - mp;
+                sxy += x * y; sxx += x * x; syy += y * y;
+            }
+            return (sxx > 1.0e-9f && syy > 1.0e-9f) ? sxy / std::sqrt (sxx * syy) : 0.0f;
+        }
+        void keyAutoUpdate()
+        {
+            static const float maj[12] = { 6.35f, 2.23f, 3.48f, 2.33f, 4.38f, 4.09f, 2.52f, 5.19f, 2.39f, 3.66f, 2.29f, 2.88f };
+            static const float mnr[12] = { 6.33f, 2.68f, 3.52f, 5.38f, 2.60f, 3.53f, 2.54f, 4.75f, 3.98f, 2.69f, 3.34f, 3.17f };
+            const uint64_t lo = pressBits[0].load(), hi = pressBits[1].load();
+            const uint64_t nlo = lo & ~prevPressLo, nhi = hi & ~prevPressHi;
+            prevPressLo = lo; prevPressHi = hi;
+            if (followOn.load() != 0 || followAuto.load() == 0) return;     // μαθαίνει μόνο με σβηστό Follow και αυτόματη κλίμακα
+            if (nlo == 0 && nhi == 0) return;
+            const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+            if (keyHistT > 0.0)
+            {
+                const float f = std::pow (0.5f, (float) (now - keyHistT) / keyHalfLifeSec);
+                for (auto& v : keyHist) v *= f;
+                keyHistN *= f;
+            }
+            keyHistT = now;
+            for (int n = 0; n < 128; ++n)
+            {
+                const bool nw = n < 64 ? ((nlo >> n) & 1u) != 0 : ((nhi >> (n - 64)) & 1u) != 0;
+                if (nw && (mfBlock.load() < 0 || noteBelongsToMf (n))) { keyHist[(size_t) (n % 12)] += 1.0f; keyHistN += 1.0f; }
+            }
+            if (keyHistN < keyMinNotes) return;
+            float best = -2.0f; int bR = 0, bT = 0;
+            for (int r = 0; r < 12; ++r)
+                for (int t = 0; t < 2; ++t)
+                {
+                    const float c = keyCorr (keyHist, t == 0 ? maj : mnr, r);
+                    if (c > best) { best = c; bR = r; bT = t; }
+                }
+            const int curT = followType.load();
+            const float cur = followAutoFound.load() != 0 ? keyCorr (keyHist, curT == 0 ? maj : mnr, followRoot.load()) : -2.0f;
+            if (bR == followRoot.load() && bT == curT && followAutoFound.load() != 0) return;
+            if (cur > -2.0f && best < cur + keySwitchMargin) return;
+            followSetScale (bR, bT);
+            followAutoFound = 1;
+            ++changeCount;
+        }
         std::array<std::atomic<int>, numBlocks> followBlock;             // 1 = το block ακολουθεί
         std::array<std::atomic<int>, numBlocks> followPolyBlock;         // 1 = το block ακολουθεί πολυφωνικά (μόνο με followBlock = 1)
         bool anyFollowPoly() const { for (int i = 0; i < numBlocks; ++i) if (followBlock[(size_t) i].load() != 0 && followPolyBlock[(size_t) i].load() != 0) return true; return false; }
@@ -201,13 +264,13 @@ namespace flow
         void setFollow (int nowOn)
         {
             if (nowOn == (followOn.load() != 0 ? 1 : 0)) return;
-            if (nowOn != 0 && followHomeSet.load() != 0)
-                followSetScale (followHomeRoot.load(), (followType.load() == 2 && followHomeType.load() == 1) ? 2 : followHomeType.load());   // η harmonic minor που διάλεξες μένει όταν η συγχορδία είναι minor
+            if (nowOn != 0 && followHomeSet.load() != 0 && ! (followAuto.load() != 0 && followAutoFound.load() != 0))
+                followSetScale (followHomeRoot.load(), followHomeType.load());
             followOn = nowOn;
             ++changeCount;
         }
         // μόνο Major (0) και Minor (1): οι παλιές κλίμακες γίνονται η πιο κοντινή (Dorian, Phrygian → Minor, Mixolydian, Lydian → Major)
-        static int followTypeNorm (int t) { return juce::jlimit (0, 2, t); }   // 0 Major, 1 Minor, 2 Harmonic minor
+        static int followTypeNorm (int t) { return juce::jlimit (0, 1, t); }   // 0 Major, 1 Minor (παλιά αποθηκευμένη Harmonic minor γίνεται Minor)
         void followSetScale (int root, int type)
         {
             followRoot = juce::jlimit (0, 11, root); followType = followTypeNorm (type);
@@ -736,6 +799,7 @@ namespace flow
             }
 
             dispatchIncoming (numSamples, gs, sr);
+            keyAutoUpdate();
             followUpdateTarget();
             processPedalTaps (gs, sr);
             tapActiveOut = (lastTapT > 0 && (double) (gs - lastTapT) < 3.0 * sr) ? 1 : 0;
