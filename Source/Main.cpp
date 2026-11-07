@@ -1091,7 +1091,7 @@ private:
         {
             if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
             else if (s88RingsOpen) { s88Ring = jlimit (0, 3, s88Ring + (v > 0 ? 1 : -1)); s88Slot = 0; }
-            else if (engine.pendingBlock() < 0 && s88BlockVisible()) { s88MenuSel = jlimit (0, 9, s88MenuSel + (v > 0 ? 1 : -1)); s88BlockTouch(); }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
+            else if (engine.pendingBlock() < 0 && s88BlockVisible()) { s88MenuSel = jlimit (0, 10, s88MenuSel + (v > 0 ? 1 : -1)); s88BlockTouch(); }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
             return;
         }
         if (v == 0) return;   // μόνο πάτημα
@@ -1124,10 +1124,10 @@ private:
                 switch (ctl)
                 {
                     case 1: s88MenuActivate(); s88BlockTouch(); return;
-                    case 2: if (s88MenuSel == 1) s88StepCurve (selected, 1); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, 1); s88BlockTouch(); return;    // transpose επιλεγμένο: κλίση πάνω = +1 οκτάβα
-                    case 3: if (s88MenuSel == 1) s88StepCurve (selected, -1); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, -1); s88BlockTouch(); return;   // κλίση κάτω = −1 οκτάβα
+                    case 2: if (s88MenuSel == 1) s88StepCurve (selected, 1); else if (s88MenuSel == 7) s88StepFollow (selected, 1); else if (s88MenuSel == 8) s88StepScale (1, false); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, 1); s88BlockTouch(); return;    // transpose επιλεγμένο: κλίση πάνω = +1 οκτάβα
+                    case 3: if (s88MenuSel == 1) s88StepCurve (selected, -1); else if (s88MenuSel == 7) s88StepFollow (selected, -1); else if (s88MenuSel == 8) s88StepScale (-1, false); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, -1); s88BlockTouch(); return;   // κλίση κάτω = −1 οκτάβα
                     case 4: s88MenuSel = jmax (0, s88MenuSel - 1); s88BlockTouch(); return;
-                    case 5: s88MenuSel = jmin (9, s88MenuSel + 1); s88BlockTouch(); return;
+                    case 5: s88MenuSel = jmin (10, s88MenuSel + 1); s88BlockTouch(); return;
                     default: break;
                 }
             }
@@ -1422,8 +1422,9 @@ private:
             case 4: return "Change instrument";
             case 5: return "Special " + String::fromUTF8 ("\xc2\xb7 ") + (engine.isSp (b) ? "on" : "off");
             case 6: return "Master flow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.mfBlock.load() == b ? "on" : "off");
-            case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() == 0 ? "off" : engine.followPolyBlock[(size_t) b].load() != 0 ? "poly" : "on");
-            case 8: return "Set the zone again";
+            case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() == 0 ? "off" : engine.followPolyBlock[(size_t) b].load() != 0 ? "poly" : "on") + "  (tilt up / down)";
+            case 8: return "Scale " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followType.load() == 0 ? "major" : engine.followType.load() == 1 ? "minor" : "harmonic minor") + "  (all blocks)";
+            case 9: return "Set the zone again";
             default: return armed ? "Press again to delete" : "Delete block";
         }
     }
@@ -1439,6 +1440,28 @@ private:
             case 7: return engine.followBlock[(size_t) b].load() != 0;
             default: return false;
         }
+    }
+
+    // Follow ανά block με κλίση: off ← → on ← → poly (χωρίς περιτύλιγμα)
+    void s88StepFollow (int b, int dir)
+    {
+        if (! isActive (b)) return;
+        const int cur = engine.followBlock[(size_t) b].load() == 0 ? 0 : engine.followPolyBlock[(size_t) b].load() != 0 ? 2 : 1;
+        const int n = jlimit (0, 2, cur + dir);
+        engine.followBlock[(size_t) b] = n == 0 ? 0 : 1;
+        engine.followPolyBlock[(size_t) b] = n == 2 ? 1 : 0;
+        saveNow();
+        refreshAll();
+    }
+
+    // κλίμακα των λουπών που ηχογραφείς (Major / Minor / Harmonic minor): ισχύει για όλα τα blocks
+    void s88StepScale (int dir, bool wrap)
+    {
+        const int cur = engine.followType.load();
+        const int n = wrap ? (cur + dir + 3) % 3 : jlimit (0, 2, cur + dir);
+        engine.followSetScale (engine.followRoot.load(), n);
+        saveNow();
+        refreshAll();
     }
 
     void s88StepCurve (int b, int dir)
@@ -1463,7 +1486,8 @@ private:
             case 5: if (keyboardView.onToggleSpecialBlock) keyboardView.onToggleSpecialBlock (b); break;
             case 6: if (keyboardView.onToggleMf) keyboardView.onToggleMf (b); break;
             case 7: if (keyboardView.onToggleFollowBlock) keyboardView.onToggleFollowBlock (b); break;
-            case 8: if (keyboardView.onRedoZone) keyboardView.onRedoZone (b); break;
+            case 8: s88StepScale (1, true); break;   // πάτημα: επόμενη κλίμακα (και με κλίση πάνω/κάτω)
+            case 9: if (keyboardView.onRedoZone) keyboardView.onRedoZone (b); break;
             default:
                 if (Time::getMillisecondCounter() < s88RemoveArmUntil) { s88RemoveArmUntil = 0; removeBlock (b); }   // σβήσιμο: δύο πατήματα, όπως στον Mac
                 else { s88RemoveArmUntil = Time::getMillisecondCounter() + 3000; setMessage (gr ("Press again to delete the block")); }
@@ -1478,7 +1502,7 @@ private:
         if (auto* pl = engine.getPlugin (b)) { pn = pl->getName(); hasSnap = thumbFor (pn).isValid(); }
         String s = "B" + String (b) + "," + String (s88MenuSel) + "," + String (engine.lo[(size_t) b].load()) + "," + String (engine.hi[(size_t) b].load()) + ","
                    + String ((int) (engine.volPos[(size_t) b].load() * 200.0f)) + "," + pn + "," + String ((int) hasSnap) + ",";
-        for (int i = 0; i < 10; ++i) s += s88MenuLabel (i, b) + "|";
+        for (int i = 0; i < 11; ++i) s += s88MenuLabel (i, b) + "|";
         return s;
     }
 
@@ -1510,10 +1534,10 @@ private:
         gl.setColour (Colour (0xffe8b94a)); gl.fillRoundedRectangle (kx0, 252.0f, jmax (6.0f, kw * jlimit (0.0f, 1.0f, engine.volPos[(size_t) b].load())), 6.0f, 3.0f);   // γραμμή volume: κινείται με το πετάλι
 
         // ---- δεξιά: 10 κυκλάκια, 5×2 ----
-        const float D = 64.0f, gap = 14.0f, gx = 14.0f + (452.0f - (5.0f * D + 4.0f * gap)) * 0.5f;
-        for (int i = 0; i < 10; ++i)
+        const float D = 54.0f, gap = 11.0f, gx = 14.0f + (452.0f - (6.0f * D + 5.0f * gap)) * 0.5f;
+        for (int i = 0; i < 11; ++i)
         {
-            const float cx = gx + (float) (i % 5) * (D + gap), cy = 62.0f + (float) (i / 5) * (D + 12.0f);
+            const float cx = gx + (float) (i % 6) * (D + gap), cy = 62.0f + (float) (i / 6) * (D + 12.0f);
             gRt.setColour (Colours::black); gRt.fillEllipse (cx, cy, D, D);
             if (s88MenuOn (i, b)) { gRt.setColour (bcol); gRt.drawEllipse (cx + 1.5f, cy + 1.5f, D - 3.0f, D - 3.0f, 3.0f); }
             if (i == s88MenuSel) { gRt.setColour (white); gRt.drawEllipse (cx - 3.0f, cy - 3.0f, D + 6.0f, D + 6.0f, 3.0f); }
@@ -1546,11 +1570,20 @@ private:
                 case 5: gRt.drawText ("SP", r, Justification::centred, false); break;
                 case 6: gRt.drawText ("MF", r, Justification::centred, false); break;
                 case 7: gRt.drawText ("f", r, Justification::centred, false); break;
-                case 8: gRt.drawText (String::fromUTF8 ("\xe2\x9f\xb2"), r, Justification::centred, false); break;
+                case 8:   // κλίμακα: τρίγωνο = major, παύλα = minor, παύλα με δίεση = harmonic minor
+                {
+                    const int ft = engine.followType.load();
+                    const float mx = cx + D * 0.5f, my = cy + D * 0.5f;
+                    if (ft == 0) { Path tri; tri.addTriangle (mx, my - 12.0f, mx - 12.0f, my + 9.0f, mx + 12.0f, my + 9.0f); gRt.strokePath (tri, PathStrokeType (3.0f)); }
+                    else gRt.drawLine (mx - 13.0f, my, mx + 13.0f, my, 3.5f);
+                    if (ft == 2) gRt.drawText (String::fromUTF8 ("\xe2\x99\xaf"), Rectangle<float> (mx + 4.0f, my - 24.0f, 22.0f, 22.0f), Justification::centred, false);
+                    break;
+                }
+                case 9: gRt.drawText (String::fromUTF8 ("\xe2\x9f\xb2"), r, Justification::centred, false); break;
                 default:
                     gRt.setColour (Time::getMillisecondCounter() < s88RemoveArmUntil ? hobby::kRed : white);
-                    gRt.drawLine (cx + 21.0f, cy + 21.0f, cx + D - 21.0f, cy + D - 21.0f, 3.0f);
-                    gRt.drawLine (cx + 21.0f, cy + D - 21.0f, cx + D - 21.0f, cy + 21.0f, 3.0f);
+                    gRt.drawLine (cx + 18.0f, cy + 18.0f, cx + D - 18.0f, cy + D - 18.0f, 3.0f);
+                    gRt.drawLine (cx + 18.0f, cy + D - 18.0f, cx + D - 18.0f, cy + 18.0f, 3.0f);
                     break;
             }
         }

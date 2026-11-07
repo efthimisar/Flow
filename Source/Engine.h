@@ -202,7 +202,7 @@ namespace flow
         {
             if (nowOn == (followOn.load() != 0 ? 1 : 0)) return;
             if (nowOn != 0 && followHomeSet.load() != 0)
-                followSetScale (followHomeRoot.load(), followHomeType.load());
+                followSetScale (followHomeRoot.load(), (followType.load() == 2 && followHomeType.load() == 1) ? 2 : followHomeType.load());   // η harmonic minor που διάλεξες μένει όταν η συγχορδία είναι minor
             followOn = nowOn;
             ++changeCount;
         }
