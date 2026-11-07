@@ -511,6 +511,23 @@ namespace flow
             return i >= 0 && i < (int) c.size() ? c[(size_t) i].get() : nullptr;
         }
 
+        // Προθέρμανση: το νέο plugin επεξεργάζεται λίγα blocks σιωπής ΠΡΙΝ μπει στη ροή, ώστε οι αργές πρώτες αρχικοποιήσεις (δέσμευση μνήμης, φόρτωση δειγμάτων)
+        // να γίνουν εκτός του ηχητικού νήματος. Τρέχει στο νήμα που φορτώνει, πριν το κλείδωμα.
+        void warmUp (juce::AudioPluginInstance& p, const juce::String& what)
+        {
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            const int ch = juce::jmax (2, juce::jmax (p.getTotalNumInputChannels(), p.getTotalNumOutputChannels()));
+            juce::AudioBuffer<float> buf (ch, juce::jmax (64, blockSize));
+            juce::MidiBuffer midi;
+            for (int i = 0; i < 6; ++i)
+            {
+                buf.clear();
+                midi.clear();
+                p.processBlock (buf, midi);
+            }
+            flowLog ("warm-up " + what + ": " + juce::String (juce::Time::getMillisecondCounterHiRes() - t0, 1) + " ms");
+        }
+
         // Puts a new plugin (or nullptr) into a block and returns the old one.
         PluginPtr swapPlugin (int b, PluginPtr fresh, bool captureZone = false)
         {
@@ -518,6 +535,7 @@ namespace flow
             {
                 prepare (*fresh);
                 fresh->setPlayHead (&head);
+                warmUp (*fresh, fresh->getName());
             }
 
             PluginPtr old;
@@ -578,6 +596,7 @@ namespace flow
                 prepare (*fresh);
                 flowLog ("setMidiFx: prepare done, in=" + juce::String (fresh->getTotalNumInputChannels()) + " out=" + juce::String (fresh->getTotalNumOutputChannels()));
                 fresh->setPlayHead (&head);
+                warmUp (*fresh, fresh->getName());
             }
             const juce::ScopedLock sl (lock);
             auto& B = blocks[(size_t) b];
@@ -598,6 +617,7 @@ namespace flow
             if (fresh == nullptr) return;
             prepareFx (*fresh);
             fresh->setPlayHead (&head);
+            warmUp (*fresh, fresh->getName());
             const juce::ScopedLock sl (lock);
             chainOf (b).push_back (std::move (fresh));
         }
