@@ -2473,7 +2473,10 @@ namespace flow
         // κάθε layer έχει δικό του ελεύθερο μήκος: αν είναι μεγαλύτερο από το loop, το loop μεγαλώνει και τα άλλα επαναλαμβάνονται
         void finishOverdub (Block& B, double beatNow)
         {
-            commitLayer (B, beatNow, B.loopBeats);   // το στρώμα έχει πάντα το μήκος της λούπας
+            // κάθε στρώμα έχει το δικό του μήκος (π.χ. 1ο = 2 μέτρα, 2ο = 4 μέτρα), όπως και η πρώτη λούπα. Το μεγαλύτερο ορίζει τον κύκλο του block.
+            const double elapsed = std::max (1.0e-6, beatNow - B.recStart);
+            commitLayer (B, beatNow, loopLengthFor (B, elapsed));
+            B.stopAt = -1.0;
             B.loopState = loopPlay;
         }
 
@@ -2514,7 +2517,14 @@ namespace flow
                         B.loopState = loopOver;
                     }
                     break;
-                case loopOver: finishOverdub (B, beat); break;
+                case loopOver:
+                {
+                    // όπως στην πρώτη λούπα: το τέλος περιμένει την επόμενη γραμμή μέτρου (πάτημα λίγο μετά τη γραμμή, μέχρι μισό beat, κλείνει σε αυτήν)
+                    const double prev = B.recStart + std::floor ((beat - B.recStart) / beatsPerBar + 1.0e-9) * beatsPerBar;
+                    if (B.stopAt >= 0.0 || beat - prev <= 0.5) { B.stopAt = -1.0; finishOverdub (B, beat); }
+                    else B.stopAt = prev + beatsPerBar;
+                    break;
+                }
                 default: break;
             }
         }
@@ -2911,11 +2921,12 @@ namespace flow
             // ---- loop: εντολές (κουμπιά ή πετάλια)
             const int64_t tapWindow = (int64_t) (sr * 0.7);
 
-            if (B.stopAt >= 0.0 && B.loopState == loopRec && beat1 >= B.stopAt - 1.0e-9)
+            if (B.stopAt >= 0.0 && (B.loopState == loopRec || B.loopState == loopOver) && beat1 >= B.stopAt - 1.0e-9)
             {
                 const double t = B.stopAt;
                 B.stopAt = -1.0;
-                finishRecording (B, t);
+                if (B.loopState == loopRec) finishRecording (B, t);
+                else finishOverdub (B, t);
             }
 
             rerecReq[(size_t) b] = 0;
@@ -2980,7 +2991,7 @@ namespace flow
 
             if (B.loopState == loopRec && (beat0 - B.recStart) >= maxLoopBars * beatsPerBar)
                 finishRecording (B, beat0);
-            else if (B.loopState == loopOver && (beat0 - B.recStart) >= std::min ((double) maxLoopBars * beatsPerBar, B.loopBeats))
+            else if (B.loopState == loopOver && (beat0 - B.recStart) >= (double) maxLoopBars * beatsPerBar)
                 finishOverdub (B, beat0);
 
             // ---- collect everything that happens in this block
