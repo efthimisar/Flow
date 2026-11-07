@@ -1553,7 +1553,7 @@ public:
         for (int c = 0; c < 4; ++c)
         {
             const auto p = orbDotPoint (c);
-            const float r = c == orbDrag ? 12.0f : 10.5f;
+            const float r = c == orbDrag ? 18.0f : 15.75f;   // ×1,5 από πριν
             const float lift = orbLift[(size_t) c];
             const float bob = 0.5f + 0.5f * (float) std::sin (nowMs * 0.0018 + (double) c * 1.7);
             const float h = 4.0f + 1.5f * bob * (1.0f - lift) + 9.0f * lift;     // «ύψος» σε εικονοστοιχεία
@@ -1674,7 +1674,7 @@ public:
                 return;
             }
         for (int c = 0; c < 4; ++c)
-            if (orbDotPoint (c).getDistanceFrom (p) <= 18.0f)
+            if (orbDotPoint (c).getDistanceFrom (p) <= 27.0f)
             {
                 orbDrag = c;
                 if (onOrbTouch) onOrbTouch (c, true);
@@ -1744,7 +1744,7 @@ public:
                 return;
             }
         for (int c = 0; c < 4; ++c)
-            if (orbDotPoint (c).getDistanceFrom (e.position) <= 18.0f)
+            if (orbDotPoint (c).getDistanceFrom (e.position) <= 27.0f)
             {
                 orbDrag = c;
                 if (onOrbTouch) onOrbTouch (c, true);
