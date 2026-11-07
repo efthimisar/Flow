@@ -4967,7 +4967,11 @@ private:
             if (auto* dev = deviceManager.getCurrentAudioDevice()) xr = dev->getXRunCount();
             const int xrDelta = (xr >= 0 && lastXRuns >= 0) ? xr - lastXRuns : 0;
             lastXRuns = xr;
-            const bool notable = full > 0 || xrDelta > 0 || maxLock > 0.002f || maxCb > 0.6f * budget;
+            const int jumps = engine.statJumps.exchange (0), clip = engine.statClip.exchange (0), nanN = engine.statNan.exchange (0);
+            const float jumpMax = engine.statJumpMax.exchange (0.0f), peak = engine.statPeak.exchange (0.0f);
+            const bool notable = full > 0 || xrDelta > 0 || maxLock > 0.002f || maxCb > 0.6f * budget || jumps > 0 || clip > 0 || nanN > 0;
+            if (jumps > 0 || clip > 0 || nanN > 0)
+                flow::flowLog (String::formatted ("GLITCH? output jumps(>0.3): %d, biggest jump %.2f, samples over 1.0: %d, NaN: %d, peak %.2f", jumps, jumpMax, clip, nanN, peak));
             if (calls > 0 && (notable || statWindows % 6 == 0))
                 flow::flowLog (String::formatted ("audio: buffer %d, callbacks %d, max %.2f ms of %.2f ms, >80%%: %d, >100%%: %d, max lock wait %.2f ms, xruns +%d",
                                                   currentBufferSize(), calls, maxCb * 1000.0f, budget * 1000.0f, over, full, maxLock * 1000.0f, xrDelta));

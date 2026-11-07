@@ -317,6 +317,9 @@ namespace flow
         std::atomic<int> afterFirst { 0 };      // μετά το πρώτο loop: 0 = Play, 1 = Overdub
         std::atomic<int> statCalls { 0 }, statOver { 0 }, statOverFull { 0 };   // μετρήσεις callback ήχου (διαβάζονται κάθε λίγα δευτερόλεπτα από το Main)
         std::atomic<float> statMaxCb { 0.0f }, statMaxLock { 0.0f }, statBudget { 0.0f };
+        // ανίχνευση «κρακελαρίσματος» στην τελική έξοδο: απότομα άλματα δείγματος, κορεσμός (>1.0), NaN/άπειρο
+        std::atomic<int> statJumps { 0 }, statClip { 0 }, statNan { 0 };
+        std::atomic<float> statJumpMax { 0.0f }, statPeak { 0.0f };
         std::atomic<int> loopEvtCount { 0 };    // νότες που παίζουν οι λούπες (για τα φώτα του hardware)
         // Διαγνωστικό: τα μηνύματα MIDI που δεν είναι νότες/clock (CC, pitch bend, program, SysEx κ.λπ.) περνούν σε μικρό ring για καταγραφή στο log (όχι στο νήμα ήχου)
         std::atomic<uint32_t> midiDiag[256] {};
@@ -737,7 +740,7 @@ namespace flow
             // μετρήσεις για τις διακοπές ήχου: συνολικός χρόνος του callback και πόσο περιμένει το κλείδωμα (π.χ. όταν η οθόνη το κρατά)
             struct Probe
             {
-                Engine& en; int n; const juce::int64 t0 = juce::Time::getHighResolutionTicks(); float lockWait = 0.0f;
+                Engine& en; int n; float* const* out = nullptr; int nch = 0; const juce::int64 t0 = juce::Time::getHighResolutionTicks(); float lockWait = 0.0f;
                 Probe (Engine& e, int ns) : en (e), n (ns) {}
                 ~Probe()
                 {
@@ -749,8 +752,28 @@ namespace flow
                     if (total > 0.8 * budget) en.statOver.fetch_add (1);
                     if (total > budget) en.statOverFull.fetch_add (1);
                     en.statBudget = (float) budget;
+                    int jumps = 0, clip = 0, nan = 0; float jmax = 0.0f, pk = 0.0f;
+                    for (int c = 0; c < juce::jmin (2, nch); ++c)
+                    {
+                        const float* d = out[c];
+                        for (int i = 0; i < n; ++i)
+                        {
+                            const float x = d[i];
+                            if (! std::isfinite (x)) { ++nan; continue; }
+                            const float a = std::abs (x);
+                            if (a > pk) pk = a;
+                            if (a > 1.0f) ++clip;
+                            if (i > 0 && std::isfinite (d[i - 1])) { const float j = std::abs (x - d[i - 1]); if (j > 0.3f) ++jumps; if (j > jmax) jmax = j; }
+                        }
+                    }
+                    if (jumps > 0) en.statJumps.fetch_add (jumps);
+                    if (clip > 0) en.statClip.fetch_add (clip);
+                    if (nan > 0) en.statNan.fetch_add (nan);
+                    if (jmax > en.statJumpMax.load()) en.statJumpMax = jmax;
+                    if (pk > en.statPeak.load()) en.statPeak = pk;
                 }
             } probe (*this, numSamples);
+            probe.out = outputChannelData; probe.nch = numOutputChannels;
 
             for (int c = 0; c < numOutputChannels; ++c)
                 juce::FloatVectorOperations::clear (outputChannelData[c], numSamples);
