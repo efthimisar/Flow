@@ -526,6 +526,15 @@ namespace flow
                 p.processBlock (buf, midi);
             }
             flowLog ("warm-up " + what + ": " + juce::String (juce::Time::getMillisecondCounterHiRes() - t0, 1) + " ms");
+
+            // λίστα παραμέτρων (όπως τις δηλώνει το plugin): δείχνει ποιες μπορούν να ανατεθούν αυτόματα στα κουμπιά του hardware
+            const auto& prms = p.getParameters();
+            juce::String line;
+            for (int i = 0; i < prms.size() && i < 200; ++i)
+            {
+                line << i << "=" << prms[i]->getName (28) << (prms[i]->isAutomatable() ? "" : "(na)") << "; ";
+                if ((i + 1) % 16 == 0 || i + 1 == prms.size() || i == 199) { flowLog ("params " + what + " (" + juce::String (prms.size()) + " total): " + line); line.clear(); }
+            }
         }
 
         // Puts a new plugin (or nullptr) into a block and returns the old one.
