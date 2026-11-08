@@ -506,6 +506,10 @@ namespace flow
                     { spBest = sb; spSeq = zoneSeq[(size_t) sb].load(); }
                 if (spBest >= 0) return spBest;
             }
+            if (includeEmpty)   // στην οθόνη/φωτάκια το AS block φαίνεται με τη ζώνη του (η «λαβή» του), όχι όμως στη δρομολόγηση των νοτών
+                for (int b = 0; b < numBlocks; ++b)
+                    if (asMode[b].load() != 0 && active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load())
+                        return b;
             int best = -1, bestSeq = -1;
             for (int b = 0; b < numBlocks; ++b)
                 if (! isSp (b) && asMode[b].load() == 0 && (active[b].load() != 0 || (includeEmpty && emptyZone[b].load() != 0)) && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
@@ -1590,6 +1594,9 @@ namespace flow
         std::vector<int> asHist;                 // πρόσφατες νότες του παίκτη
         double asLastPlayer = -1.0e9;
         std::atomic<bool> asClear { false }, asClearModel { false };
+public:
+        std::atomic<int> asSelectReq { -1 };   // ζητά από το UI να επιλέξει αυτό το AS block (πάτημα της λαβής του)
+private:
         // style: Markov μεταβλητής τάξης (Continuator-like). Κατάσταση = (νότα*8 + απόσταση από την προηγούμενη νότα σε βήματα 1/8 (0..7))*4 + κλάση διάρκειας (0: έως 0.5 beat, 1: ~1, 2: ~2, 3: 4+)
         std::map<uint64_t, std::vector<uint16_t>> asModel;
         static std::array<int, 128> asNegArr() { std::array<int, 128> a; a.fill (-1); return a; }
@@ -1968,6 +1975,12 @@ namespace flow
                         continue;
                     }
 
+                    {   // πλήκτρο-λαβή του AS block = η ζώνη που του έδωσες: δεν παίζει, μόνο επιλέγει το block για να το ρυθμίσεις
+                        int hb = -1;
+                        for (int i = 0; i < numBlocks; ++i)
+                            if (asMode[(size_t) i].load() != 0 && active[(size_t) i].load() != 0 && zoneState[(size_t) i].load() == 0 && n >= lo[(size_t) i].load() && n <= hi[(size_t) i].load()) hb = i;
+                        if (hb >= 0) { asSelectReq = hb; continue; }
+                    }
                     const int b = blockForNote (n);
                     const int sp = specialForNote (n);
                     if (sp >= 0)

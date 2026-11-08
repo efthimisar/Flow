@@ -1454,7 +1454,7 @@ private:
             case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() == 0 ? "off" : engine.followPolyBlock[(size_t) b].load() != 0 ? "poly" : "on") + "  (tilt up / down)";
             case 8: return "Scale " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followAuto.load() != 0 ? (engine.followAutoFound.load() != 0 ? String ("auto: ") + String (juce::StringArray { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" }[engine.followRoot.load()]) + " " : String ("auto: listening ")) : String()) + (engine.followAuto.load() != 0 && engine.followAutoFound.load() == 0 ? String() : String (engine.followType.load() == 0 ? "major" : "minor")) + "  (all blocks)";
             case 9: { const int rm = engine.repeatMode[(size_t) b].load(); return "Repeat " + String::fromUTF8 ("\xc2\xb7 ") + (rm == 0 ? "loop" : rm == 1 ? "once" : "hold at end") + "  (tilt up / down)"; }
-            case 10: return engine.isAs (b) ? "Assistant " + String::fromUTF8 ("\xc2\xb7 ") + (engine.asMode[(size_t) b].load() == 3 ? "orch " : engine.asMode[(size_t) b].load() == 2 ? "style " : "rules ") + String::fromUTF8 ("\xc2\xb7 ") + String (engine.asPct[(size_t) b].load()) + "%" + (s88AsEdit ? "  (rotate: amount, press: done)" : "  (tilt: off / rules / style / orch, press: amount)") : String ("Assistant ") + String::fromUTF8 ("\xc2\xb7 ") + "off  (tilt up: rules)";
+            case 10: return engine.isAs (b) ? "Assistant " + String::fromUTF8 ("\xc2\xb7 ") + (engine.asMode[(size_t) b].load() == 3 ? "orch " : engine.asMode[(size_t) b].load() == 2 ? "style " : "rules ") + String::fromUTF8 ("\xc2\xb7 ") + String (engine.asPct[(size_t) b].load()) + "%" + (s88AsEdit ? "  (rotate: amount, press: done)" : "  (tilt: off / rules / style / orch, press: amount)  key " + noteName (engine.lo[(size_t) b].load())) : String ("Assistant ") + String::fromUTF8 ("\xc2\xb7 ") + "off  (tilt up: rules)";
             case 11: return "Set the zone again";
             default: return armed ? "Press again to delete" : "Delete block";
         }
@@ -5190,6 +5190,8 @@ private:
     {
         // focus: το block που έπαιξες τελευταίο γίνεται αυτόματα το επιλεγμένο (οθόνη, κουμπιά λούπας, πετάλια)
         {
+            const int req = engine.asSelectReq.exchange (-1);
+            if (req >= 0 && isActive (req) && req != selected) { s88AsEdit = false; selectBlock (req); }
             const int lp = engine.lastPlayed.load();
             const uint32_t ps = engine.playSeq.load();
             if (lp != lastFollowed || ps != lastPlaySeq)
