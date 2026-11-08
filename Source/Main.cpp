@@ -426,6 +426,23 @@ private:
         saveNow();
     }
 
+    // S88: μετακίνηση στο προηγούμενο/επόμενο ενεργό block (και στα AS, που δεν έχουν πλήκτρα για να επιλεγούν με παίξιμο)
+    bool s88SelectAdjacent (int dir)
+    {
+        for (int i = 1; i < flow::numBlocks; ++i)
+        {
+            const int b = ((selected + dir * i) % flow::numBlocks + flow::numBlocks) % flow::numBlocks;
+            if (isActive (b))
+            {
+                s88AsEdit = false;
+                selectBlock (b);
+                s88MenuSel = dir > 0 ? 0 : 12;
+                return true;
+            }
+        }
+        return false;
+    }
+
     int firstActive() const
     {
         for (int b = 0; b < flow::numBlocks; ++b)
@@ -1088,6 +1105,8 @@ private:
             else if (engine.pendingBlock() < 0 && s88BlockVisible() && ! s88MacrosOpen)
             {
                 if (s88AsEdit) { engine.setAsPct (selected, jlimit (0, 100, engine.asPct[(size_t) selected].load() + (v > 0 ? 5 : -5))); saveNow(); refreshAll(); }
+                else if (s88MenuSel == 12 && v > 0 && s88SelectAdjacent (1)) {}
+                else if (s88MenuSel == 0 && v < 0 && s88SelectAdjacent (-1)) {}
                 else s88MenuSel = jlimit (0, 12, s88MenuSel + (v > 0 ? 1 : -1));
                 s88BlockTouch();
             }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
@@ -1126,8 +1145,8 @@ private:
                     case 1: s88MenuActivate(); s88BlockTouch(); return;
                     case 2: if (s88MenuSel == 1) s88StepCurve (selected, 1); else if (s88MenuSel == 7) s88StepFollow (selected, 1); else if (s88MenuSel == 8) s88StepScale (1, false); else if (s88MenuSel == 9) s88StepRepeat (selected, 1, false); else if (s88MenuSel == 10) s88StepAs (selected, 1); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, 1); s88BlockTouch(); return;    // transpose επιλεγμένο: κλίση πάνω = +1 οκτάβα
                     case 3: if (s88MenuSel == 1) s88StepCurve (selected, -1); else if (s88MenuSel == 7) s88StepFollow (selected, -1); else if (s88MenuSel == 8) s88StepScale (-1, false); else if (s88MenuSel == 9) s88StepRepeat (selected, -1, false); else if (s88MenuSel == 10) s88StepAs (selected, -1); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, -1); s88BlockTouch(); return;   // κλίση κάτω = −1 οκτάβα
-                    case 4: s88AsEdit = false; s88MenuSel = jmax (0, s88MenuSel - 1); s88BlockTouch(); return;
-                    case 5: s88AsEdit = false; s88MenuSel = jmin (12, s88MenuSel + 1); s88BlockTouch(); return;
+                    case 4: s88AsEdit = false; if (s88MenuSel == 0 && s88SelectAdjacent (-1)) { s88BlockTouch(); return; } s88MenuSel = jmax (0, s88MenuSel - 1); s88BlockTouch(); return;
+                    case 5: s88AsEdit = false; if (s88MenuSel == 12 && s88SelectAdjacent (1)) { s88BlockTouch(); return; } s88MenuSel = jmin (12, s88MenuSel + 1); s88BlockTouch(); return;
                     default: break;
                 }
             }

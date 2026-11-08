@@ -1597,7 +1597,9 @@ namespace flow
         static constexpr int asMaxOrder = 4;
         // orch: κρατημένες συγχορδίες που ακολουθούν την αρμονία του παίκτη
         std::bitset<128> asHeld;                              // πλήκτρα που κρατά τώρα ο παίκτης
-        std::array<double, 128> asOnBeat {};                  // πότε πατήθηκε κάθε πλήκτρο (beat)
+        static std::array<double, 128> asFarArr() { std::array<double, 128> a; a.fill (-1.0e9); return a; }
+        std::array<double, 128> asOnBeat = asFarArr();
+        std::array<int, 128> asOnVel {};                  // πότε πατήθηκε κάθε πλήκτρο (beat)
         std::array<std::vector<int>, numBlocks> asOrchNotes;  // νότες που κρατά τώρα ο βοηθός
         std::array<uint32_t, numBlocks> asOrchKey {};         // τρέχουσα συγχορδία (bass pc, μάσκα pcs), 0 = καμία
         juce::Random asRng { 7 };
@@ -1711,7 +1713,7 @@ namespace flow
         // ο παίκτης πάτησε νότα (beat): ο βοηθός απαντά με παράγωγο, κουμπωμένο στο επόμενο 1/8
         void asObserve (double beat, int n, int vel)
         {
-            asHeld.set ((size_t) n & 127); asOnBeat[(size_t) n & 127] = beat;
+            asHeld.set ((size_t) n & 127); asOnBeat[(size_t) n & 127] = beat; asOnVel[(size_t) n & 127] = vel;
             bool anyAs = false;
             for (int b = 0; b < numBlocks; ++b) if (asMode[(size_t) b].load() != 0) anyAs = true;
             if (anyAs)
@@ -1754,56 +1756,82 @@ namespace flow
         {
             asPend[(size_t) b].push_back ({ beat, note, vel, on });
         }
-        // συγχορδία του παίκτη τώρα: κρατημένα πλήκτρα + όσα πατήθηκαν το τελευταίο beat. Επιστρέφει κλειδί (0 = λιγότερες από 3 φωνές)
+        // συγχορδία του παίκτη τώρα: η πιο πρόσφατη ομάδα νοτών που πατήθηκαν μαζί (≤0.35 beat από την τελευταία πάτημα).
+        // Αν έχει λιγότερες από 3 φωνές (π.χ. το μπάσο πατήθηκε νωρίτερα), συμπληρώνεται με κρατημένα πλήκτρα, τα πιο πρόσφατα πρώτα.
+        // Επιστρέφει κλειδί (bass pc+1)<<16 | μάσκα pcs, ή 0 αν δεν υπάρχουν 3 φωνές. vel = μέση ένταση της ομάδας.
         uint32_t asChordNow (double beat, int& bassNote, int& vel) const
         {
-            uint32_t mask = 0; int low = 128, vs = 0, vn = 0;
+            double tn = -1.0e9;
             for (int n = 21; n <= 108; ++n)
-                if (asHeld[(size_t) n] || beat - asOnBeat[(size_t) n] < 1.0 && beat >= asOnBeat[(size_t) n])
-                {
-                    mask |= 1u << (n % 12);
-                    if (n < low) low = n;
-                    if (asHeld[(size_t) n]) { vs += 1; vn += 0; }
-                }
-            juce::ignoreUnused (vs, vn);
+                if ((asHeld[(size_t) n] || beat - asOnBeat[(size_t) n] < 1.0) && asOnBeat[(size_t) n] <= beat) tn = juce::jmax (tn, asOnBeat[(size_t) n]);
+            if (tn < -1.0e8) return 0;
+            std::bitset<128> use; uint32_t mask = 0; int low = 128, vsum = 0, vcnt = 0;
+            auto add = [&] (int n) { use.set ((size_t) n); mask |= 1u << (n % 12); if (n < low) low = n; vsum += asOnVel[(size_t) n]; ++vcnt; };
+            for (int n = 21; n <= 108; ++n)
+                if ((asHeld[(size_t) n] || beat - asOnBeat[(size_t) n] < 1.0) && asOnBeat[(size_t) n] >= tn - 0.35 && asOnBeat[(size_t) n] <= beat) add (n);
+            while (__builtin_popcount (mask) < 3)   // συμπλήρωση με κρατημένα, το πιο πρόσφατο πρώτα
+            {
+                int best = -1; double bt = -1.0e9;
+                for (int n = 21; n <= 108; ++n)
+                    if (asHeld[(size_t) n] && ! use[(size_t) n] && asOnBeat[(size_t) n] > bt && ! ((mask >> (n % 12)) & 1u)) { bt = asOnBeat[(size_t) n]; best = n; }
+                if (best < 0) break;
+                add (best);
+            }
             if (low == 128 || __builtin_popcount (mask) < 3) return 0;
-            bassNote = low; vel = 70;
+            bassNote = low; vel = vcnt > 0 ? vsum / vcnt : 70;
             return ((uint32_t) (low % 12 + 1) << 16) | mask;
         }
-        // φωνοθέτηση: μπάσο χαμηλά, οι νότες της συγχορδίας ανοιχτά πάνω, διπλή η ρίζα μία οκτάβα πάνω
-        std::vector<int> asVoicing (uint32_t key, int bassNote) const
+        // φωνοθέτηση: μπάσο χαμηλά + νότες συγχορδίας ανοιχτά. Επιλέγεται η αναστροφή με τη μικρότερη κίνηση από την προηγούμενη (voice leading)
+        // και η περιοχή ακολουθεί αργά το μέσο ύψος του παίκτη.
+        std::vector<int> asVoicing (uint32_t key, const std::vector<int>& prev) const
         {
-            std::vector<int> v;
             const uint32_t mask = key & 0xFFFFu;
             const int bpc = (int) (key >> 16) - 1;
             int bass = 36 + bpc; if (bass > 47) bass -= 12;
-            v.push_back (bass);
-            int prev = bass + 7;
-            for (int i = 0; i < 12; ++i)
-            {
-                const int pc = (bpc + i) % 12;
-                if (! ((mask >> pc) & 1u)) continue;
-                int n = 48 + ((pc - 48) % 12 + 12) % 12;
-                while (n < prev + 3) n += 12;
-                if (n > 84) n -= 12;
-                if (n <= 108) { v.push_back (n); prev = n; }
-            }
-            juce::ignoreUnused (bassNote);
-            return v;
+            const int anchor = juce::jlimit (48, 60, asMeanPitch() - 16);
+            std::vector<int> pcs;
+            for (int i = 0; i < 12; ++i) { const int pc = (bpc + i) % 12; if ((mask >> pc) & 1u) pcs.push_back (pc); }
+            std::vector<int> best; int bestCost = 1 << 30;
+            for (int rot = 0; rot < (int) pcs.size(); ++rot)
+                for (int oct = -12; oct <= 12; oct += 12)
+                {
+                    std::vector<int> v { bass };
+                    int last = anchor + oct - 3;
+                    for (int i = 0; i < (int) pcs.size(); ++i)
+                    {
+                        const int pc = pcs[(size_t) ((i + rot) % (int) pcs.size())];
+                        int n = anchor + oct + ((pc - (anchor + oct)) % 12 + 12) % 12;
+                        while (n < last + 3) n += 12;
+                        if (n > 96) n -= 12;
+                        v.push_back (n); last = n;
+                    }
+                    int cost = 0;
+                    if (prev.size() > 1)
+                        for (size_t i = 1; i < v.size(); ++i)
+                        {
+                            int m = 99; for (size_t j = 1; j < prev.size(); ++j) m = juce::jmin (m, std::abs (v[i] - prev[j]));
+                            cost += m;
+                        }
+                    else cost = std::abs (oct) + rot;
+                    if (cost < bestCost) { bestCost = cost; best = v; }
+                }
+            return best;
         }
-        void asOrchStep (int b, double g)   // κάθε beat: αλλαγή συγχορδίας ή λήξη σε μεγάλη παύση
+        void asOrchStep (int b, double g)   // κάθε 1/16: αλλαγή συγχορδίας ή λήξη σε μεγάλη παύση
         {
             auto& on = asOrchNotes[(size_t) b];
-            auto release = [&] { for (int n : on) asEmit (b, g, n, 0, false); on.clear(); asOrchKey[(size_t) b] = 0; };
-            if (g - asLastPlayer > 6.0) { if (! on.empty()) release(); return; }
+            auto release = [&] { for (int n : on) asEmit (b, g, n, 0, false); on.clear(); };
+            if (g - asLastPlayer > 6.0) { if (! on.empty()) release(); asOrchKey[(size_t) b] = 0; return; }
             int bass = 0, vel = 70;
             const uint32_t k = asChordNow (g, bass, vel);
             if (k == 0 || k == asOrchKey[(size_t) b]) return;
+            const std::vector<int> prev = on;
             if (! on.empty()) release();
             asOrchKey[(size_t) b] = k;
             if (asRng.nextInt (100) >= asPct[(size_t) b].load()) return;   // ποσοστό: πόσο συχνά παίζει η ορχήστρα
-            on = asVoicing (k, bass);
-            for (int n : on) asEmit (b, g, n, 80, true);
+            on = asVoicing (k, prev);
+            const int v = juce::jlimit (20, 127, (int) ((float) vel * 0.8f));
+            for (int n : on) asEmit (b, g, n, v, true);
         }
 
         // γέμισμα παύσεων + παράδοση των προγραμματισμένων νοτών στο block
@@ -1823,7 +1851,7 @@ namespace flow
             for (int b = 0; b < numBlocks; ++b) if (asMode[(size_t) b].load() != 0) any = true;
             if (! any) return;
 
-            for (double g = std::ceil (beat0); g < beat1; g += 1.0)
+            for (double g = std::ceil (beat0 * 4.0) * 0.25; g < beat1; g += 0.25)
                 for (int b = 0; b < numBlocks; ++b)
                     if (asMode[(size_t) b].load() == 3) asOrchStep (b, g);
             if (! asHist.empty() && beat0 - asLastPlayer > 1.0 && beat0 - asLastPlayer < 24.0)
