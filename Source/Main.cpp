@@ -120,7 +120,7 @@ public:
             if (learnClick (flow::ctlRec)) return;
             const int b = engine.recTarget (false);
             if (b < 0) return;
-            if (engine.loopStateOut[(size_t) b].load() == flow::loopPlay && engine.loopLayersOut[(size_t) b].load() >= flow::maxOverdubLayers) return;   // μέχρι 2 στρώματα (overdub)
+            if (engine.loopStateOut[(size_t) b].load() == flow::loopPlay && engine.loopLayersOut[(size_t) b].load() >= flow::maxOverdubLayers) return;   // μέχρι 3 στρώματα
             engine.pressMain (b);
         };
         undoTile.onClick = [this] { if (learnClick (flow::ctlUndo)) return; if (isActive (selected)) engine.pressUndo (selected); };
@@ -1085,7 +1085,7 @@ private:
         {
             if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
             else if (s88RingsOpen) { s88Ring = jlimit (0, 3, s88Ring + (v > 0 ? 1 : -1)); s88Slot = 0; }
-            else if (engine.pendingBlock() < 0 && s88BlockVisible() && ! s88MacrosOpen) { s88MenuSel = jlimit (0, 10, s88MenuSel + (v > 0 ? 1 : -1)); s88BlockTouch(); }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
+            else if (engine.pendingBlock() < 0 && s88BlockVisible() && ! s88MacrosOpen) { s88MenuSel = jlimit (0, 11, s88MenuSel + (v > 0 ? 1 : -1)); s88BlockTouch(); }   // μενού block: περιστροφή = επόμενο κυκλάκι   // Orb Rings: περιστροφή = άλλο ring, από την πρώτη θέση
             return;
         }
         if (v == 0) return;   // μόνο πάτημα
@@ -1119,10 +1119,10 @@ private:
                 switch (ctl)
                 {
                     case 1: s88MenuActivate(); s88BlockTouch(); return;
-                    case 2: if (s88MenuSel == 1) s88StepCurve (selected, 1); else if (s88MenuSel == 7) s88StepFollow (selected, 1); else if (s88MenuSel == 8) s88StepScale (1, false); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, 1); s88BlockTouch(); return;    // transpose επιλεγμένο: κλίση πάνω = +1 οκτάβα
-                    case 3: if (s88MenuSel == 1) s88StepCurve (selected, -1); else if (s88MenuSel == 7) s88StepFollow (selected, -1); else if (s88MenuSel == 8) s88StepScale (-1, false); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, -1); s88BlockTouch(); return;   // κλίση κάτω = −1 οκτάβα
+                    case 2: if (s88MenuSel == 1) s88StepCurve (selected, 1); else if (s88MenuSel == 7) s88StepFollow (selected, 1); else if (s88MenuSel == 8) s88StepScale (1, false); else if (s88MenuSel == 9) s88StepRepeat (selected, 1, false); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, 1); s88BlockTouch(); return;    // transpose επιλεγμένο: κλίση πάνω = +1 οκτάβα
+                    case 3: if (s88MenuSel == 1) s88StepCurve (selected, -1); else if (s88MenuSel == 7) s88StepFollow (selected, -1); else if (s88MenuSel == 8) s88StepScale (-1, false); else if (s88MenuSel == 9) s88StepRepeat (selected, -1, false); else if (s88MenuSel == 2 && keyboardView.onTranspose) keyboardView.onTranspose (selected, -1); s88BlockTouch(); return;   // κλίση κάτω = −1 οκτάβα
                     case 4: s88MenuSel = jmax (0, s88MenuSel - 1); s88BlockTouch(); return;
-                    case 5: s88MenuSel = jmin (10, s88MenuSel + 1); s88BlockTouch(); return;
+                    case 5: s88MenuSel = jmin (11, s88MenuSel + 1); s88BlockTouch(); return;
                     default: break;
                 }
             }
@@ -1428,7 +1428,8 @@ private:
             case 6: return "Master flow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.mfBlock.load() == b ? "on" : "off");
             case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() == 0 ? "off" : engine.followPolyBlock[(size_t) b].load() != 0 ? "poly" : "on") + "  (tilt up / down)";
             case 8: return "Scale " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followAuto.load() != 0 ? (engine.followAutoFound.load() != 0 ? String ("auto: ") + String (juce::StringArray { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" }[engine.followRoot.load()]) + " " : String ("auto: listening ")) : String()) + (engine.followAuto.load() != 0 && engine.followAutoFound.load() == 0 ? String() : String (engine.followType.load() == 0 ? "major" : "minor")) + "  (all blocks)";
-            case 9: return "Set the zone again";
+            case 9: { const int rm = engine.repeatMode[(size_t) b].load(); return "Repeat " + String::fromUTF8 ("\xc2\xb7 ") + (rm == 0 ? "loop" : rm == 1 ? "once" : "hold at end") + "  (tilt up / down)"; }
+            case 10: return "Set the zone again";
             default: return armed ? "Press again to delete" : "Delete block";
         }
     }
@@ -1442,6 +1443,7 @@ private:
             case 5: return engine.isSp (b);
             case 6: return engine.mfBlock.load() == b;
             case 7: return engine.followBlock[(size_t) b].load() != 0;
+            case 9: return engine.repeatMode[(size_t) b].load() != 0;
             default: return false;
         }
     }
@@ -1471,6 +1473,16 @@ private:
         refreshAll();
     }
 
+    // τρόπος επανάληψης του επόμενου layer: loop / once / hold at end
+    void s88StepRepeat (int b, int dir, bool wrap)
+    {
+        if (! isActive (b)) return;
+        const int cur = engine.repeatMode[(size_t) b].load();
+        engine.repeatMode[(size_t) b] = wrap ? (cur + dir + 3) % 3 : jlimit (0, 2, cur + dir);
+        saveNow();
+        refreshAll();
+    }
+
     void s88StepCurve (int b, int dir)
     {
         if (! isActive (b)) return;
@@ -1494,7 +1506,8 @@ private:
             case 6: if (keyboardView.onToggleMf) keyboardView.onToggleMf (b); break;
             case 7: if (keyboardView.onToggleFollowBlock) keyboardView.onToggleFollowBlock (b); break;
             case 8: s88StepScale (1, true); break;   // πάτημα: επόμενη κλίμακα (και με κλίση πάνω/κάτω)
-            case 9: if (keyboardView.onRedoZone) keyboardView.onRedoZone (b); break;
+            case 9: s88StepRepeat (b, 1, true); break;   // πάτημα: επόμενος τρόπος (και με κλίση πάνω/κάτω)
+            case 10: if (keyboardView.onRedoZone) keyboardView.onRedoZone (b); break;
             default:
                 if (Time::getMillisecondCounter() < s88RemoveArmUntil) { s88RemoveArmUntil = 0; removeBlock (b); }   // σβήσιμο: δύο πατήματα, όπως στον Mac
                 else { s88RemoveArmUntil = Time::getMillisecondCounter() + 3000; setMessage (gr ("Press again to delete the block")); }
@@ -1509,7 +1522,7 @@ private:
         if (auto* pl = engine.getPlugin (b)) { pn = pl->getName(); hasSnap = thumbFor (pn).isValid(); }
         String s = "B" + String (b) + "," + String (s88MenuSel) + "," + String (engine.lo[(size_t) b].load()) + "," + String (engine.hi[(size_t) b].load()) + ","
                    + String ((int) (engine.volPos[(size_t) b].load() * 200.0f)) + "," + pn + "," + String ((int) hasSnap) + ",";
-        for (int i = 0; i < 11; ++i) s += s88MenuLabel (i, b) + "|";
+        for (int i = 0; i < 12; ++i) s += s88MenuLabel (i, b) + "|";
         return s;
     }
 
@@ -1592,7 +1605,7 @@ private:
 
         // ---- δεξιά: 10 κυκλάκια, 5×2 ----
         const float D = 54.0f, gap = 11.0f, gx = 14.0f + (452.0f - (6.0f * D + 5.0f * gap)) * 0.5f;
-        for (int i = 0; i < 11; ++i)
+        for (int i = 0; i < 12; ++i)
         {
             const float cx = gx + (float) (i % 6) * (D + gap), cy = 62.0f + (float) (i / 6) * (D + 12.0f);
             gRt.setColour (Colours::black); gRt.fillEllipse (cx, cy, D, D);
@@ -1636,7 +1649,22 @@ private:
                     if (engine.followAuto.load() != 0) gRt.fillEllipse (cx + D - 16.0f, cy + 8.0f, 7.0f, 7.0f);   // τελεία = αυτόματη εύρεση
                     break;
                 }
-                case 9: gRt.drawText (String::fromUTF8 ("\xe2\x9f\xb2"), r, Justification::centred, false); break;
+                case 9:   // Repeat: ∞ = loop, →| = once, →‖ = hold at end
+                {
+                    const int rm = engine.repeatMode[(size_t) b].load();
+                    const float mx = cx + D * 0.5f, my = cy + D * 0.5f;
+                    if (rm == 0) gRt.drawText (String::fromUTF8 ("\xe2\x88\x9e"), r, Justification::centred, false);
+                    else
+                    {
+                        const float x0 = rm == 1 ? mx - 15.0f : mx - 18.0f, x1 = rm == 1 ? mx + 8.0f : mx + 2.0f;
+                        gRt.drawLine (x0, my, x1, my, 3.0f);
+                        Path ar; ar.addTriangle (x1, my - 6.0f, x1 + 7.0f, my, x1, my + 6.0f); gRt.fillPath (ar);
+                        if (rm == 1) gRt.drawLine (mx + 19.0f, my - 10.0f, mx + 19.0f, my + 10.0f, 3.0f);
+                        else { gRt.drawLine (mx + 14.0f, my - 10.0f, mx + 14.0f, my + 10.0f, 3.0f); gRt.drawLine (mx + 20.0f, my - 10.0f, mx + 20.0f, my + 10.0f, 3.0f); }
+                    }
+                    break;
+                }
+                case 10: gRt.drawText (String::fromUTF8 ("\xe2\x9f\xb2"), r, Justification::centred, false); break;
                 default:
                     gRt.setColour (Time::getMillisecondCounter() < s88RemoveArmUntil ? hobby::kRed : white);
                     gRt.drawLine (cx + 18.0f, cy + 18.0f, cx + D - 18.0f, cy + D - 18.0f, 3.0f);
@@ -4165,6 +4193,7 @@ private:
             e->setAttribute ("stype", engine.smartType[(size_t) b].load());
             e->setAttribute ("nofollow", engine.followBlock[(size_t) b].load() == 0 ? 1 : 0);
             e->setAttribute ("fpoly", engine.followPolyBlock[(size_t) b].load());
+            e->setAttribute ("rep", engine.repeatMode[(size_t) b].load());
             e->setAttribute ("off", engine.blockOff[(size_t) b].load());
             e->setAttribute ("special", engine.specialBlock.load() == b ? 1 : engine.specialBlock2.load() == b ? 2 : 0);
             e->setAttribute ("mf", engine.mfBlock.load() == b ? 1 : 0);
@@ -4191,6 +4220,9 @@ private:
                     StringArray lb;
                     for (auto v : snap.layerBeats) lb.add (String (v, 4));
                     l->setAttribute ("layerBeats", lb.joinIntoString (" "));
+                    StringArray lm;
+                    for (auto v : snap.layerMode) lm.add (String (v));
+                    l->setAttribute ("layerMode", lm.joinIntoString (" "));
                 }
                 l->setAttribute ("mute", (int) snap.mute);
                 for (auto& layer : snap.layers)
@@ -4403,6 +4435,7 @@ private:
             engine.followBlock[(size_t) slot] = e->hasAttribute ("nofollow") ? (e->getIntAttribute ("nofollow", 0) != 0 ? 0 : 1)
                                                                               : (engine.smartType[(size_t) slot].load() == 6 ? 0 : 1);
             engine.followPolyBlock[(size_t) slot] = engine.followBlock[(size_t) slot].load() != 0 ? jlimit (0, 1, e->getIntAttribute ("fpoly", 0)) : 0;
+            engine.repeatMode[(size_t) slot] = jlimit (0, 2, e->getIntAttribute ("rep", 0));
             engine.smartResetApp (slot);
             engine.blockOff[(size_t) slot]   = jlimit (0, 1, e->getIntAttribute ("off", 0));
             { const int spv = e->getIntAttribute ("special", 0); if (spv == 1) engine.specialBlock = slot; else if (spv >= 2) engine.specialBlock2 = slot; }
@@ -4489,6 +4522,10 @@ private:
                 lb.addTokens (l->getStringAttribute ("layerBeats"), " ", "");
                 lb.removeEmptyStrings();
                 for (auto& s : lb) snap.layerBeats.push_back (s.getDoubleValue());
+                StringArray lm;
+                lm.addTokens (l->getStringAttribute ("layerMode"), " ", "");
+                lm.removeEmptyStrings();
+                for (auto& s : lm) snap.layerMode.push_back (s.getIntValue());
             }
             if (snap.beats > 0.0 && ! snap.layers.empty())
                 engine.setLoop (slot, snap);

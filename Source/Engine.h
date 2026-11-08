@@ -38,7 +38,7 @@ namespace flow
 
     enum LoopState { loopOff = 0, loopRec = 1, loopPlay = 2, loopOver = 3 };
     constexpr int maxLayers = 32;
-    constexpr int maxOverdubLayers = 2;   // όριο overdub: 2 στρώματα ανά λούπα
+    constexpr int maxOverdubLayers = 3;   // όριο: 3 στρώματα ανά λούπα (το 1ο + 2 overdub), το καθένα με δικό του μήκος και τρόπο επανάληψης
     // κουμπιά που ανατίθενται σε πετάλι ή πλήκτρο (MIDI learn)
     enum Control { ctlHold = 0, ctlRec, ctlUndo, ctlStop, ctlTape, ctlMetro, ctlPanic, ctlScenePrev, ctlSceneNext, ctlMute, ctlSpecial, numControls };
 
@@ -81,6 +81,7 @@ namespace flow
 
     struct LoopSnapshot
     {
+        std::vector<int> layerMode;       // τρόπος επανάληψης κάθε layer: 0 loop, 1 once, 2 hold at end
         double beats = 0.0;
         double anchor = 0.0;              // αρχή της λούπας (beat mod μήκος): από εκεί ξαναρχίζει όταν τελειώνει
         std::vector<double> layerBeats;   // μήκος κάθε layer (το loop είναι το μεγαλύτερο, τα άλλα επαναλαμβάνονται)
@@ -139,7 +140,7 @@ namespace flow
                 volPos[b] = 1.0f; gainOut[b] = 1.0f;
                 volMap[b] = 0;
                 if (b < numPedals) pedalCc[(size_t) b] = 20 + b;
-                followBlock[b] = 1; followPolyBlock[b] = 0;
+                followBlock[b] = 1; followPolyBlock[b] = 0; repeatMode[b] = 0;
                 smartType[b] = 0; smartWidth[b] = 0.0f; smartNeedWidth[b] = 1.0f;
                 smartAutoT[b] = 0; for (int q = 0; q < 4; ++q) smartFeat[b][(size_t) q] = 0.0f;
                 for (int k = 0; k < smartBands; ++k) { smartBand[b][(size_t) k] = 0.0f; smartNeed[b][(size_t) k] = 0.0f; }
@@ -256,6 +257,9 @@ namespace flow
             ++changeCount;
         }
         std::array<std::atomic<int>, numBlocks> followBlock;             // 1 = το block ακολουθεί
+        std::array<std::atomic<int>, numBlocks> repeatMode;               // τρόπος επανάληψης του ΕΠΟΜΕΝΟΥ layer που θα ηχογραφηθεί: 0 loop, 1 once (single shot), 2 hold at end
+        std::atomic<int> chordGen { 0 };                                  // αυξάνεται όταν αλλάζει η συγχορδία (νέο πάτημα με άλλη ρίζα ή τύπο): ξαναπαίζουν τα hold-at-end
+        int lastChordKey = -1;
         std::array<std::atomic<int>, numBlocks> followPolyBlock;         // 1 = το block ακολουθεί πολυφωνικά (μόνο με followBlock = 1)
         bool anyFollowPoly() const { for (int i = 0; i < numBlocks; ++i) if (followBlock[(size_t) i].load() != 0 && followPolyBlock[(size_t) i].load() != 0) return true; return false; }
         // Follow on/off (πλήκτρο B0 ή οθόνη): όταν ανάβει, η τελευταία συγχορδία που κράτησες με σβηστό Follow γίνεται η τονικότητα πηγής
@@ -585,7 +589,7 @@ namespace flow
                 }
             }
             B.seenStop = cmdStop[(size_t) b].load();
-                B.seenMute = cmdMute[(size_t) b].load();
+                B.seenMute = cmdMute[(size_t) b].load(); B.seenChord = chordGen.load();
                 loopStateOut[b] = loopOff;
                 loopBeatsOut[b] = 0.0;
                 loopLayersOut[b] = 0;
@@ -671,8 +675,8 @@ namespace flow
             snap.beats = B.loopBeats;
             snap.anchor = std::fmod (std::fmod (B.loopAnchor, B.loopBeats) + B.loopBeats, B.loopBeats);
             snap.mute = B.muteMask;
-            snap.layers.clear();
-            for (int l = 0; l < B.nLayers; ++l) { snap.layers.push_back (B.layerEv[(size_t) l]); snap.layerBeats.push_back (B.layerBeats[(size_t) l]); }
+            snap.layers.clear(); snap.layerBeats.clear(); snap.layerMode.clear();
+            for (int l = 0; l < B.nLayers; ++l) { snap.layers.push_back (B.layerEv[(size_t) l]); snap.layerBeats.push_back (B.layerBeats[(size_t) l]); snap.layerMode.push_back (B.layerMode[(size_t) l]); }
             return true;
         }
 
@@ -694,6 +698,12 @@ namespace flow
                 B.loopBeats = std::max (B.loopBeats, lb);
             }
             if (B.nLayers == 0) B.loopBeats = snap.beats;
+            for (int l = 0; l < maxLayers; ++l)
+            {
+                B.layerMode[(size_t) l] = l < B.nLayers && (size_t) l < snap.layerMode.size() ? juce::jlimit (0, 2, snap.layerMode[(size_t) l]) : 0;
+                B.layerStart[(size_t) l] = -1.0;
+                B.layerArm[(size_t) l] = (B.layerMode[(size_t) l] != 0) ? -2.0 : -1.0;   // once/hold ξεκινούν στο επόμενο μέτρο
+            }
             B.muteMask = snap.mute;
             B.loopAnchor = snap.anchor;
             B.loopState = B.nLayers > 0 ? loopPlay : loopOff;
@@ -869,7 +879,7 @@ namespace flow
                     B.seenMain = cmdMain[(size_t) b].load();
                     B.seenUndo = cmdUndo[(size_t) b].load();
                     B.seenStop = cmdStop[(size_t) b].load();
-                    B.seenMute = cmdMute[(size_t) b].load();
+                    B.seenMute = cmdMute[(size_t) b].load(); B.seenChord = chordGen.load();
                     continue;
                 }
 
@@ -1064,6 +1074,10 @@ namespace flow
             AutoHit autoHit;
             std::array<std::vector<LoopEvent>, maxLayers> layerEv;
             std::array<double, maxLayers> layerBeats {};
+            std::array<int, maxLayers> layerMode {};        // 0 loop, 1 once, 2 hold at end
+            std::array<double, maxLayers> layerStart {};    // once/hold: beat που ξεκίνησε το τρέχον παίξιμο (<0 = δεν παίζει)
+            std::array<double, maxLayers> layerArm {};      // once/hold: προγραμματισμένη εκκίνηση (beat), -2 = στο επόμενο μέτρο, <0 = καμία
+            int curMode = 0, wantMode = 0, seenChord = 0;
             int nLayers = 0;
             unsigned muteMask = 0;
             int seenMain = 0, seenUndo = 0, seenStop = 0, seenMute = 0, seenPanic = 0, taps = 0;
@@ -1109,6 +1123,7 @@ namespace flow
                 loopState = loopOff; recStart = 0.0; loopBeats = 0.0; loopAnchor = 0.0;
                 rec.clear();
                 for (auto& l : layerEv) l.clear();
+                layerMode.fill (0); layerStart.fill (-1.0); layerArm.fill (-1.0); curMode = 0;
                 nLayers = 0; muteMask = 0; taps = 0; lastTap = 0; stopped = false; userStopped = false; undoTaps = 0; stopTapValid = false; loopSusMask = 0; loopBendMask = 0;
                 out.clear();
             }
@@ -1202,6 +1217,7 @@ namespace flow
             const int root = lowest % 12;
             const bool m3 = ((mask >> ((root + 3) % 12)) & 1) != 0, M3 = ((mask >> ((root + 4) % 12)) & 1) != 0;
             const int type = (m3 && ! M3) ? 1 : (M3 && ! m3) ? 0 : followType.load();
+            if (root * 2 + type != lastChordKey) { lastChordKey = root * 2 + type; ++chordGen; }   // αλλαγή συγχορδίας: ξαναπαίζουν τα hold-at-end
             if (followOn.load() == 0)    // με σβηστό Follow: μαθαίνει την τονικότητα πηγής από την τελευταία συγχορδία
             {
                 followHomeRoot = root; followHomeType = type; followHomeSet = 1;
@@ -2297,6 +2313,7 @@ namespace flow
             B.rec.clear();
             for (auto& l : B.layerEv) l.clear();
             B.nLayers = 0;
+            B.layerMode.fill (0); B.layerStart.fill (-1.0); B.layerArm.fill (-1.0);
             B.muteMask = 0;
             B.taps = 0;
             B.stopped = false;
@@ -2308,7 +2325,8 @@ namespace flow
         // κλείνει το layer που ηχογραφείται (rec) και το προσθέτει στο loop. Επιστρέφει true αν είχε νότες.
         bool commitLayer (Block& B, double beatNow, double len)
         {
-            const double anchor = B.nLayers > 0 ? B.loopAnchor : B.recStart;   // η λούπα ξεκινά εκεί που ξεκίνησε η εγγραφή
+            // loop: η φάση μετριέται από την αρχή της λούπας· once / hold at end: από την αρχή της δικής τους εγγραφής (παίζουν από εκεί που ξεκίνησες)
+            const double anchor = (B.nLayers > 0 && B.curMode == 0) ? B.loopAnchor : B.recStart;
             const double rawElapsed = std::max (1.0e-6, beatNow - B.recStart);
             const double elapsed = std::max (1.0e-6, std::min (len, rawElapsed));
             // το μήκος στρογγυλεύτηκε στο πλησιέστερο μέτρο: αν η διαφορά είναι μέχρι ένα beat, οι νότες προσαρμόζονται αναλογικά
@@ -2402,6 +2420,9 @@ namespace flow
             if (dst.empty()) return false;
             if (B.nLayers == 0) B.loopAnchor = B.recStart;
             B.layerBeats[(size_t) B.nLayers] = len;
+            B.layerMode[(size_t) B.nLayers] = B.curMode;
+            B.layerStart[(size_t) B.nLayers] = B.curMode != 0 ? beatNow : -1.0;   // το once/hold που μόλις ηχογράφησες παίζει αμέσως από την αρχή
+            B.layerArm[(size_t) B.nLayers] = -1.0;
             ++B.nLayers;
             B.loopBeats = 0.0;
             for (int l = 0; l < B.nLayers; ++l) B.loopBeats = std::max (B.loopBeats, B.layerBeats[(size_t) l]);
@@ -2496,6 +2517,7 @@ namespace flow
                 case loopOff:
                 {
                     // η εγγραφή ξεκινά ακριβώς στο πάτημα (Rec MIDI loop): εκεί είναι η αρχή της λούπας και το τέλος της οδηγεί πάλι εκεί
+                    B.curMode = B.wantMode;
                     B.recStart = beat;
                     B.rec.clear();
                     B.recOpen.reset();
@@ -2518,8 +2540,9 @@ namespace flow
                     break;
                 }
                 case loopPlay:
-                    if (B.nLayers < maxOverdubLayers)   // overdub: μέχρι 2 στρώματα. Κλείνει όταν συμπληρωθεί ένας κύκλος ή με νέο πάτημα
+                    if (B.nLayers < maxOverdubLayers)   // overdub: μέχρι 3 στρώματα συνολικά, το καθένα με δικό του μήκος και τρόπο επανάληψης
                     {
+                        B.curMode = B.wantMode;
                         B.recStart = beat;
                         B.rec.clear();
                         B.recOpen.reset();
@@ -2944,6 +2967,7 @@ namespace flow
             {
                 ++B.seenMain;
                 if (B.autoPaused) { B.autoPaused = false; B.hist.clear(); B.lastDetect = 0; }
+                B.wantMode = juce::jlimit (0, 2, repeatMode[(size_t) b].load());
                 loopMain (B, beat0);
             }
 
@@ -2964,6 +2988,7 @@ namespace flow
                         --B.nLayers;
                         B.layerEv[(size_t) B.nLayers].clear();
                         B.layerBeats[(size_t) B.nLayers] = 0.0;
+                        B.layerMode[(size_t) B.nLayers] = 0; B.layerStart[(size_t) B.nLayers] = -1.0; B.layerArm[(size_t) B.nLayers] = -1.0;
                         B.muteMask &= ~(1u << B.nLayers);
                         B.loopBeats = 0.0;
                         for (int l = 0; l < B.nLayers; ++l) B.loopBeats = std::max (B.loopBeats, B.layerBeats[(size_t) l]);
@@ -2994,7 +3019,13 @@ namespace flow
             for (int cs = cmdStop[(size_t) b].load(); B.seenStop != cs; ) { ++B.seenStop; B.userStopped = ! B.userStopped; }   // στοπ / play της λούπας του block
             {   // σταματούν με κομμένες νότες και ξαναμπαίνουν στη φάση τους (κουμπί του block ή Play/Stop όλων)
                 const bool st = B.userStopped || loopsStopped.load() != 0;
-                if (st != B.stopped) { B.stopped = st; if (st) cutLoopNotes (B); }
+                if (st != B.stopped)
+                {
+                    B.stopped = st;
+                    if (st) cutLoopNotes (B);
+                    for (int l = 0; l < B.nLayers; ++l)   // once / hold: στο στοπ σταματούν· στο play ξαναπαίζουν από την αρχή στο επόμενο μέτρο
+                        if (B.layerMode[(size_t) l] != 0) { B.layerStart[(size_t) l] = -1.0; B.layerArm[(size_t) l] = st ? -1.0 : -2.0; }
+                }
             }
             juce::ignoreUnused (tapWindow);
 
@@ -3002,6 +3033,34 @@ namespace flow
                 finishRecording (B, beat0);
             else if (B.loopState == loopOver && (beat0 - B.recStart) >= (double) maxLoopBars * beatsPerBar)
                 finishOverdub (B, beat0);
+
+            {   // once / hold at end: εκκινήσεις (στο επόμενο μέτρο) και αλλαγή συγχορδίας
+                const int cg = chordGen.load();
+                const bool chordChanged = cg != B.seenChord;
+                B.seenChord = cg;
+                if ((B.loopState == loopPlay || B.loopState == loopOver) && B.loopBeats > 0.0 && ! B.stopped)
+                {
+                    bool cut = false;
+                    for (int l = 0; l < B.nLayers; ++l)
+                    {
+                        const auto ul = (size_t) l;
+                        if (B.layerMode[ul] == 0) continue;
+                        if (chordChanged && B.layerMode[ul] == 2 && ((B.muteMask >> l) & 1u) == 0) B.layerArm[ul] = -2.0;
+                        if (B.layerArm[ul] == -2.0)
+                        {
+                            const double k = std::ceil ((beat0 - B.loopAnchor) / beatsPerBar - 1.0e-9);
+                            B.layerArm[ul] = B.loopAnchor + k * beatsPerBar;
+                        }
+                        if (B.layerArm[ul] >= 0.0 && B.layerArm[ul] < beat1)
+                        {
+                            if (B.layerStart[ul] >= 0.0) cut = true;   // ξαναρχίζει ενώ έπαιζε: κόβονται οι νότες που ηχούν
+                            B.layerStart[ul] = B.layerArm[ul];
+                            B.layerArm[ul] = -1.0;
+                        }
+                    }
+                    if (cut) cutLoopNotes (B);
+                }
+            }
 
             // ---- collect everything that happens in this block
             actions.clear();
@@ -3034,20 +3093,37 @@ namespace flow
                 for (int layer = 0; layer < B.nLayers; ++layer)
                 {
                     if ((B.muteMask >> layer) & 1u) continue;
-                    const double L = B.layerBeats[(size_t) layer] > 0.0 ? B.layerBeats[(size_t) layer] : L0;
-
-                    for (const auto& e : B.layerEv[(size_t) layer])
+                    const auto ul = (size_t) layer;
+                    const double L = B.layerBeats[ul] > 0.0 ? B.layerBeats[ul] : L0;
+                    const int age = B.nLayers - 1 - layer;                         // 0 = το νεότερο layer
+                    const float lgain = age == 0 ? 1.0f : age == 1 ? 0.75f : 0.55f;   // το πιο πρόσφατο ακούγεται περισσότερο, τα παλιότερα πιο πίσω
+                    auto push = [&] (double x, const LoopEvent& e)
                     {
-                        for (double m = std::floor ((beat0 - B.loopAnchor) / L); m <= std::floor ((beat1 - 1.0e-9 - B.loopAnchor) / L); m += 1.0)
+                        Action a;
+                        a.pos = juce::jlimit (0, numSamples - 1, (int) ((x - beat0) / blkBps));
+                        a.order = 3; a.kind = Kind::LoopEvt;
+                        a.note = e.note; a.on = e.on; a.rawLoop = e.isRaw; a.d2 = e.d2;
+                        a.vel = (e.on && ! e.isRaw) ? juce::jmax (1, (int) std::lround ((float) e.vel * lgain)) : e.vel;
+                        actions.push_back (a);
+                    };
+
+                    if (B.layerMode[ul] == 0)   // loop: συνεχής επανάληψη
+                    {
+                        for (const auto& e : B.layerEv[ul])
+                            for (double m = std::floor ((beat0 - B.loopAnchor) / L); m <= std::floor ((beat1 - 1.0e-9 - B.loopAnchor) / L); m += 1.0)
+                            {
+                                const double x = B.loopAnchor + m * L + e.phase;
+                                if (x >= beat0 && x < beat1) push (x, e);
+                            }
+                    }
+                    else if (B.layerStart[ul] >= 0.0)   // once / hold at end: παίζει μία φορά από την αρχή του και μετά περιμένει
+                    {
+                        for (const auto& e : B.layerEv[ul])
                         {
-                            const double x = B.loopAnchor + m * L + e.phase;
-                            if (x < beat0 || x >= beat1) continue;
-                            Action a;
-                            a.pos = juce::jlimit (0, numSamples - 1, (int) ((x - beat0) / blkBps));
-                            a.order = 3; a.kind = Kind::LoopEvt;
-                            a.note = e.note; a.vel = e.vel; a.on = e.on; a.rawLoop = e.isRaw; a.d2 = e.d2;
-                            actions.push_back (a);
+                            const double x = B.layerStart[ul] + e.phase;
+                            if (x >= beat0 && x < beat1) push (x, e);
                         }
+                        if (beat1 >= B.layerStart[ul] + L - 1.0e-9) B.layerStart[ul] = -1.0;   // τελείωσε: σιωπή μέχρι νέα εκκίνηση
                     }
                 }
             }
