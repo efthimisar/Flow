@@ -1589,8 +1589,10 @@ namespace flow
         std::vector<int> asHist;                 // πρόσφατες νότες του παίκτη
         double asLastPlayer = -1.0e9;
         std::atomic<bool> asClear { false }, asClearModel { false };
-        // style: Markov μεταβλητής τάξης (Continuator-like). Κατάσταση = νότα*8 + απόσταση από την προηγούμενη νότα σε βήματα 1/8 (0..7)
+        // style: Markov μεταβλητής τάξης (Continuator-like). Κατάσταση = (νότα*8 + απόσταση από την προηγούμενη νότα σε βήματα 1/8 (0..7))*4 + κλάση διάρκειας (0: έως 0.5 beat, 1: ~1, 2: ~2, 3: 4+)
         std::map<uint64_t, std::vector<uint16_t>> asModel;
+        static std::array<int, 128> asNegArr() { std::array<int, 128> a; a.fill (-1); return a; }
+        std::array<int, 128> asPendGs = asNegArr();   // απόσταση της νότας που κρατιέται (-1 = όχι σε αναμονή). Η κατάσταση ολοκληρώνεται στο άφημα, όταν είναι γνωστή η διάρκεια
         std::vector<uint16_t> asSeq, asGenSeq;   // τελευταίες καταστάσεις του παίκτη / της γενιάς του βοηθού
         static constexpr int asMaxOrder = 4;
         // orch: κρατημένες συγχορδίες που ακολουθούν την αρμονία του παίκτη
@@ -1630,6 +1632,18 @@ namespace flow
             uint64_t h = 1469598103934665603ull ^ (uint64_t) k;
             for (size_t i = q.size() - (size_t) k; i < q.size(); ++i) h = (h ^ q[i]) * 1099511628211ull;
             return h;
+        }
+        void asFinish (int n, double beat)   // άφημα πλήκτρου: ολοκλήρωση κατάστασης με διάρκεια και εκμάθηση
+        {
+            const int gs = asPendGs[(size_t) n & 127];
+            if (gs < 0) return;
+            asPendGs[(size_t) n & 127] = -1;
+            const double d = beat - asOnBeat[(size_t) n & 127];
+            const int dc = d < 0.75 ? 0 : d < 1.5 ? 1 : d < 3.0 ? 2 : 3;
+            const uint16_t st = (uint16_t) (((n & 127) * 8 + gs) * 4 + dc);
+            asLearn (st);
+            asSeq.push_back (st);
+            if ((int) asSeq.size() > asMaxOrder) asSeq.erase (asSeq.begin());
         }
         void asLearn (uint16_t next)   // asSeq = ιστορικό πριν την next
         {
@@ -1677,9 +1691,20 @@ namespace flow
                 if (st < 0) { asGenSeq = asSeq; return; }
                 asGenSeq.push_back ((uint16_t) st);
                 if ((int) asGenSeq.size() > asMaxOrder) asGenSeq.erase (asGenSeq.begin());
-                const int gap = st & 7;
+                const int gap = (st >> 2) & 7, dc = st & 3;
                 if (i > 0) t += (double) juce::jmax (1, gap) * asGrid;
-                asSchedule (b, t, asPlace (st >> 3), vel, asGrid * 0.9);
+                static const double durs[4] { 0.5, 1.0, 2.0, 4.0 };
+                int note = asPlace (st >> 5);
+                if (asMode[(size_t) b].load() == 3)   // orch: η φράση πατά πάνω στη συγχορδία που κρατά ο βοηθός
+                {
+                    const uint32_t mask = asOrchKey[(size_t) b] & 0xFFFFu;
+                    if (mask == 0) return;
+                    int best = note, bd = 99;
+                    for (int d = -6; d <= 6; ++d)
+                        if (((mask >> (((note + d) % 12 + 12) % 12)) & 1u) && std::abs (d) < bd) { bd = std::abs (d); best = note + d; }
+                    note = juce::jlimit (21, 108, best);
+                }
+                asSchedule (b, t, note, vel, durs[dc] * 0.92);
             }
         }
 
@@ -1694,10 +1719,7 @@ namespace flow
                 const double gapB = beat - asLastPlayer;
                 if (gapB > 8.0) { asSeq.clear(); asGenSeq.clear(); }
                 const int gs = gapB > 8.0 ? 0 : juce::jlimit (0, 7, (int) std::lround (gapB / asGrid));
-                const uint16_t st = (uint16_t) (n * 8 + gs);
-                asLearn (st);
-                asSeq.push_back (st);
-                if ((int) asSeq.size() > asMaxOrder) asSeq.erase (asSeq.begin());
+                asPendGs[(size_t) n & 127] = gs;
                 asGenSeq.clear();   // η νέα φράση του παίκτη ξαναρχίζει το πλαίσιο της γενιάς
             }
             asLastPlayer = beat;
@@ -1705,11 +1727,16 @@ namespace flow
             if (asHist.size() > 16) asHist.erase (asHist.begin());
             for (int b = 0; b < numBlocks; ++b)
             {
-                if (asMode[(size_t) b].load() == 0 || asMode[(size_t) b].load() == 3) continue;
+                if (asMode[(size_t) b].load() == 0) continue;
                 const int pct = asPct[(size_t) b].load();
                 if (asRng.nextInt (100) >= pct) continue;
                 const double t = std::ceil ((beat + 0.02) / asGrid) * asGrid;
-                if (asMode[(size_t) b].load() == 2) { asPhrase (b, t, (int) ((float) vel * 0.7f)); continue; }
+                if (asMode[(size_t) b].load() >= 2)   // style και orch: φράση από το μοντέλο (στο orch με μισή πιθανότητα, πάνω στη συγχορδία)
+                {
+                    if (asMode[(size_t) b].load() == 3 && asRng.nextBool()) continue;
+                    asPhrase (b, t, (int) ((float) vel * 0.7f));
+                    continue;
+                }
                 static const int pick[8] { 0, 1, 1, 2, 2, 3, 0, 1 };
                 int out = n;
                 switch (pick[asRng.nextInt (8)])
@@ -1803,9 +1830,9 @@ namespace flow
                 for (double g = std::ceil (beat0 / asGrid) * asGrid; g < beat1; g += asGrid)
                     for (int b = 0; b < numBlocks; ++b)
                     {
-                        if (asMode[(size_t) b].load() == 0 || asMode[(size_t) b].load() == 3) continue;
+                        if (asMode[(size_t) b].load() == 0) continue;
                         if (asRng.nextFloat() >= 0.35f * (float) asPct[(size_t) b].load() / 100.0f) continue;
-                        if (asMode[(size_t) b].load() == 2) { if (asPend[(size_t) b].empty()) asPhrase (b, g, 60); continue; }
+                        if (asMode[(size_t) b].load() >= 2) { if (asPend[(size_t) b].empty()) asPhrase (b, g, 60); continue; }
                         const int base = asHist[(size_t) asRng.nextInt ((int) asHist.size())];
                         const int out = asRng.nextBool() ? asScaleStep (base, 2) : base;
                         asSchedule (b, g, out, 60, asGrid * 0.9);
@@ -1935,7 +1962,7 @@ namespace flow
                 {
                     const int n = msg.getNoteNumber();
                     const int sp = ownerSp[(size_t) n];
-                    if (sp >= 0 || owner[(size_t) n] >= 0) asHeld.reset ((size_t) n & 127);
+                    if (sp >= 0 || owner[(size_t) n] >= 0) { asHeld.reset ((size_t) n & 127); asFinish (n, blkBeat0 + (double) pos * blkBps); }
                     if (sp >= 0)
                     {
                         ownerSp[(size_t) n] = -1;
