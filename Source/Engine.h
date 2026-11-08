@@ -321,6 +321,7 @@ namespace flow
         int smartEffType (int b) const { const int t = smartType[(size_t) b].load(); return t != 0 ? t : smartAutoT[(size_t) b].load(); }
         std::atomic<int> sceneRequest { -1 };   // από πετάλι: -2 = προηγούμενη, -3 = επόμενη (το διαβάζει το UI)
         std::atomic<int> selectedBlock { 0 };   // το block στο οποίο δρουν Hold και looper
+        std::atomic<uint32_t> playSeq { 0 };   // αυξάνεται σε κάθε νότα που παίζεις σε block: το focus ξανακολουθεί το παίξιμο και όταν το lastPlayed δεν άλλαξε
         std::atomic<int> lastPlayed { -1 };     // το block που έπαιξες τελευταίο: εκεί γράφει το Rec MIDI loop από πετάλι
         std::atomic<int> pedalMute { 0 }, pedalDel { 0 };       // πατήματα πεταλιού (mute / σβήσιμο): ο αριθμός πατημάτων = αριθμός block
         std::atomic<int> tapsMuteOut { 0 }, tapsDelOut { 0 };   // πατήματα που μετρήθηκαν τώρα (για την κεφαλίδα)
@@ -1980,7 +1981,7 @@ namespace flow
                     if (b >= 0)
                     {
                         owner[(size_t) n] = b;
-                        lastPlayed = b;
+                        lastPlayed = b; ++playSeq;
                         Action a;
                         a.pos = pos; a.order = 1; a.kind = Kind::Live; a.note = n; a.vel = msg.getVelocity(); a.on = true;
                         inActions[(size_t) b].push_back (a);

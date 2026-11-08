@@ -5191,9 +5191,10 @@ private:
         // focus: το block που έπαιξες τελευταίο γίνεται αυτόματα το επιλεγμένο (οθόνη, κουμπιά λούπας, πετάλια)
         {
             const int lp = engine.lastPlayed.load();
-            if (lp != lastFollowed)
+            const uint32_t ps = engine.playSeq.load();
+            if (lp != lastFollowed || ps != lastPlaySeq)
             {
-                lastFollowed = lp;
+                lastFollowed = lp; lastPlaySeq = ps;
                 if (lp >= 0 && lp != selected && isActive (lp))
                 {
                     selected = lp;
@@ -5326,6 +5327,7 @@ private:
 
     Typeface::Ptr typeface;
     int selected = 0;
+    uint32_t lastPlaySeq = 0;
     int panelMode = panelInstrument, panelIndex = 0;
     bool layouting = false, inRefresh = false;
     StringArray knownMidi;
