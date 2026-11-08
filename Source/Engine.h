@@ -1628,6 +1628,8 @@ private:
             return root + o * 12 + sc[d];
         }
 
+        double asIdleSec = 0.0; bool asIdleReleased = false;   // σιωπή του παίκτη σε δευτερόλεπτα ρολογιού ήχου (ανεξάρτητα από το tempo)
+        std::array<std::bitset<128>, numBlocks> asSnd;          // νότες που ακούγονται τώρα από τον βοηθό (για σίγουρο note-off)
         uint32_t asLastMask = 0;   // μάσκα pcs της τελευταίας συγχορδίας που ανίχνευσε ο βοηθός από τον παίκτη
         // πλησιέστερη νότα της συγχορδίας από την n: dir +1 = πάνω (≥3 ημιτόνια), -1 = κάτω (≥3), 0 = η πιο κοντινή
         static int asChordToneNear (uint32_t mask, int n, int dir)
@@ -1746,7 +1748,7 @@ private:
                 asPendGs[(size_t) n & 127] = gs;
                 asGenSeq.clear();   // η νέα φράση του παίκτη ξαναρχίζει το πλαίσιο της γενιάς
             }
-            asLastPlayer = beat;
+            asLastPlayer = beat; asIdleSec = 0.0;
             asHist.push_back (n);
             if (asHist.size() > 16) asHist.erase (asHist.begin());
             for (int b = 0; b < numBlocks; ++b)
@@ -1848,7 +1850,7 @@ private:
         {
             auto& on = asOrchNotes[(size_t) b];
             auto release = [&] { for (int n : on) asEmit (b, g, n, 0, false); on.clear(); };
-            if (g - asLastPlayer > 6.0) { if (! on.empty()) release(); asOrchKey[(size_t) b] = 0; return; }
+            if (g - asLastPlayer > 6.0 || asIdleSec > 10.0) { if (! on.empty()) release(); asOrchKey[(size_t) b] = 0; return; }
             int bass = 0, vel = 70;
             const uint32_t k = asChordNow (g, bass, vel);
             if (k == 0 || k == asOrchKey[(size_t) b]) return;
@@ -1862,42 +1864,54 @@ private:
         }
 
         // γέμισμα παύσεων + παράδοση των προγραμματισμένων νοτών στο block
-        void asProcess (double beat0, double beat1)
+        void asProcess (double beat0, double beat1, double dtSec)
         {
-            if (asClear.exchange (false))
+            asIdleSec += dtSec;
+            // τα πάντα σβήνουν: όσες νότες του βοηθού ακούγονται τώρα παίρνουν note-off, και οι προγραμματισμένες ακυρώνονται
+            auto releaseAll = [&]
             {
-                for (auto& v : asPend) v.clear();
                 for (int b = 0; b < numBlocks; ++b)
                 {
-                    for (int n : asOrchNotes[(size_t) b]) asEmit (b, beat0, n, 0, false);
+                    asPend[(size_t) b].clear();
+                    for (int n = 0; n < 128; ++n)
+                        if (asSnd[(size_t) b][(size_t) n]) asPend[(size_t) b].push_back ({ beat0, n, 0, false });
                     asOrchNotes[(size_t) b].clear(); asOrchKey[(size_t) b] = 0;
                 }
-            }
+            };
+            if (asClear.exchange (false)) releaseAll();
             if (asClearModel.exchange (false)) { asModel.clear(); asSeq.clear(); asGenSeq.clear(); }
+            for (int b = 0; b < numBlocks; ++b)   // άλμα του ρολογιού (π.χ. επανεκκίνηση): τίποτα δεν μένει αναμμένο
+                for (const auto& e : asPend[(size_t) b])
+                    if (e.beat > beat1 + 64.0) { releaseAll(); break; }
+            if (asIdleSec > 15.0 && ! asIdleReleased) { releaseAll(); asIdleReleased = true; }
+            if (asIdleSec <= 15.0) asIdleReleased = false;
+
             bool any = false;
             for (int b = 0; b < numBlocks; ++b) if (asMode[(size_t) b].load() != 0) any = true;
-            if (! any) return;
 
-            for (double g = std::ceil (beat0 * 4.0) * 0.25; g < beat1; g += 0.25)
+            if (any && asIdleSec <= 15.0)
             {
-                int bs = 0, vv = 0; const uint32_t ck = asChordNow (g, bs, vv);
-                if (ck != 0) asLastMask = ck & 0xFFFFu;
-            }
-            for (double g = std::ceil (beat0 * 4.0) * 0.25; g < beat1; g += 0.25)
-                for (int b = 0; b < numBlocks; ++b)
-                    if (asMode[(size_t) b].load() == 3) asOrchStep (b, g);
-            if (! asHist.empty() && beat0 - asLastPlayer > 1.0 && beat0 - asLastPlayer < 24.0)
-                for (double g = std::ceil (beat0 / asGrid) * asGrid; g < beat1; g += asGrid)
+                for (double g = std::ceil (beat0 * 4.0) * 0.25; g < beat1; g += 0.25)
+                {
+                    int bs = 0, vv = 0; const uint32_t ck = asChordNow (g, bs, vv);
+                    if (ck != 0) asLastMask = ck & 0xFFFFu;
+                }
+                for (double g = std::ceil (beat0 * 4.0) * 0.25; g < beat1; g += 0.25)
                     for (int b = 0; b < numBlocks; ++b)
-                    {
-                        if (asMode[(size_t) b].load() == 0) continue;
-                        if (asRng.nextFloat() >= 0.35f * (float) asPct[(size_t) b].load() / 100.0f) continue;
-                        if (asMode[(size_t) b].load() >= 2) { if (asPend[(size_t) b].empty()) asPhrase (b, g, 60); continue; }
-                        if (asLastMask == 0) continue;
-                        const int base = asHist[(size_t) asRng.nextInt ((int) asHist.size())];
-                        const int out = asChordToneNear (asLastMask, base, asRng.nextBool() ? +1 : 0);
-                        asSchedule (b, g, out, 60, asGrid * 0.9);
-                    }
+                        if (asMode[(size_t) b].load() == 3) asOrchStep (b, g);
+                if (! asHist.empty() && beat0 - asLastPlayer > 1.0 && asIdleSec < 12.0)
+                    for (double g = std::ceil (beat0 / asGrid) * asGrid; g < beat1; g += asGrid)
+                        for (int b = 0; b < numBlocks; ++b)
+                        {
+                            if (asMode[(size_t) b].load() == 0) continue;
+                            if (asRng.nextFloat() >= 0.35f * (float) asPct[(size_t) b].load() / 100.0f) continue;
+                            if (asMode[(size_t) b].load() >= 2) { if (asPend[(size_t) b].empty()) asPhrase (b, g, 60); continue; }
+                            if (asLastMask == 0) continue;
+                            const int base = asHist[(size_t) asRng.nextInt ((int) asHist.size())];
+                            const int out = asChordToneNear (asLastMask, base, asRng.nextBool() ? +1 : 0);
+                            asSchedule (b, g, out, 60, asGrid * 0.9);
+                        }
+            }
 
             for (int b = 0; b < numBlocks; ++b)
             {
@@ -1910,6 +1924,7 @@ private:
                     a.order = v[i].on ? 1 : 0;
                     a.kind = Kind::Live; a.note = v[i].note; a.vel = v[i].vel; a.on = v[i].on;
                     inActions[(size_t) b].push_back (a);
+                    asSnd[(size_t) b].set ((size_t) v[i].note & 127, v[i].on);
                     v.erase (v.begin() + (long) i);
                 }
             }
@@ -2060,7 +2075,7 @@ private:
                             pushRaw (b, pos, msg);
                 }
             }
-            asProcess (blkBeat0, blkBeat0 + (double) numSamples * blkBps);
+            asProcess (blkBeat0, blkBeat0 + (double) numSamples * blkBps, (double) numSamples / sr);
         }
 
         // πετάλια και πλήκτρα ελέγχου: επιστρέφει true αν το μήνυμα το κατανάλωσε η ανάθεση (δεν πάει στα plugins)
