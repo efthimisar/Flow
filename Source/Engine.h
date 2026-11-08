@@ -1628,6 +1628,20 @@ private:
             return root + o * 12 + sc[d];
         }
 
+        uint32_t asLastMask = 0;   // μάσκα pcs της τελευταίας συγχορδίας που ανίχνευσε ο βοηθός από τον παίκτη
+        // πλησιέστερη νότα της συγχορδίας από την n: dir +1 = πάνω (≥3 ημιτόνια), -1 = κάτω (≥3), 0 = η πιο κοντινή
+        static int asChordToneNear (uint32_t mask, int n, int dir)
+        {
+            int best = n, bd = 99;
+            for (int d = -9; d <= 9; ++d)
+            {
+                if (dir > 0 && d < 3) continue;
+                if (dir < 0 && d > -3) continue;
+                if (! ((mask >> (((n + d) % 12 + 12) % 12)) & 1u)) continue;
+                if (std::abs (d) < bd) { bd = std::abs (d); best = n + d; }
+            }
+            return best == n && dir != 0 ? n - 12 : best;
+        }
         void asSchedule (int b, double beat, int note, int vel, double len)
         {
             note = juce::jlimit (21, 108, note);
@@ -1747,14 +1761,19 @@ private:
                     asPhrase (b, t, (int) ((float) vel * 0.7f));
                     continue;
                 }
-                static const int pick[8] { 0, 1, 1, 2, 2, 3, 0, 1 };
-                int out = n;
-                switch (pick[asRng.nextInt (8)])
+                // rules: μόνο νότες της συγχορδίας που ακούει από τον παίκτη (η τρέχουσα, αλλιώς η τελευταία που βρήκε)
+                int bsN = 0, vN = 0;
+                const uint32_t ck = asChordNow (beat, bsN, vN);
+                const uint32_t mask = ck != 0 ? (ck & 0xFFFFu) : asLastMask;
+                if (mask == 0) continue;
+                static const int pick[6] { 0, 1, 1, 2, 2, 3 };
+                int out = n - 12;
+                switch (pick[asRng.nextInt (6)])
                 {
-                    case 0: out = n - 12; break;               // οκτάβα κάτω
-                    case 1: out = asScaleStep (n, 2); break;   // τρίτη πάνω
-                    case 2: out = asScaleStep (n, 4); break;   // πέμπτη πάνω
-                    default: out = n + 12; break;              // οκτάβα πάνω
+                    case 1: out = asChordToneNear (mask, n, +1); break;   // επόμενη νότα της συγχορδίας πάνω (≥ τρίτη)
+                    case 2: out = asChordToneNear (mask, n, -1); break;   // προηγούμενη νότα της συγχορδίας κάτω
+                    case 3: out = n + 12; break;
+                    default: break;                                       // οκτάβα κάτω
                 }
                 asSchedule (b, t, out, (int) ((float) vel * 0.7f), asGrid * 0.9);
             }
@@ -1860,6 +1879,11 @@ private:
             if (! any) return;
 
             for (double g = std::ceil (beat0 * 4.0) * 0.25; g < beat1; g += 0.25)
+            {
+                int bs = 0, vv = 0; const uint32_t ck = asChordNow (g, bs, vv);
+                if (ck != 0) asLastMask = ck & 0xFFFFu;
+            }
+            for (double g = std::ceil (beat0 * 4.0) * 0.25; g < beat1; g += 0.25)
                 for (int b = 0; b < numBlocks; ++b)
                     if (asMode[(size_t) b].load() == 3) asOrchStep (b, g);
             if (! asHist.empty() && beat0 - asLastPlayer > 1.0 && beat0 - asLastPlayer < 24.0)
@@ -1869,8 +1893,9 @@ private:
                         if (asMode[(size_t) b].load() == 0) continue;
                         if (asRng.nextFloat() >= 0.35f * (float) asPct[(size_t) b].load() / 100.0f) continue;
                         if (asMode[(size_t) b].load() >= 2) { if (asPend[(size_t) b].empty()) asPhrase (b, g, 60); continue; }
+                        if (asLastMask == 0) continue;
                         const int base = asHist[(size_t) asRng.nextInt ((int) asHist.size())];
-                        const int out = asRng.nextBool() ? asScaleStep (base, 2) : base;
+                        const int out = asChordToneNear (asLastMask, base, asRng.nextBool() ? +1 : 0);
                         asSchedule (b, g, out, 60, asGrid * 0.9);
                     }
 
