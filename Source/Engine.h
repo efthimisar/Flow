@@ -140,7 +140,7 @@ namespace flow
                 volPos[b] = 1.0f; gainOut[b] = 1.0f;
                 volMap[b] = 0;
                 if (b < numPedals) pedalCc[(size_t) b] = 20 + b;
-                followBlock[b] = 1; followPolyBlock[b] = 0; repeatMode[b] = 0;
+                followBlock[b] = 1; followPolyBlock[b] = 0; repeatMode[b] = 0; asMode[b] = 0; asPct[b] = 60; asLo[b] = firstPlayNote; asHi[b] = firstPlayNote;
                 smartType[b] = 0; smartWidth[b] = 0.0f; smartNeedWidth[b] = 1.0f;
                 smartAutoT[b] = 0; for (int q = 0; q < 4; ++q) smartFeat[b][(size_t) q] = 0.0f;
                 for (int k = 0; k < smartBands; ++k) { smartBand[b][(size_t) k] = 0.0f; smartNeed[b][(size_t) k] = 0.0f; }
@@ -261,6 +261,23 @@ namespace flow
         std::atomic<int> chordGen { 0 };                                  // αυξάνεται όταν αλλάζει η συγχορδία (νέο πάτημα με άλλη ρίζα ή τύπο): ξαναπαίζουν τα hold-at-end
         int lastChordKey = -1;
         std::array<std::atomic<int>, numBlocks> followPolyBlock;         // 1 = το block ακολουθεί πολυφωνικά (μόνο με followBlock = 1)
+        // AS (Assistant): το block γίνεται δεύτερος παίκτης. 0 = off, 1 = rules, 2 = style (δεύτερο build)
+        // Η ζώνη του φυλάσσεται (asLo/asHi) και επανέρχεται όταν κλείσει. Δεν ακούει τα πλήκτρα του παίκτη.
+        std::array<std::atomic<int>, numBlocks> asMode, asPct, asLo, asHi;
+        bool isAs (int b) const { return b >= 0 && b < numBlocks && asMode[(size_t) b].load() != 0; }
+        void setAsMode (int b, int m)
+        {
+            if (b < 0 || b >= numBlocks) return;
+            m = juce::jlimit (0, 1, m);   // 2 (style) δεν υπάρχει ακόμη
+            const int old = asMode[(size_t) b].load();
+            if (m == old) return;
+            if (old == 0 && m != 0) { asLo[(size_t) b] = lo[(size_t) b].load(); asHi[(size_t) b] = hi[(size_t) b].load(); }
+            if (old != 0 && m == 0) { lo[(size_t) b] = asLo[(size_t) b].load(); hi[(size_t) b] = asHi[(size_t) b].load(); }
+            asMode[(size_t) b] = m;
+            asClear = true;
+            ++changeCount;
+        }
+        void setAsPct (int b, int pct) { if (b >= 0 && b < numBlocks) asPct[(size_t) b] = juce::jlimit (0, 100, pct); }
         bool anyFollowPoly() const { for (int i = 0; i < numBlocks; ++i) if (followBlock[(size_t) i].load() != 0 && followPolyBlock[(size_t) i].load() != 0) return true; return false; }
         // Follow on/off (πλήκτρο B0 ή οθόνη): όταν ανάβει, η τελευταία συγχορδία που κράτησες με σβηστό Follow γίνεται η τονικότητα πηγής
         void toggleFollow() { setFollow (followOn.load() != 0 ? 0 : 1); }
@@ -487,7 +504,7 @@ namespace flow
             }
             int best = -1, bestSeq = -1;
             for (int b = 0; b < numBlocks; ++b)
-                if (! isSp (b) && (active[b].load() != 0 || (includeEmpty && emptyZone[b].load() != 0)) && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
+                if (! isSp (b) && asMode[b].load() == 0 && (active[b].load() != 0 || (includeEmpty && emptyZone[b].load() != 0)) && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load()
                     && zoneSeq[b].load() > bestSeq)
                 {
                     best = b;
@@ -1563,6 +1580,102 @@ namespace flow
             return -1;
         }
 
+        //==================== AS (Assistant, rules) ====================
+        struct AsEv { double beat; int note; int vel; bool on; };
+        std::array<std::vector<AsEv>, numBlocks> asPend;
+        std::vector<int> asHist;                 // πρόσφατες νότες του παίκτη
+        double asLastPlayer = -1.0e9;
+        std::atomic<bool> asClear { false };
+        juce::Random asRng { 7 };
+        static constexpr double asGrid = 0.5;    // 1/8 σε beats: ρολόι του Flow, δουλεύει και χωρίς μετρονόμο
+
+        int asScaleStep (int n, int steps) const   // μετακίνηση κατά βαθμίδες της κλίμακας Follow (major / minor)
+        {
+            static const int maj[7] { 0, 2, 4, 5, 7, 9, 11 }, mnr[7] { 0, 2, 3, 5, 7, 8, 10 };
+            const int* sc = followType.load() == 0 ? maj : mnr;
+            const int root = followRoot.load() % 12;
+            int deg = -1, pcRel = ((n - root) % 12 + 12) % 12;
+            for (int i = 0; i < 7; ++i) if (sc[i] == pcRel) deg = i;
+            if (deg < 0) return n;   // εκτός κλίμακας: αμετάβλητη
+            const int oct = (n - root - pcRel) / 12;
+            int d = deg + steps, o = oct;
+            while (d >= 7) { d -= 7; ++o; }
+            while (d < 0)  { d += 7; --o; }
+            return root + o * 12 + sc[d];
+        }
+
+        void asSchedule (int b, double beat, int note, int vel, double len)
+        {
+            note = juce::jlimit (21, 108, note);
+            auto& v = asPend[(size_t) b];
+            if (v.size() > 256) return;
+            v.push_back ({ beat, note, juce::jlimit (1, 127, vel), true });
+            v.push_back ({ beat + len, note, 0, false });
+        }
+
+        // ο παίκτης πάτησε νότα (beat): ο βοηθός απαντά με παράγωγο, κουμπωμένο στο επόμενο 1/8
+        void asObserve (double beat, int n, int vel)
+        {
+            asLastPlayer = beat;
+            asHist.push_back (n);
+            if (asHist.size() > 16) asHist.erase (asHist.begin());
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                if (asMode[(size_t) b].load() == 0) continue;
+                const int pct = asPct[(size_t) b].load();
+                if (asRng.nextInt (100) >= pct) continue;
+                const double t = std::ceil ((beat + 0.02) / asGrid) * asGrid;
+                static const int pick[8] { 0, 1, 1, 2, 2, 3, 0, 1 };
+                int out = n;
+                switch (pick[asRng.nextInt (8)])
+                {
+                    case 0: out = n - 12; break;               // οκτάβα κάτω
+                    case 1: out = asScaleStep (n, 2); break;   // τρίτη πάνω
+                    case 2: out = asScaleStep (n, 4); break;   // πέμπτη πάνω
+                    default: out = n + 12; break;              // οκτάβα πάνω
+                }
+                asSchedule (b, t, out, (int) ((float) vel * 0.7f), asGrid * 0.9);
+            }
+        }
+
+        // γέμισμα παύσεων + παράδοση των προγραμματισμένων νοτών στο block
+        void asProcess (double beat0, double beat1)
+        {
+            if (asClear.exchange (false))
+            {
+                for (auto& v : asPend) v.clear();
+            }
+            bool any = false;
+            for (int b = 0; b < numBlocks; ++b) if (asMode[(size_t) b].load() != 0) any = true;
+            if (! any) return;
+
+            if (! asHist.empty() && beat0 - asLastPlayer > 1.0 && beat0 - asLastPlayer < 24.0)
+                for (double g = std::ceil (beat0 / asGrid) * asGrid; g < beat1; g += asGrid)
+                    for (int b = 0; b < numBlocks; ++b)
+                    {
+                        if (asMode[(size_t) b].load() == 0) continue;
+                        if (asRng.nextFloat() >= 0.35f * (float) asPct[(size_t) b].load() / 100.0f) continue;
+                        const int base = asHist[(size_t) asRng.nextInt ((int) asHist.size())];
+                        const int out = asRng.nextBool() ? asScaleStep (base, 2) : base;
+                        asSchedule (b, g, out, 60, asGrid * 0.9);
+                    }
+
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                auto& v = asPend[(size_t) b];
+                for (size_t i = 0; i < v.size();)
+                {
+                    if (v[i].beat >= beat1) { ++i; continue; }
+                    Action a;
+                    a.pos = juce::jlimit (0, 1 << 20, (int) ((v[i].beat - beat0) / blkBps));
+                    a.order = v[i].on ? 1 : 0;
+                    a.kind = Kind::Live; a.note = v[i].note; a.vel = v[i].vel; a.on = v[i].on;
+                    inActions[(size_t) b].push_back (a);
+                    v.erase (v.begin() + (long) i);
+                }
+            }
+        }
+
         void dispatchIncoming (int numSamples, int64_t gs, double sr)
         {
             for (int b = 0; b < numBlocks; ++b)
@@ -1657,6 +1770,7 @@ namespace flow
                         a.pos = pos; a.order = 1; a.kind = Kind::Live; a.note = n; a.vel = msg.getVelocity(); a.on = true;
                         inActions[(size_t) sp].push_back (a);
                     }
+                    if (b >= 0 || sp >= 0) asObserve (blkBeat0 + (double) pos * blkBps, n, (int) msg.getVelocity());
                     if (b >= 0)
                     {
                         owner[(size_t) n] = b;
@@ -1700,6 +1814,7 @@ namespace flow
                             pushRaw (b, pos, msg);
                 }
             }
+            asProcess (blkBeat0, blkBeat0 + (double) numSamples * blkBps);
         }
 
         // πετάλια και πλήκτρα ελέγχου: επιστρέφει true αν το μήνυμα το κατανάλωσε η ανάθεση (δεν πάει στα plugins)
