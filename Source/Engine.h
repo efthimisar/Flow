@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 // Flow engine: μέχρι 9 blocks (ένα ανά instrument), καθένα με δική του ζώνη, hold, ένταση, transpose, MIDI loop,
 // MIDI FX και αλυσίδα FX. Στο τέλος: master FX, metronome, Rec Audio με stems.
 // Όλη η μουσική λογική τρέχει μέσα στο audio callback, άρα ο χρόνος ακολουθεί το ρολόι του ήχου.
@@ -268,13 +269,15 @@ namespace flow
         void setAsMode (int b, int m)
         {
             if (b < 0 || b >= numBlocks) return;
-            m = juce::jlimit (0, 1, m);   // 2 (style) δεν υπάρχει ακόμη
+            m = juce::jlimit (0, 2, m);   // 1 rules, 2 style (Markov)
             const int old = asMode[(size_t) b].load();
             if (m == old) return;
             if (old == 0 && m != 0) { asLo[(size_t) b] = lo[(size_t) b].load(); asHi[(size_t) b] = hi[(size_t) b].load(); }
             if (old != 0 && m == 0) { lo[(size_t) b] = asLo[(size_t) b].load(); hi[(size_t) b] = asHi[(size_t) b].load(); }
             asMode[(size_t) b] = m;
             asClear = true;
+            bool any = false; for (int i = 0; i < numBlocks; ++i) if (i == b ? m != 0 : asMode[(size_t) i].load() != 0) any = true;
+            if (! any) asClearModel = true;   // κανένας βοηθός: το μοντέλο σβήνει
             ++changeCount;
         }
         void setAsPct (int b, int pct) { if (b >= 0 && b < numBlocks) asPct[(size_t) b] = juce::jlimit (0, 100, pct); }
@@ -1585,7 +1588,11 @@ namespace flow
         std::array<std::vector<AsEv>, numBlocks> asPend;
         std::vector<int> asHist;                 // πρόσφατες νότες του παίκτη
         double asLastPlayer = -1.0e9;
-        std::atomic<bool> asClear { false };
+        std::atomic<bool> asClear { false }, asClearModel { false };
+        // style: Markov μεταβλητής τάξης (Continuator-like). Κατάσταση = νότα*8 + απόσταση από την προηγούμενη νότα σε βήματα 1/8 (0..7)
+        std::map<uint64_t, std::vector<uint16_t>> asModel;
+        std::vector<uint16_t> asSeq, asGenSeq;   // τελευταίες καταστάσεις του παίκτη / της γενιάς του βοηθού
+        static constexpr int asMaxOrder = 4;
         juce::Random asRng { 7 };
         static constexpr double asGrid = 0.5;    // 1/8 σε beats: ρολόι του Flow, δουλεύει και χωρίς μετρονόμο
 
@@ -1613,9 +1620,80 @@ namespace flow
             v.push_back ({ beat + len, note, 0, false });
         }
 
+        static uint64_t asKey (const std::vector<uint16_t>& q, int k)   // κλειδί: τελευταίες k καταστάσεις + η τάξη
+        {
+            uint64_t h = 1469598103934665603ull ^ (uint64_t) k;
+            for (size_t i = q.size() - (size_t) k; i < q.size(); ++i) h = (h ^ q[i]) * 1099511628211ull;
+            return h;
+        }
+        void asLearn (uint16_t next)   // asSeq = ιστορικό πριν την next
+        {
+            for (int k = 1; k <= asMaxOrder && (size_t) k <= asSeq.size(); ++k)
+            {
+                auto& v = asModel[asKey (asSeq, k)];
+                v.push_back (next);
+                if (v.size() > 32) v.erase (v.begin());
+            }
+            if (asModel.size() > 20000) asModel.clear();
+        }
+        int asSample (const std::vector<uint16_t>& ctx)   // -1 = δεν υπάρχει συνέχεια
+        {
+            for (int k = juce::jmin (asMaxOrder, (int) ctx.size()); k >= 1; --k)
+            {
+                const auto it = asModel.find (asKey (ctx, k));
+                if (it != asModel.end() && ! it->second.empty())
+                    return it->second[(size_t) asRng.nextInt ((int) it->second.size())];
+            }
+            return -1;
+        }
+        int asMeanPitch() const
+        {
+            if (asHist.empty()) return 60;
+            int sum = 0; for (int n : asHist) sum += n;
+            return sum / (int) asHist.size();
+        }
+        // μία νότα του βοηθού σε οκτάβα κάτω από το μέσο ύψος του παίκτη
+        int asPlace (int note) const
+        {
+            const int target = asMeanPitch() - 12;
+            while (note > target + 6) note -= 12;
+            while (note < target - 6) note += 12;
+            return juce::jlimit (21, 108, note);
+        }
+        // φράση 1–3 νοτών από το μοντέλο, ξεκινά στο t
+        void asPhrase (int b, double t, int vel)
+        {
+            if (asGenSeq.empty()) asGenSeq = asSeq;
+            if (asGenSeq.empty()) return;
+            const int len = 1 + asRng.nextInt (3);
+            for (int i = 0; i < len; ++i)
+            {
+                const int st = asSample (asGenSeq);
+                if (st < 0) { asGenSeq = asSeq; return; }
+                asGenSeq.push_back ((uint16_t) st);
+                if ((int) asGenSeq.size() > asMaxOrder) asGenSeq.erase (asGenSeq.begin());
+                const int gap = st & 7;
+                if (i > 0) t += (double) juce::jmax (1, gap) * asGrid;
+                asSchedule (b, t, asPlace (st >> 3), vel, asGrid * 0.9);
+            }
+        }
+
         // ο παίκτης πάτησε νότα (beat): ο βοηθός απαντά με παράγωγο, κουμπωμένο στο επόμενο 1/8
         void asObserve (double beat, int n, int vel)
         {
+            bool anyAs = false;
+            for (int b = 0; b < numBlocks; ++b) if (asMode[(size_t) b].load() != 0) anyAs = true;
+            if (anyAs)
+            {
+                const double gapB = beat - asLastPlayer;
+                if (gapB > 8.0) { asSeq.clear(); asGenSeq.clear(); }
+                const int gs = gapB > 8.0 ? 0 : juce::jlimit (0, 7, (int) std::lround (gapB / asGrid));
+                const uint16_t st = (uint16_t) (n * 8 + gs);
+                asLearn (st);
+                asSeq.push_back (st);
+                if ((int) asSeq.size() > asMaxOrder) asSeq.erase (asSeq.begin());
+                asGenSeq.clear();   // η νέα φράση του παίκτη ξαναρχίζει το πλαίσιο της γενιάς
+            }
             asLastPlayer = beat;
             asHist.push_back (n);
             if (asHist.size() > 16) asHist.erase (asHist.begin());
@@ -1625,6 +1703,7 @@ namespace flow
                 const int pct = asPct[(size_t) b].load();
                 if (asRng.nextInt (100) >= pct) continue;
                 const double t = std::ceil ((beat + 0.02) / asGrid) * asGrid;
+                if (asMode[(size_t) b].load() == 2) { asPhrase (b, t, (int) ((float) vel * 0.7f)); continue; }
                 static const int pick[8] { 0, 1, 1, 2, 2, 3, 0, 1 };
                 int out = n;
                 switch (pick[asRng.nextInt (8)])
@@ -1645,6 +1724,7 @@ namespace flow
             {
                 for (auto& v : asPend) v.clear();
             }
+            if (asClearModel.exchange (false)) { asModel.clear(); asSeq.clear(); asGenSeq.clear(); }
             bool any = false;
             for (int b = 0; b < numBlocks; ++b) if (asMode[(size_t) b].load() != 0) any = true;
             if (! any) return;
@@ -1655,6 +1735,7 @@ namespace flow
                     {
                         if (asMode[(size_t) b].load() == 0) continue;
                         if (asRng.nextFloat() >= 0.35f * (float) asPct[(size_t) b].load() / 100.0f) continue;
+                        if (asMode[(size_t) b].load() == 2) { if (asPend[(size_t) b].empty()) asPhrase (b, g, 60); continue; }
                         const int base = asHist[(size_t) asRng.nextInt ((int) asHist.size())];
                         const int out = asRng.nextBool() ? asScaleStep (base, 2) : base;
                         asSchedule (b, g, out, 60, asGrid * 0.9);
