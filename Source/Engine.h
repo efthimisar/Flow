@@ -269,7 +269,7 @@ namespace flow
         void setAsMode (int b, int m)
         {
             if (b < 0 || b >= numBlocks) return;
-            m = juce::jlimit (0, 3, m);   // 1 rules, 2 style (Markov), 3 orch (συνοδεία συγχορδιών)
+            m = m == 0 ? 0 : 2;   // μόνο off ή style (Markov). Τα rules και orch αποσύρθηκαν
             const int old = asMode[(size_t) b].load();
             if (m == old) return;
             if (old == 0 && m != 0) { asLo[(size_t) b] = lo[(size_t) b].load(); asHi[(size_t) b] = hi[(size_t) b].load(); }

@@ -1454,7 +1454,7 @@ private:
             case 7: return "Follow " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followBlock[(size_t) b].load() == 0 ? "off" : engine.followPolyBlock[(size_t) b].load() != 0 ? "poly" : "on") + "  (tilt up / down)";
             case 8: return "Scale " + String::fromUTF8 ("\xc2\xb7 ") + (engine.followAuto.load() != 0 ? (engine.followAutoFound.load() != 0 ? String ("auto: ") + String (juce::StringArray { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" }[engine.followRoot.load()]) + " " : String ("auto: listening ")) : String()) + (engine.followAuto.load() != 0 && engine.followAutoFound.load() == 0 ? String() : String (engine.followType.load() == 0 ? "major" : "minor")) + "  (all blocks)";
             case 9: { const int rm = engine.repeatMode[(size_t) b].load(); return "Repeat " + String::fromUTF8 ("\xc2\xb7 ") + (rm == 0 ? "loop" : rm == 1 ? "once" : "hold at end") + "  (tilt up / down)"; }
-            case 10: return engine.isAs (b) ? "Assistant " + String::fromUTF8 ("\xc2\xb7 ") + (engine.asMode[(size_t) b].load() == 3 ? "orch " : engine.asMode[(size_t) b].load() == 2 ? "style " : "rules ") + String::fromUTF8 ("\xc2\xb7 ") + String (engine.asPct[(size_t) b].load()) + "%" + (s88AsEdit ? "  (rotate: amount, press: done)" : "  (tilt: off / rules / style / orch, press: amount)  key " + noteName (engine.lo[(size_t) b].load())) : String ("Assistant ") + String::fromUTF8 ("\xc2\xb7 ") + "off  (tilt up: rules)";
+            case 10: return engine.isAs (b) ? "Assistant " + String::fromUTF8 ("\xc2\xb7 ") + String ("style ") + String::fromUTF8 ("\xc2\xb7 ") + String (engine.asPct[(size_t) b].load()) + "%" + (s88AsEdit ? "  (rotate: amount, press: done)" : "  (tilt: off / style, press: amount)  key " + noteName (engine.lo[(size_t) b].load())) : String ("Assistant ") + String::fromUTF8 ("\xc2\xb7 ") + "off  (tilt up: style)";
             case 11: return "Set the zone again";
             default: return armed ? "Press again to delete" : "Delete block";
         }
@@ -1504,7 +1504,7 @@ private:
     void s88StepAs (int b, int dir)
     {
         if (! isActive (b)) return;
-        engine.setAsMode (b, jlimit (0, 3, engine.asMode[(size_t) b].load() + dir));
+        engine.setAsMode (b, dir > 0 ? 2 : 0);
         if (! engine.isAs (b)) s88AsEdit = false;
         saveNow();
         refreshAll();
@@ -1545,7 +1545,7 @@ private:
             case 8: s88StepScale (1, true); break;   // πάτημα: επόμενη κλίμακα (και με κλίση πάνω/κάτω)
             case 9: s88StepRepeat (b, 1, true); break;   // πάτημα: επόμενος τρόπος (και με κλίση πάνω/κάτω)
             case 10:   // πάτημα: αν ο βοηθός είναι off ανοίγει σε rules, αλλιώς μπαίνει/βγαίνει από τη ρύθμιση ποσοστού
-                if (! engine.isAs (b)) { engine.setAsMode (b, 1); saveNow(); refreshAll(); }
+                if (! engine.isAs (b)) { engine.setAsMode (b, 2); saveNow(); refreshAll(); }
                 else s88AsEdit = ! s88AsEdit;
                 break;
             case 11: if (keyboardView.onRedoZone && ! engine.isAs (b)) keyboardView.onRedoZone (b); break;
@@ -4520,7 +4520,7 @@ private:
                             e->getIntAttribute ("seq", 0));
             engine.asPct[(size_t) slot] = jlimit (0, 100, e->getIntAttribute ("aspct", 60));
             engine.asLo[(size_t) slot] = engine.lo[(size_t) slot].load(); engine.asHi[(size_t) slot] = engine.hi[(size_t) slot].load();
-            engine.asMode[(size_t) slot] = jlimit (0, 3, e->getIntAttribute ("as", 0));
+            engine.asMode[(size_t) slot] = e->getIntAttribute ("as", 0) != 0 ? 2 : 0;   // παλιά rules/orch → style
 
             auto copy = std::make_shared<XmlElement> (*e);
             auto crashedCopy = crashed;
