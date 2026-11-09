@@ -141,7 +141,7 @@ namespace flow
                 volPos[b] = 1.0f; gainOut[b] = 1.0f;
                 volMap[b] = 0;
                 if (b < numPedals) pedalCc[(size_t) b] = 20 + b;
-                followBlock[b] = 1; followPolyBlock[b] = 0; repeatMode[b] = 0; asMode[b] = 0; asPct[b] = 60; asLo[b] = firstPlayNote; asHi[b] = firstPlayNote;
+                followBlock[b] = 1; followPolyBlock[b] = 0; repeatMode[b] = 0; asMode[b] = 0; statBlockMax[b] = 0.0f; asPct[b] = 60; asLo[b] = firstPlayNote; asHi[b] = firstPlayNote;
                 smartType[b] = 0; smartWidth[b] = 0.0f; smartNeedWidth[b] = 1.0f;
                 smartAutoT[b] = 0; for (int q = 0; q < 4; ++q) smartFeat[b][(size_t) q] = 0.0f;
                 for (int k = 0; k < smartBands; ++k) { smartBand[b][(size_t) k] = 0.0f; smartNeed[b][(size_t) k] = 0.0f; }
@@ -342,6 +342,7 @@ namespace flow
         std::atomic<int> afterFirst { 0 };      // μετά το πρώτο loop: 0 = Play, 1 = Overdub
         std::atomic<int> statCalls { 0 }, statOver { 0 }, statOverFull { 0 };   // μετρήσεις callback ήχου (διαβάζονται κάθε λίγα δευτερόλεπτα από το Main)
         std::atomic<float> statMaxCb { 0.0f }, statMaxLock { 0.0f }, statBudget { 0.0f };
+        std::array<std::atomic<float>, numBlocks> statBlockMax;   // μέγιστος χρόνος (plugin + FX) ανά block σε δευτερόλεπτα, μέσα στο παράθυρο μέτρησης
         // ανίχνευση «κρακελαρίσματος» στην τελική έξοδο: απότομα άλματα δείγματος, κορεσμός (>1.0), NaN/άπειρο
         std::atomic<int> statJumps { 0 }, statClip { 0 }, statNan { 0 };
         std::atomic<float> statJumpMax { 0.0f }, statPeak { 0.0f };
@@ -947,7 +948,9 @@ namespace flow
 
                 B.scratch.clear();
                 juce::AudioBuffer<float> view (B.scratch.getArrayOfWritePointers(), B.scratch.getNumChannels(), numSamples);
+                const juce::int64 tb0 = juce::Time::getHighResolutionTicks();
                 B.plugin->processBlock (view, B.out);
+                const juce::int64 tb1 = juce::Time::getHighResolutionTicks();
 
                 const int chans = view.getNumChannels();
                 float* l = view.getWritePointer (0);
@@ -957,6 +960,10 @@ namespace flow
                 // FX του block (μετά το instrument, πριν από την ένταση)
                 for (auto& fx : B.fx)
                     processFx (*fx, B.scratch.getWritePointer (0), B.scratch.getWritePointer (1), numSamples);
+                {
+                    const float tb = (float) juce::Time::highResolutionTicksToSeconds (tb1 - tb0 + juce::Time::getHighResolutionTicks() - tb1);
+                    if (tb > statBlockMax[(size_t) b].load()) statBlockMax[(size_t) b] = tb;
+                }
 
                 if (smartOn.load() != 0) smartProcess (B, b, numSamples, sr);
                 else if (smartBand[(size_t) b][1].load() != 0.0f) for (int k = 0; k < smartBands; ++k) smartBand[(size_t) b][(size_t) k] = 0.0f;

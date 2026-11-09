@@ -5171,9 +5171,16 @@ private:
             const bool notable = full > 0 || xrDelta > 0 || maxLock > 0.002f || maxCb > 0.6f * budget || jumps > 0 || clip > 0 || nanN > 0;
             if (jumps > 0 || clip > 0 || nanN > 0)
                 flow::flowLog (String::formatted ("GLITCH? output jumps(>0.3): %d, biggest jump %.2f, samples over 1.0: %d, NaN: %d, peak %.2f", jumps, jumpMax, clip, nanN, peak));
+            String perBlock;   // μέγιστος χρόνος ανά block (plugin + FX), για να δούμε αν ο ένας πυρήνας φτάνει
+            for (int b = 0; b < flow::numBlocks; ++b)
+            {
+                const float t = engine.statBlockMax[(size_t) b].exchange (0.0f);
+                if (t > 0.0f) perBlock << " b" << String (b + 1) << "=" << String (t * 1000.0f, 2) << "ms";
+            }
             if (calls > 0 && (notable || statWindows % 6 == 0))
                 flow::flowLog (String::formatted ("audio: buffer %d, callbacks %d, max %.2f ms of %.2f ms, >80%%: %d, >100%%: %d, max lock wait %.2f ms, xruns +%d",
-                                                  currentBufferSize(), calls, maxCb * 1000.0f, budget * 1000.0f, over, full, maxLock * 1000.0f, xrDelta));
+                                                  currentBufferSize(), calls, maxCb * 1000.0f, budget * 1000.0f, over, full, maxLock * 1000.0f, xrDelta)
+                               + (perBlock.isNotEmpty() ? " | blocks:" + perBlock : String()));
         }
         header.cpu = cpuSmooth;
         header.repaint();
