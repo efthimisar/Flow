@@ -2946,6 +2946,10 @@ private:
                     {
                         B.curMode = B.wantMode;
                         B.recStart = beat;
+                        {   // ανοχή αρχής (όπως στην πρώτη λούπα), πάνω στα beats της λούπας που ήδη παίζει: πάτημα μέχρι 1/4 beat από ένα beat μετράει πάνω του
+                            const double nb = B.loopAnchor + std::round (beat - B.loopAnchor);
+                            if (std::abs (beat - nb) <= 0.25) B.recStart = nb;
+                        }
                         B.rec.clear();
                         B.recOpen.reset();
                         B.loopState = loopOver;
