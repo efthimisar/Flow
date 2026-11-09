@@ -2911,6 +2911,16 @@ private:
                     // η εγγραφή ξεκινά ακριβώς στο πάτημα (Rec MIDI loop): εκεί είναι η αρχή της λούπας και το τέλος της οδηγεί πάλι εκεί
                     B.curMode = B.wantMode;
                     B.recStart = beat;
+                    {   // ανοχή αρχής: όταν υπάρχει πλέγμα (μετρονόμος ή άλλη λούπα), πάτημα μέχρι 1/4 beat πριν ή μετά από ένα beat μετράει πάνω στο beat.
+                        // Αν δεν υπάρχει πλέγμα (η πρώτη λούπα χωρίς μετρονόμο), η εγγραφή ξεκινά ακριβώς στο πάτημα.
+                        bool grid = metroOn.load();
+                        for (const auto& o : blocks) if (&o != &B && o.nLayers > 0) grid = true;
+                        if (grid)
+                        {
+                            const double nb = std::round (beat);
+                            if (std::abs (beat - nb) <= 0.25) B.recStart = nb;
+                        }
+                    }
                     B.rec.clear();
                     B.recOpen.reset();
                     for (const auto& pe : B.preRec)   // ό,τι έπαιξες από την αρχή του κύκλου μπαίνει στη λούπα
