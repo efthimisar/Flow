@@ -1544,11 +1544,6 @@ public:
             g.setColour (Colour (0xff78706a));
             g.drawText ("+ image", Rectangle<float> (cx - 50.0f, cy + R * 0.7f, 100.0f, 18.0f), Justification::centred, false);
         }
-        else
-        {
-            g.setColour (Colours::white.withAlpha (0.55f));
-            g.drawText (String::fromUTF8 ("\xe2\x9c\x95"), orbImageClearRect(), Justification::centred, false);
-        }
 
         // κύκλοι που αιωρούνται: σκούρα μαλακή σκιά από κάτω. Όταν κρατάς έναν, σηκώνεται και η σκιά του απομακρύνεται και θολώνει.
         for (int c = 0; c < 4; ++c)
@@ -1686,8 +1681,7 @@ public:
         const auto gm = orbGeom();
         if (orbImage.isValid())
         {
-            if (orbImageClearRect().contains (p)) { if (onOrbImageClear) onOrbImageClear(); }
-            else if (p.getDistanceFrom ({ gm.cx, gm.cy }) <= gm.R && onOrbImageNew) onOrbImageNew();   // πάτημα στο κέντρο: νέα εικόνα
+            if (p.getDistanceFrom ({ gm.cx, gm.cy }) <= gm.R && onOrbImageNew) onOrbImageNew();   // πάτημα στο κέντρο: νέα εικόνα
             return;
         }
         if (p.getDistanceFrom ({ gm.cx, gm.cy }) <= gm.R && onOrbImage) onOrbImage();
