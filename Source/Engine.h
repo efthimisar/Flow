@@ -2717,6 +2717,9 @@ private:
             const double grid = forceGridBeats > 0.0 ? forceGridBeats : (sq == 1 ? 0.5 : sq == 2 ? 0.25 : 0.0);
             std::array<double, 128> shift {};
             std::bitset<128> hasShift;
+            const double clusterWin = 0.045 * tempo.load() / 60.0;   // 45 ms σε beats
+            double clusterRaw = -1.0e9, clusterSnap = -1.0e9, snapSum = 0.0, snapMax = 0.0;
+            int snapCount = 0, snapMerged = 0;
 
             auto& dst = B.layerEv[(size_t) B.nLayers];
             dst.clear();
@@ -2738,7 +2741,12 @@ private:
                 {
                     if (e.on)
                     {
-                        const double s = B.recStart + std::round ((a - B.recStart) / grid) * grid;
+                        // συγχορδία: νότες που πατήθηκαν μέσα σε ~45 ms από την πρώτη της ομάδας πηγαίνουν στο ίδιο σημείο του πλέγματος
+                        // (αλλιώς μια συγχορδία «ανοίγει» όταν οι νότες της πέφτουν σε διαφορετικό 1/16)
+                        double s;
+                        if (clusterSnap > -1.0e8 && a - clusterRaw <= clusterWin) { s = clusterSnap; ++snapMerged; }
+                        else { s = B.recStart + std::round ((a - B.recStart) / grid) * grid; clusterRaw = a; clusterSnap = s; }
+                        snapSum += std::abs (s - a); snapMax = std::max (snapMax, std::abs (s - a)); ++snapCount;
                         shift[(size_t) e.note] = s - a;
                         hasShift.set ((size_t) e.note);
                         a = s;
@@ -2792,6 +2800,14 @@ private:
 
             B.rec.clear();
             B.recOpen.reset();
+
+            if (grid > 0.0 && snapCount > 0)   // διαγνωστικό: πόσο μετακινήθηκαν οι νότες από το quantize (σε ms)
+            {
+                const double msPerBeat = 60000.0 / juce::jmax (20.0, tempo.load());
+                flowLog ("loop snap: grid=" + juce::String (grid, 3) + " beats, notes=" + juce::String (snapCount)
+                         + ", merged(chord)=" + juce::String (snapMerged)
+                         + ", mean=" + juce::String (snapSum / snapCount * msPerBeat, 1) + " ms, max=" + juce::String (snapMax * msPerBeat, 1) + " ms");
+            }
 
             if (dst.empty()) return false;
             if (B.nLayers == 0) B.loopAnchor = B.recStart;
