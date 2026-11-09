@@ -526,6 +526,7 @@ public:
         if (onOrbMode) onOrbMode();
     }
     std::function<void()> onOrbMode;
+    std::function<void()> onOrbImageNew;   // πάτημα στην εικόνα του orb: επόμενη εικόνα
     void setOrb (const std::array<KnobState, 16>& k, const std::array<Point<float>, 4>& pos, int learning, bool rec, bool motion)
     {
         for (int c = 0; c < 4; ++c)
@@ -1682,8 +1683,13 @@ public:
                 return;
             }
         if (orbMotion && orbBottomRect().contains (p)) { if (onOrbClearMotion) onOrbClearMotion(); return; }
-        if (orbImage.isValid()) { if (orbImageClearRect().contains (p) && onOrbImageClear) onOrbImageClear(); return; }
         const auto gm = orbGeom();
+        if (orbImage.isValid())
+        {
+            if (orbImageClearRect().contains (p)) { if (onOrbImageClear) onOrbImageClear(); }
+            else if (p.getDistanceFrom ({ gm.cx, gm.cy }) <= gm.R && onOrbImageNew) onOrbImageNew();   // πάτημα στο κέντρο: νέα εικόνα
+            return;
+        }
         if (p.getDistanceFrom ({ gm.cx, gm.cy }) <= gm.R && onOrbImage) onOrbImage();
     }
 

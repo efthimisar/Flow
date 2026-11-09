@@ -274,6 +274,7 @@ public:
         loopsView.onOrbImage = [this] { pickOrbImage(); };
         loopsView.onOrbMode = [this] { repaint(); };
         loopsView.onOrbImageClear = [this] { setOrbImage ({}); };
+        loopsView.onOrbImageNew = [this] { autoOrbImage(); saveNow(); };   // πάτημα στο κέντρο του orb: νέα εικόνα (φάκελος Music/Flow/Orb, αλλιώς γεννήτρια)
 
         windowSizeMode = jlimit (0, 3, settings->getIntValue ("windowSize", 1));
         autoOrbImage();   // νέο (άδειο) set: τυχαία εικόνα από το φάκελο Music/Flow/Orb, αν υπάρχει
