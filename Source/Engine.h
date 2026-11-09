@@ -494,6 +494,15 @@ namespace flow
                        && n >= lo[(size_t) mf].load() && n <= hi[(size_t) mf].load();
             return blockForNote (n) == mf;
         }
+        // το πλήκτρο n ανήκει στη ζώνη ενός ενεργού ειδικού block (SP): εκεί το AS δεν παίρνει ποτέ το πλήκτρο ως λαβή
+        bool inSpZone (int n) const
+        {
+            for (int sb : { specialBlock.load(), specialBlock2.load() })
+                if (sb >= 0 && sb < numBlocks && active[(size_t) sb].load() != 0 && zoneState[(size_t) sb].load() == 0
+                    && n >= lo[(size_t) sb].load() && n <= hi[(size_t) sb].load())
+                    return true;
+            return false;
+        }
         int blockForNote (int n, bool ignorePedal = false, bool includeEmpty = false) const   // ignorePedal: για τα φωτάκια, να μην αλλάζουν με το sustain
         {
             if (! ignorePedal && shiftHeld.load() != 0 && n >= firstPlayNote)
@@ -506,7 +515,7 @@ namespace flow
                     { spBest = sb; spSeq = zoneSeq[(size_t) sb].load(); }
                 if (spBest >= 0) return spBest;
             }
-            if (includeEmpty)   // στην οθόνη/φωτάκια το AS block φαίνεται με τη ζώνη του (η «λαβή» του), όχι όμως στη δρομολόγηση των νοτών
+            if (includeEmpty && ! inSpZone (n))   // στην οθόνη/φωτάκια το AS block φαίνεται με τη ζώνη του (όχι πάνω στη ζώνη SP) (η «λαβή» του), όχι όμως στη δρομολόγηση των νοτών
                 for (int b = 0; b < numBlocks; ++b)
                     if (asMode[b].load() != 0 && active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load())
                         return b;
@@ -2018,7 +2027,7 @@ private:
                     {   // πλήκτρο-λαβή του AS block = η ζώνη που του έδωσες: δεν παίζει, μόνο επιλέγει το block για να το ρυθμίσεις
                         int hb = -1;
                         for (int i = 0; i < numBlocks; ++i)
-                            if (asMode[(size_t) i].load() != 0 && active[(size_t) i].load() != 0 && zoneState[(size_t) i].load() == 0 && n >= lo[(size_t) i].load() && n <= hi[(size_t) i].load()) hb = i;
+                            if (asMode[(size_t) i].load() != 0 && active[(size_t) i].load() != 0 && zoneState[(size_t) i].load() == 0 && n >= lo[(size_t) i].load() && n <= hi[(size_t) i].load() && ! inSpZone (n)) hb = i;
                         if (hb >= 0) { asSelectReq = hb; continue; }
                     }
                     const int b = blockForNote (n);
