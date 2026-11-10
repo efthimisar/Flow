@@ -90,6 +90,25 @@ namespace flow
         std::vector<std::vector<LoopEvent>> layers;
     };
 
+    // σκηνή: ρυθμίσεις και λούπα κάθε block. Οι πίνακες layers/lbeats/lmode έχουν σταθερό μέγεθος, ώστε η εναλλαγή στο thread ήχου να γίνεται με swap χωρίς δέσμευση μνήμης
+    struct SceneBlockData
+    {
+        int off = 0, hold = 0, cmode = 0, ctype = 0, cminor = 0, ctonic = -1, tr = 0, curve = 0, follow = 1, fpoly = 0, rep = 0, aspct = 60;
+        float vol = 1.0f;
+        int nLayers = 0;
+        double beats = 0.0, anchor = 0.0;
+        unsigned mute = 0;
+        std::array<double, maxLayers> lbeats {};
+        std::array<int, maxLayers> lmode {};
+        std::vector<std::vector<LoopEvent>> layers;   // μέγεθος maxLayers (βλ. SceneData::prepare)
+    };
+    struct SceneData
+    {
+        bool saved = false;
+        std::array<SceneBlockData, numBlocks> b;
+        void prepare() { for (auto& x : b) if (x.layers.size() != (size_t) maxLayers) x.layers.resize ((size_t) maxLayers); }
+    };
+
     using PluginPtr = std::unique_ptr<juce::AudioPluginInstance>;
 
     // Smart master: αρχικά όρια ανά τύπο ήχου {Low, Mid, High, πλάτος}, κλίμακα 0..1 (στάθμη: -60..0 dB RMS).
@@ -742,6 +761,70 @@ namespace flow
             B.muteMask = snap.mute;
             B.loopAnchor = snap.anchor;
             B.loopState = B.nLayers > 0 ? loopPlay : loopOff;
+        }
+
+        // ---- σκηνές: το UI ζητά αλλαγή με sceneRequestSwap· στο επόμενο μέτρο το thread ήχου κάνει swap των ρυθμίσεων και των λούπων.
+        // Μετά την αλλαγή το SceneData περιέχει την προηγούμενη κατάσταση (το UI την κρατά για τη σκηνή που φεύγει).
+        std::atomic<SceneData*> scenePend { nullptr };
+        std::atomic<int> sceneDone { 0 };
+
+        bool sceneRequestSwap (SceneData* d)
+        {
+            const juce::ScopedLock sl (lock);
+            if (scenePend.load() != nullptr) return false;
+            scenePend = d;
+            return true;
+        }
+        void sceneCancel() { const juce::ScopedLock sl (lock); scenePend = nullptr; }
+
+        template <typename A, typename T>
+        static void sceneSw (A& a, T& v) { const T o = (T) a.load(); a = v; v = o; }
+
+        // καλείται με το lock κρατημένο, από το thread ήχου
+        void sceneSwapLocked (SceneData& s)
+        {
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                auto& x = s.b[(size_t) b];
+                sceneSw (blockOff[(size_t) b], x.off);         sceneSw (holdMode[(size_t) b], x.hold);
+                sceneSw (chordMode[(size_t) b], x.cmode);      sceneSw (chordType[(size_t) b], x.ctype);
+                sceneSw (chordMinor[(size_t) b], x.cminor);    sceneSw (chordTonic[(size_t) b], x.ctonic);
+                sceneSw (transpose[(size_t) b], x.tr);         sceneSw (curveMode[(size_t) b], x.curve);
+                sceneSw (followBlock[(size_t) b], x.follow);   sceneSw (followPolyBlock[(size_t) b], x.fpoly);
+                sceneSw (repeatMode[(size_t) b], x.rep);       sceneSw (asPct[(size_t) b], x.aspct);
+                sceneSw (volPos[(size_t) b], x.vol);
+
+                auto& B = blocks[(size_t) b];
+                if (B.plugin == nullptr || x.layers.size() != (size_t) maxLayers) continue;
+                cutLoopNotes (B);
+                B.rec.clear(); B.recOpen.reset(); B.stopAt = -1.0; B.taps = 0; B.stopped = false;
+                for (int l = 0; l < maxLayers; ++l) std::swap (B.layerEv[(size_t) l], x.layers[(size_t) l]);
+                std::swap (B.nLayers, x.nLayers);
+                std::swap (B.loopBeats, x.beats);
+                std::swap (B.loopAnchor, x.anchor);
+                std::swap (B.muteMask, x.mute);
+                std::swap (B.layerBeats, x.lbeats);
+                std::swap (B.layerMode, x.lmode);
+                for (int l = 0; l < maxLayers; ++l)
+                {
+                    B.layerStart[(size_t) l] = -1.0;
+                    B.layerArm[(size_t) l] = (l < B.nLayers && B.layerMode[(size_t) l] != 0) ? -2.0 : -1.0;   // once/hold ξεκινούν στο επόμενο μέτρο
+                }
+                B.loopState = B.nLayers > 0 ? loopPlay : loopOff;
+            }
+            ++changeCount;
+        }
+
+        // στο τέλος κάθε block ήχου: αν πέρασε γραμμή μέτρου, γίνεται η αλλαγή σκηνής
+        void sceneProcess (double beat0, double beat1)
+        {
+            auto* p = scenePend.load();
+            if (p == nullptr) return;
+            const double nb = std::ceil (beat0 / beatsPerBar - 1.0e-9) * beatsPerBar;
+            if (nb >= beat1) return;
+            sceneSwapLocked (*p);
+            scenePend = nullptr;
+            ++sceneDone;
         }
 
         // metronome: ο ήχος (μονοφωνικός) φορτώνεται από το UI
@@ -2092,6 +2175,7 @@ private:
                 }
             }
             asProcess (blkBeat0, blkBeat0 + (double) numSamples * blkBps, (double) numSamples / sr);
+            sceneProcess (blkBeat0, blkBeat0 + (double) numSamples * blkBps);
         }
 
         // πετάλια και πλήκτρα ελέγχου: επιστρέφει true αν το μήνυμα το κατανάλωσε η ανάθεση (δεν πάει στα plugins)

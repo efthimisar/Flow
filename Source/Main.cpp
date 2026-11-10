@@ -439,18 +439,22 @@ private:
     }
 
     //==========================================================================
-    // σκηνές A-D: ποια blocks παίζουν και, ανά block, ένταση, hold, chord, transpose, καμπύλη. Plugins, ζώνες και loops δεν αλλάζουν.
-    struct SceneBlock { int off = 0, hold = 0, cmode = 0, ctype = 0, cminor = 0, ctonic = -1, tr = 0, curve = 0; float vol = 1.0f; };
-    struct Scene { bool saved = false; std::array<SceneBlock, flow::numBlocks> b; };
-    std::array<Scene, 4> scenes;
-    int currentScene = 0;
+    // σκηνές 1 και 2: ρυθμίσεις και λούπες κάθε block. Plugins και ζώνες δεν αλλάζουν. Η σκηνή που ισχύει ζει στην engine·
+    // η άλλη φυλάσσεται εδώ. Η αλλαγή γίνεται στο επόμενο μέτρο από το thread ήχου (flow::Engine::sceneProcess).
+    std::array<flow::SceneData, 2> scenes;
+    flow::SceneData sceneBuf;       // το αντίγραφο που παραδίδεται στην engine· μετά την αλλαγή περιέχει την προηγούμενη κατάσταση
+    int currentScene = 0;           // 0 = σκηνή 1, 1 = σκηνή 2
+    int sceneTarget = -1;           // σκηνή που περιμένει το επόμενο μέτρο (-1 = καμία)
+    int sceneSeenDone = 0;
+    uint32 sceneReqMs = 0;
 
-    void captureScene (int i)
+    // η τωρινή κατάσταση των ρυθμίσεων (χωρίς λούπες): μια καινούργια σκηνή ξεκινά με τις ίδιες ρυθμίσεις και καθαρές λούπες
+    void sceneSettingsFromLive (flow::SceneData& d)
     {
-        auto& sc = scenes[(size_t) i];
+        d = flow::SceneData();
         for (int b = 0; b < flow::numBlocks; ++b)
         {
-            auto& x = sc.b[(size_t) b];
+            auto& x = d.b[(size_t) b];
             x.off    = engine.blockOff[(size_t) b].load();
             x.hold   = engine.holdMode[(size_t) b].load();
             x.cmode  = engine.chordMode[(size_t) b].load();
@@ -459,50 +463,59 @@ private:
             x.ctonic = engine.chordTonic[(size_t) b].load();
             x.tr     = engine.transpose[(size_t) b].load();
             x.curve  = engine.curveMode[(size_t) b].load();
+            x.follow = engine.followBlock[(size_t) b].load();
+            x.fpoly  = engine.followPolyBlock[(size_t) b].load();
+            x.rep    = engine.repeatMode[(size_t) b].load();
+            x.aspct  = engine.asPct[(size_t) b].load();
             x.vol    = engine.volPos[(size_t) b].load();
         }
-        sc.saved = true;
+        d.saved = true;
     }
 
-    void recallScene (int i)
+    void requestScene (int i)
     {
-        const auto& sc = scenes[(size_t) i];
-        for (int b = 0; b < flow::numBlocks; ++b)
+        if (i < 0 || i > 1 || i == currentScene || sceneTarget >= 0) return;
+        if (! scenes[(size_t) i].saved) sceneSettingsFromLive (scenes[(size_t) i]);
+        sceneBuf = scenes[(size_t) i];
+        sceneBuf.prepare();
+        if (! engine.sceneRequestSwap (&sceneBuf)) return;
+        sceneTarget = i;
+        sceneReqMs = Time::getMillisecondCounter();
+        flow::flowLog ("scene: request " + String (currentScene + 1) + " -> " + String (i + 1));
+    }
+
+    // καλείται από το timer: ολοκλήρωση ή ακύρωση της αλλαγής
+    void pollScene()
+    {
+        if (sceneTarget < 0) return;
+        bool done = engine.sceneDone.load() != sceneSeenDone;
+        if (! done && Time::getMillisecondCounter() - sceneReqMs > 20000)
         {
-            if (! isActive (b)) continue;   // σκηνή σε block που δεν υπάρχει πια: αγνοείται
-            const auto& x = sc.b[(size_t) b];
-            engine.blockOff[(size_t) b]  = x.off;
-            engine.holdMode[(size_t) b]  = x.hold;
-            engine.chordMode[(size_t) b] = x.cmode;
-            engine.chordType[(size_t) b] = x.ctype;
-            engine.chordMinor[(size_t) b] = x.cminor;
-            engine.chordTonic[(size_t) b] = x.ctonic;
-            engine.transpose[(size_t) b] = x.tr;
-            engine.curveMode[(size_t) b] = x.curve;
-            engine.volPos[(size_t) b]    = x.vol;
+            engine.sceneCancel();
+            done = engine.sceneDone.load() != sceneSeenDone;   // μπορεί να έγινε ακριβώς πριν την ακύρωση
+            if (! done) { sceneTarget = -1; flow::flowLog ("scene: request timed out"); return; }
         }
-    }
-
-    // η σκηνή που φεύγεις θυμάται την τελευταία της κατάσταση. Άδεια σκηνή: αντιγράφει την τωρινή και ανοίγει.
-    void gotoScene (int i)
-    {
-        if (i < 0 || i > 3 || i == currentScene) return;
-        captureScene (currentScene);
-        if (scenes[(size_t) i].saved) recallScene (i);
-        else                          captureScene (i);
-        currentScene = i;
-        ++engine.changeCount;
+        if (! done) return;
+        sceneSeenDone = engine.sceneDone.load();
+        sceneBuf.saved = true;
+        scenes[(size_t) currentScene] = std::move (sceneBuf);
+        sceneBuf = flow::SceneData();
+        currentScene = sceneTarget;
+        sceneTarget = -1;
+        flow::flowLog ("scene: now " + String (currentScene + 1));
         saveNow();
         refreshAll();
     }
 
-    void stepScene (int dir)
+    // block που σβήστηκε: η άλλη σκηνή δεν κρατά λούπα γι' αυτό
+    void sceneForgetBlock (int b)
     {
-        int n = currentScene;
-        for (int k = 0; k < 4; ++k)
+        if (b < 0 || b >= flow::numBlocks) return;
+        for (auto& sc : scenes)
         {
-            n = (n + dir + 4) % 4;
-            if (scenes[(size_t) n].saved) { gotoScene (n); return; }
+            auto& x = sc.b[(size_t) b];
+            x.nLayers = 0; x.beats = 0.0; x.anchor = 0.0; x.mute = 0;
+            for (auto& l : x.layers) l.clear();
         }
     }
 
@@ -512,22 +525,6 @@ private:
         engine.blockOff[(size_t) b] = engine.blockOff[(size_t) b].load() != 0 ? 0 : 1;
         saveNow();
         refreshAll();
-    }
-
-    void showSceneMenu()
-    {
-        PopupMenu menu;
-        menu.addItem (1, gr ("\xe2\x97\x8e  \xe2\x96\xb6"));
-        menu.addItem (2, gr ("\xe2\x97\x8e  \xe2\x97\x80"));
-        menu.addItem (3, gr ("\xe2\x9c\x95"), engine.mapCode[flow::ctlSceneNext].load() != 0 || engine.mapCode[flow::ctlScenePrev].load() != 0);
-        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardView),
-                            [safe = SafePointer<MainComponent> (this)] (int r)
-        {
-            if (safe == nullptr) return;
-            if (r == 1) safe->startPedalLearn (flow::ctlSceneNext);
-            if (r == 2) safe->startPedalLearn (flow::ctlScenePrev);
-            if (r == 3) { safe->engine.mapCode[flow::ctlSceneNext] = 0; safe->engine.mapCode[flow::ctlScenePrev] = 0; safe->saveNow(); }
-        });
     }
 
     void cycleChordMode (int b)
@@ -1085,6 +1082,7 @@ private:
         if (ctl == 100)   // περιστροφή: + = δεξιά
         {
             if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
+            else if (s88ScenesOpen) s88SelectAdjacent (v > 0 ? 1 : -1);
             else if (s88RingsOpen) { s88Ring = jlimit (0, 3, s88Ring + (v > 0 ? 1 : -1)); s88Slot = 0; }
             else if (engine.pendingBlock() < 0 && s88BlockVisible() && ! s88MacrosOpen)
             {
@@ -1120,7 +1118,7 @@ private:
                 default: break;
             }
         }
-        if (! listOpen && ! s88RingsOpen && ! s88MacrosOpen && engine.pendingBlock() < 0 && isActive (selected))
+        if (! listOpen && ! s88RingsOpen && ! s88MacrosOpen && ! s88ScenesOpen && engine.pendingBlock() < 0 && isActive (selected))
         {
             if (s88BlockVisible())
             {
@@ -1142,6 +1140,7 @@ private:
             if (knobStage != 0) stopKnobLearn();
         }
         if (s88MacrosOpen && ctl >= 35 && ctl <= 39) s88MacrosOpen = false;   // άλλο κουμπί (Block, VST, MIDI FX, FX, Orb Rings) κλείνει την οθόνη Macros
+        if (s88ScenesOpen && ctl >= 35 && ctl <= 40) s88ScenesOpen = false;  // άλλο κουμπί κλείνει την οθόνη Scene
         switch (ctl)
         {
             case 35: blockTile.triggerClick(); break;
@@ -1149,6 +1148,10 @@ private:
             case 37: mfxTile.triggerClick(); break;
             case 38: fxTile.triggerClick(); break;
             case 39: if (! s88RingsOpen) { s88RingsOpen = true; s88Ring = 0; s88Slot = 0; } else motionTile.triggerClick(); break;   // 1ο πάτημα: οθόνη Orb Rings· 2ο: Rec motion (η οθόνη μένει)
+            case 41:   // Scene: 1ο πάτημα ανοίγει τις οθόνες σκηνών (δείχνουν την τωρινή)· κάθε επόμενο πάτημα ζητά την άλλη σκηνή στο επόμενο μέτρο
+                if (! s88ScenesOpen) { s88ScenesOpen = true; s88RingsOpen = false; s88MacrosOpen = false; }
+                else requestScene (1 - (sceneTarget >= 0 ? sceneTarget : currentScene));
+                break;
             case 40:   // Macros: αριστερά η οθόνη του block, δεξιά τα 8 macros του VST (κουμπιά 1–8). Ξανά πάτημα ή Block τα κλείνει
                 if (s88MacrosOpen) { s88MacrosOpen = false; s88BlockTouch(); }
                 else if (isActive (selected) && engine.pendingBlock() < 0) { ensureKnobs (selected); syncKnobView(); s88MacrosOpen = true; s88BlockTouch(); }
@@ -1292,7 +1295,7 @@ private:
 
     void drawS88Strip (Graphics& g, int screen)
     {
-        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "Macros", "", "" };
+        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "Macros", "Scene", "" };
         g.setColour (Colour (0xff1c1a19).withAlpha (0.75f));   // 75% αδιαφάνεια: το σχέδιο φαίνεται αχνά από πίσω
         g.fillRect (0, 0, KeyScreens::width, s88StripH);
         g.setFont (hobby::makeFont (typeface, 22.0f).boldened());
@@ -1300,7 +1303,7 @@ private:
         {
             g.setColour (screen * 4 + i == 4 && s88Blink ? hobby::kRed : Colour (0xffe8e4e0));   // Rec motion οπλισμένο: η λέξη Orb Rings αναβοσβήνει κόκκινη
             g.drawText (words[screen * 4 + i], Rectangle<int> (i * 120 + s88WordShift, 0, 120, s88StripH), Justification::centred, false);
-            if (screen * 4 + i == 5 && s88MacrosOpen)   // οθόνη Macros ενεργή: πλαίσιο γύρω από τη λέξη
+            if ((screen * 4 + i == 5 && s88MacrosOpen) || (screen * 4 + i == 6 && s88ScenesOpen))   // οθόνη Macros ή Scene ενεργή: πλαίσιο γύρω από τη λέξη
             {
                 g.setColour (Colours::white);
                 g.drawRoundedRectangle ((float) (i * 120 + s88WordShift + 8), 6.0f, 104.0f, (float) s88StripH - 12.0f, 8.0f, 2.0f);
@@ -1409,7 +1412,7 @@ private:
     }
 
     String s88Sig;
-    bool s88RingsOpen = false, s88Blink = false, s88MacrosOpen = false;
+    bool s88RingsOpen = false, s88Blink = false, s88MacrosOpen = false, s88ScenesOpen = false;
     int s88Ring = 0, s88Slot = 0;   // επιλεγμένο ring (0..3) και θέση παραμέτρου (0..3)
     int s88WallTop = 0;   // πρώτη ορατή σειρά του τοίχου
 
@@ -1548,6 +1551,182 @@ private:
         for (int i = 0; i < 13; ++i) s += s88MenuLabel (i, b) + "|";
         s += String (engine.asPct[(size_t) b].load()) + (engine.isAs (b) ? "A" : "a") + (s88AsEdit ? "e" : "");
         return s;
+    }
+
+    // ---- Οθόνες Scene (S88): αριστερά οι λούπες όλων των blocks, δεξιά τα κουτιά σκηνών 1/2 και η λούπα του επιλεγμένου block ----
+    std::array<flow::LoopSnapshot, flow::numBlocks> s88LoopCache;
+    std::array<bool, flow::numBlocks> s88LoopHas {};
+    String s88LoopKey;
+    uint32 s88LoopMs = 0;
+    int s88LoopVer = 0;
+
+    double s88LoopPhase (int b) const
+    {
+        const double L = engine.loopBeatsOut[(size_t) b].load();
+        if (L <= 0.0) return 0.0;
+        const double p = std::fmod (std::fmod (engine.beatPosOut.load() - engine.loopAnchorOut[(size_t) b].load(), L) + L, L);
+        return p / L;
+    }
+
+    String s88ScenesSig()
+    {
+        const uint32 now = Time::getMillisecondCounter();
+        String key;
+        for (int b = 0; b < flow::numBlocks; ++b)
+            if (isActive (b)) key += String (b) + ":" + String (engine.loopStateOut[(size_t) b].load()) + ":" + String ((int) (engine.loopBeatsOut[(size_t) b].load() * 100.0)) + "|";
+        if (key != s88LoopKey || now - s88LoopMs > 1500)
+        {
+            s88LoopKey = key; s88LoopMs = now; ++s88LoopVer;
+            for (int b = 0; b < flow::numBlocks; ++b)
+                s88LoopHas[(size_t) b] = isActive (b) && engine.getLoop (b, s88LoopCache[(size_t) b]);
+        }
+        String s = "SC" + String (currentScene) + "," + String (sceneTarget) + "," + String ((int) ((now / 400) & 1)) + "," + String (selected) + "," + String (s88LoopVer) + ",";
+        for (int b = 0; b < flow::numBlocks; ++b)
+            if (s88LoopHas[(size_t) b]) s += String ((int) (s88LoopPhase (b) * 40.0)) + ".";
+        return s;
+    }
+
+    static void sceneNotes (const std::vector<flow::LoopEvent>& ev, double len, std::vector<std::array<double, 3>>& out)
+    {
+        double on[128] = {}; bool has[128] = {};
+        for (const auto& e : ev)
+        {
+            if (e.isRaw || e.note < 0 || e.note > 127) continue;
+            if (e.on) { on[e.note] = e.phase; has[e.note] = true; }
+            else if (has[e.note]) { out.push_back ({ on[e.note], jmax (0.05, e.phase - on[e.note]), (double) e.note }); has[e.note] = false; }
+        }
+        for (int n = 0; n < 128; ++n)
+            if (has[n]) out.push_back ({ on[n], jmax (0.05, len - on[n]), (double) n });
+    }
+
+    void drawS88Scenes (Graphics& gl, Graphics& gRt)
+    {
+        const Colour yellow (0xffe8b94a), mutedC (0xff6e6a66), lineC (0xff46403c), white (0xffffffff);
+        // ---- αριστερά: όλες οι λούπες
+        std::vector<int> act;
+        for (int b = 0; b < flow::numBlocks; ++b) if (isActive (b)) act.push_back (b);
+        const int n = (int) act.size();
+        const float y0 = 52.0f, rh = n > 0 ? jmin (34.0f, 208.0f / (float) n) : 34.0f, x0 = 56.0f, x1 = 462.0f;
+        for (int r = 0; r < n; ++r)
+        {
+            const int b = act[(size_t) r];
+            const float y = y0 + (float) r * rh;
+            const bool sel = b == selected;
+            const float d = jmin (26.0f, rh - 4.0f);
+            gl.setColour (sel ? blockLight (b) : lineC); gl.fillEllipse (14.0f, y + (rh - d) * 0.5f, d, d);
+            gl.setColour (sel ? Colour (0xff1c1a19) : Colour (0xffc8c4be)); gl.setFont (hobby::makeFont (typeface, d * 0.62f).boldened());
+            gl.drawText (String (b + 1), Rectangle<float> (14.0f, y + (rh - d) * 0.5f, d, d), Justification::centred, false);
+            if (! s88LoopHas[(size_t) b])
+            {
+                gl.setColour (lineC); gl.fillRect (x0, y + rh * 0.5f - 1.0f, x1 - x0, 2.0f);
+                continue;
+            }
+            const auto& sn = s88LoopCache[(size_t) b];
+            const double L = sn.beats;
+            const int nl = (int) sn.layers.size();
+            const unsigned allMask = nl >= 31 ? 0x7fffffffu : ((1u << nl) - 1u);
+            const bool allMuted = nl > 0 && (sn.mute & allMask) == allMask;
+            const Colour col = allMuted ? mutedC : white;
+            const float W = (float) ((x1 - x0) * jmin (1.0, L / 16.0));
+            const Rectangle<float> box (x0, y + 3.0f, W, rh - 6.0f);
+            gl.setColour (col); gl.drawRoundedRectangle (box, 6.0f, sel ? 3.0f : 2.0f);
+            if (L / 4.0 <= 8.0)
+            {
+                gl.setColour (lineC);
+                for (double t = 4.0; t < L - 0.01; t += 4.0) { const float xx = x0 + W * (float) (t / L); gl.drawVerticalLine (roundToInt (xx), box.getY() + 2.0f, box.getBottom() - 2.0f); }
+            }
+            const int shown = jmin (nl, 3);
+            const float laneH = (box.getHeight() - 8.0f) / (float) jmax (1, shown);
+            for (int l = 0; l < shown; ++l)
+            {
+                const double lb = (size_t) l < sn.layerBeats.size() && sn.layerBeats[(size_t) l] > 0.0 ? sn.layerBeats[(size_t) l] : L;
+                std::vector<std::array<double, 3>> nt; sceneNotes (sn.layers[(size_t) l], lb, nt);
+                if (nt.empty()) continue;
+                double lo = 127, hi = 0; for (auto& e : nt) { lo = jmin (lo, e[2]); hi = jmax (hi, e[2]); }
+                gl.setColour (((sn.mute >> l) & 1u) != 0 ? mutedC : white);
+                for (double t0 = 0.0; t0 < L - 0.001; t0 += lb)
+                    for (auto& e : nt)
+                    {
+                        const double st = t0 + e[0]; if (st >= L) continue;
+                        const float xx = x0 + W * (float) (st / L), ww = jmax (2.0f, W * (float) (jmin (e[1], L - st) / L));
+                        const float yy = box.getY() + 4.0f + (float) l * laneH + (1.0f - (float) ((e[2] - lo) / jmax (1.0, hi - lo))) * jmax (0.0f, laneH - 3.0f);
+                        gl.fillRect (xx, yy, ww, 2.0f);
+                    }
+            }
+            const float px = x0 + W * (float) s88LoopPhase (b);
+            gl.setColour (yellow); gl.fillRect (px - 1.0f, box.getY() - 1.0f, 2.0f, box.getHeight() + 2.0f);
+        }
+
+        // ---- δεξιά: κουτιά σκηνών και η λούπα του επιλεγμένου block
+        const bool blink = ((Time::getMillisecondCounter() / 400) & 1) != 0;
+        for (int sc = 0; sc < 2; ++sc)
+        {
+            const float cy = sc == 0 ? 100.0f : 196.0f;
+            const Rectangle<float> bx (12.0f, cy - 36.0f, 44.0f, 72.0f);
+            const bool on = sc == currentScene;
+            if (on) { gRt.setColour (Colour (0xff5a5450)); gRt.fillRoundedRectangle (bx, 12.0f); }
+            else if (sc == sceneTarget && blink) { gRt.setColour (Colour (0xff96928c)); gRt.drawRoundedRectangle (bx, 12.0f, 2.0f); }
+            gRt.setColour (on ? white : Colour (0xff827e78)); gRt.setFont (hobby::makeFont (typeface, 40.0f).boldened());
+            gRt.drawText (String (sc + 1), bx, Justification::centred, false);
+        }
+        gRt.setColour (lineC); gRt.drawVerticalLine (62, 50.0f, 260.0f);
+        if (! isActive (selected)) return;
+        const int b = selected;
+        gRt.setColour (blockLight (b)); gRt.fillEllipse (70.0f, 52.0f, 30.0f, 30.0f);
+        gRt.setColour (Colour (0xff1c1a19)); gRt.setFont (hobby::makeFont (typeface, 18.0f).boldened());
+        gRt.drawText (String (b + 1), Rectangle<float> (70.0f, 52.0f, 30.0f, 30.0f), Justification::centred, false);
+        if (! s88LoopHas[(size_t) b])
+        {
+            gRt.setColour (Colour (0xff787470)); gRt.setFont (hobby::makeFont (typeface, 24.0f).boldened());
+            gRt.drawText ("no loop", Rectangle<float> (112.0f, 130.0f, 350.0f, 40.0f), Justification::centred, false);
+            return;
+        }
+        const auto& sn = s88LoopCache[(size_t) b];
+        const double L = sn.beats; const int nl = (int) sn.layers.size();
+        const double bars = L / 4.0;
+        gRt.setColour (white); gRt.setFont (hobby::makeFont (typeface, 20.0f).boldened());
+        gRt.drawText (String (bars, std::abs (bars - std::floor (bars)) < 0.01 ? 0 : 1) + " bars  " + String::fromUTF8 ("\xc2\xb7") + "  " + String (nl) + (nl == 1 ? " layer" : " layers"),
+                      Rectangle<float> (112.0f, 54.0f, 350.0f, 28.0f), Justification::centredLeft, false);
+        const float X0 = 112.0f, X1 = 462.0f, Y0 = 92.0f, lh = jmin (70.0f, 150.0f / (float) jmax (1, nl)), H = lh * (float) nl, sw = X1 - X0;
+        gRt.setColour (Colour (0x6e000000)); gRt.fillRoundedRectangle (X0, Y0, sw, H, 10.0f);
+        if (L <= 64.0)
+            for (double t = 0.0; t <= L + 0.001; t += 1.0)
+            {
+                const bool bar = std::fmod (t, 4.0) < 0.001;
+                gRt.setColour (Colours::white.withAlpha (bar ? 0.35f : 0.11f));
+                gRt.fillRect (X0 + sw * (float) (t / L) - (bar ? 1.0f : 0.5f), Y0 + 6.0f, bar ? 2.0f : 1.0f, H - 12.0f);
+            }
+        gRt.setColour (Colour (0xff969290)); gRt.setFont (hobby::makeFont (typeface, 13.0f));
+        if (bars <= 16.0)
+            for (int k = 0; k < (int) std::ceil (bars - 0.01); ++k)
+                gRt.drawText (String (k + 1), Rectangle<float> (X0 + sw * (float) (k * 4.0 / L) + 2.0f, Y0 + H + 3.0f, 30.0f, 16.0f), Justification::centredLeft, false);
+        for (int l = 0; l < nl; ++l)
+        {
+            const float ty = Y0 + (float) l * lh;
+            if (l > 0) { gRt.setColour (Colours::white.withAlpha (0.16f)); gRt.fillRect (X0 + 8.0f, ty, sw - 16.0f, 1.0f); }
+            const double lb = (size_t) l < sn.layerBeats.size() && sn.layerBeats[(size_t) l] > 0.0 ? sn.layerBeats[(size_t) l] : L;
+            std::vector<std::array<double, 3>> nt; sceneNotes (sn.layers[(size_t) l], lb, nt);
+            double lo = 127, hi = 0; for (auto& e : nt) { lo = jmin (lo, e[2]); hi = jmax (hi, e[2]); }
+            gRt.setColour (((sn.mute >> l) & 1u) != 0 ? mutedC : white);
+            const float nh = jmax (2.0f, jmin (8.0f, lh * 0.12f));
+            for (double t0 = 0.0; t0 < L - 0.001; t0 += lb)
+                for (auto& e : nt)
+                {
+                    const double st = t0 + e[0]; if (st >= L) continue;
+                    const float xx = X0 + sw * (float) (st / L), ww = jmax (3.0f, sw * (float) (jmin (e[1], L - st) / L) - 2.0f);
+                    const float yy = ty + 8.0f + (1.0f - (float) ((e[2] - lo) / jmax (1.0, hi - lo))) * jmax (0.0f, lh - 8.0f - nh - 6.0f);
+                    gRt.fillRoundedRectangle (xx, yy, ww, nh, nh * 0.5f);
+                }
+            const int md = (size_t) l < sn.layerMode.size() ? sn.layerMode[(size_t) l] : 0;
+            if (lh >= 22.0f)
+            {
+                gRt.setColour (Colour (0xff969290)); gRt.setFont (hobby::makeFont (typeface, 11.0f));
+                gRt.drawText (md == 0 ? "loop" : md == 1 ? "once" : "hold", Rectangle<float> (X1 - 50.0f, ty + 2.0f, 46.0f, 14.0f), Justification::centredRight, false);
+            }
+        }
+        const float px = X0 + sw * (float) s88LoopPhase (b);
+        gRt.setColour (yellow); gRt.fillRect (px - 1.5f, Y0 - 4.0f, 3.0f, H + 8.0f);
+        Path tri; tri.addTriangle (px - 6.0f, Y0 - 10.0f, px + 6.0f, Y0 - 10.0f, px, Y0 - 2.0f); gRt.fillPath (tri);
     }
 
     // 8 macros του VST (θέσεις 1–8 των κουμπιών): δαχτυλίδι με την τιμή, από κάτω το όνομα. Κενή θέση = παύλα
@@ -1885,6 +2064,12 @@ private:
             if (sig == s88Sig) return;
             s88Sig = sig;
         }
+        else if (s88ScenesOpen)
+        {
+            const String sig = s88ScenesSig();
+            if (sig == s88Sig) return;
+            s88Sig = sig;
+        }
         else if (isEmptyZone (selected))   // ζώνη ορισμένη, χωρίς plugin ακόμη: μένουμε στην οθόνη του block (όχι στο άδειο σχέδιο)
         {
             const String sig = "Z" + String (selected) + ",done," + String (engine.lo[(size_t) selected].load()) + "," + String (engine.hi[(size_t) selected].load()) + "," + String ((int) loadingSlots.contains (selected));
@@ -1922,6 +2107,7 @@ private:
             if (! open && s88Sig.startsWith ("O")) drawS88OrbRings (gl, gRt);
             if (! open && s88Sig.startsWith ("Z")) drawS88SetZone (gl, gRt);
             if (! open && s88Sig.startsWith ("B")) drawS88Block (gl, gRt);
+            if (! open && s88Sig.startsWith ("S")) drawS88Scenes (gl, gRt);
             if (open)
             {
                 drawS88DimArt (gl, gRt);
@@ -3466,6 +3652,7 @@ private:
             return;
         }
         if (! isActive (block)) return;
+        sceneForgetBlock (block);
 
         closeEditor();
         stopKnobLearn();
@@ -4284,18 +4471,18 @@ private:
                 ze->setAttribute ("seq", engine.zoneSeq[(size_t) b].load());
             }
 
-        {
-            captureScene (currentScene);
+        {   // η ΑΛΛΗ σκηνή (η τωρινή ζει στα Block παραπάνω): ρυθμίσεις ανά block και, με withLoops, οι λούπες
+
             auto* sx = root->createNewChildElement ("Scenes");
             sx->setAttribute ("current", currentScene);
-            for (int i = 0; i < 4; ++i)
+            const int other = 1 - currentScene;
+            if (scenes[(size_t) other].saved)
             {
-                if (! scenes[(size_t) i].saved) continue;
                 auto* si = sx->createNewChildElement ("Scene");
-                si->setAttribute ("idx", i);
+                si->setAttribute ("idx", other);
                 for (int b = 0; b < flow::numBlocks; ++b)
                 {
-                    const auto& x = scenes[(size_t) i].b[(size_t) b];
+                    const auto& x = scenes[(size_t) other].b[(size_t) b];
                     auto* be = si->createNewChildElement ("B");
                     be->setAttribute ("s", b);
                     be->setAttribute ("off", x.off);
@@ -4306,7 +4493,24 @@ private:
                     be->setAttribute ("cto", x.ctonic);
                     be->setAttribute ("tr", x.tr);
                     be->setAttribute ("cv", x.curve);
+                    be->setAttribute ("fo", x.follow);
+                    be->setAttribute ("fpoly", x.fpoly);
+                    be->setAttribute ("rep", x.rep);
+                    be->setAttribute ("aspct", x.aspct);
                     be->setAttribute ("vol", (double) x.vol);
+                    if (withLoops && x.nLayers > 0 && x.beats > 0.0)
+                    {
+                        auto* l = be->createNewChildElement ("Loop");
+                        l->setAttribute ("beats", x.beats);
+                        l->setAttribute ("anchor", x.anchor);
+                        StringArray lb, lm;
+                        for (int k = 0; k < x.nLayers; ++k) { lb.add (String (x.lbeats[(size_t) k], 4)); lm.add (String (x.lmode[(size_t) k])); }
+                        l->setAttribute ("layerBeats", lb.joinIntoString (" "));
+                        l->setAttribute ("layerMode", lm.joinIntoString (" "));
+                        l->setAttribute ("mute", (int) x.mute);
+                        for (int k = 0; k < x.nLayers && (size_t) k < x.layers.size(); ++k)
+                            l->createNewChildElement ("Layer")->addTextElement (loopToText (x.layers[(size_t) k]));
+                    }
                 }
             }
         }
@@ -4334,6 +4538,7 @@ private:
 
     void clearEverything()
     {
+        engine.sceneCancel(); sceneTarget = -1; sceneBuf = flow::SceneData();
         closeEditor();
         for (int b = 0; b < flow::numBlocks; ++b)
             removeBlock (b, false);
@@ -4407,16 +4612,17 @@ private:
         }
         pendingSelect = jmax (0, mapSlot (root.getIntAttribute ("selected", 0)));
 
-        for (auto& sc : scenes) sc = Scene();
-        currentScene = 0;
+        for (auto& sc : scenes) sc = flow::SceneData();
+        currentScene = 0; sceneTarget = -1;
         if (auto* sx = root.getChildByName ("Scenes"))
         {
-            currentScene = jlimit (0, 3, sx->getIntAttribute ("current", 0));
+            currentScene = jlimit (0, 1, sx->getIntAttribute ("current", 0));
             for (auto* si : sx->getChildWithTagNameIterator ("Scene"))
             {
                 const int idx = si->getIntAttribute ("idx", -1);
-                if (idx < 0 || idx > 3) continue;
+                if (idx < 0 || idx > 1 || idx == currentScene) continue;   // παλιό σύστημα A–D: οι σκηνές 3 και 4 αγνοούνται
                 auto& sc = scenes[(size_t) idx];
+                sc.prepare();
                 sc.saved = true;
                 for (auto* be : si->getChildWithTagNameIterator ("B"))
                 {
@@ -4431,7 +4637,31 @@ private:
                     x.ctonic = jlimit (-1, 11, be->getIntAttribute ("cto", -1));
                     x.tr = jlimit (-48, 48, be->getIntAttribute ("tr", 0));
                     x.curve = jlimit (0, flow::numCurves - 1, be->getIntAttribute ("cv", 0));
+                    x.follow = jlimit (0, 1, be->getIntAttribute ("fo", 1));
+                    x.fpoly = x.follow != 0 ? jlimit (0, 1, be->getIntAttribute ("fpoly", 0)) : 0;
+                    x.rep = jlimit (0, 2, be->getIntAttribute ("rep", 0));
+                    x.aspct = jlimit (0, 100, be->getIntAttribute ("aspct", 60));
                     x.vol = (float) jlimit (0.0, 1.0, be->getDoubleAttribute ("vol", 1.0));
+                    if (auto* l = be->getChildByName ("Loop"))
+                    {
+                        x.beats = l->getDoubleAttribute ("beats", 0.0);
+                        x.anchor = l->getDoubleAttribute ("anchor", 0.0);
+                        x.mute = (unsigned) l->getIntAttribute ("mute", 0);
+                        StringArray lb, lm;
+                        lb.addTokens (l->getStringAttribute ("layerBeats"), " ", ""); lb.removeEmptyStrings();
+                        lm.addTokens (l->getStringAttribute ("layerMode"), " ", ""); lm.removeEmptyStrings();
+                        int n = 0;
+                        for (auto* layer : l->getChildWithTagNameIterator ("Layer"))
+                        {
+                            if (n >= flow::maxLayers) break;
+                            x.layers[(size_t) n] = loopFromText (layer->getAllSubText());
+                            x.lbeats[(size_t) n] = n < lb.size() ? lb[n].getDoubleValue() : x.beats;
+                            x.lmode[(size_t) n] = n < lm.size() ? jlimit (0, 2, lm[n].getIntValue()) : 0;
+                            ++n;
+                        }
+                        x.nLayers = n;
+                        if (n == 0 || x.beats <= 0.0) { x.nLayers = 0; x.beats = 0.0; }
+                    }
                 }
             }
         }
@@ -4985,6 +5215,7 @@ private:
         }
 
         engine.sceneRequest.exchange (-1);
+        pollScene();
 
         const int learned = engine.learnedCount.load();
         if (learned != lastLearned)
