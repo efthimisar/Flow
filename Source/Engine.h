@@ -765,6 +765,8 @@ namespace flow
 
         // ---- σκηνές: το UI ζητά αλλαγή με sceneRequestSwap· στο επόμενο μέτρο το thread ήχου κάνει swap των ρυθμίσεων και των λούπων.
         // Μετά την αλλαγή το SceneData περιέχει την προηγούμενη κατάσταση (το UI την κρατά για τη σκηνή που φεύγει).
+        std::atomic<int> stripSeq { 0 }, stripFirst { 0 };
+        juce::uint32 stripLastMs = 0;
         std::atomic<SceneData*> scenePend { nullptr };
         std::atomic<int> sceneDone { 0 };
 
@@ -2169,9 +2171,16 @@ private:
                 }
                 else if (msg.isController() || msg.isPitchWheel() || msg.isChannelPressure())
                 {
-                    for (int b = 0; b < numBlocks; ++b)
-                        if (active[(size_t) b].load() != 0)
-                            pushRaw (b, pos, msg);
+                    if (msg.isController() && msg.getControllerNumber() == 11)   // touch strip του S88 (CC 11): επιλέγει σκηνή, δεν περνά στα plugins
+                    {
+                        const auto nowMs = juce::Time::getMillisecondCounter();
+                        if (nowMs - stripLastMs > 300) { stripFirst = msg.getControllerValue(); ++stripSeq; }   // μετράει μόνο η θέση της αρχής του αγγίγματος
+                        stripLastMs = nowMs;
+                    }
+                    else
+                        for (int b = 0; b < numBlocks; ++b)
+                            if (active[(size_t) b].load() != 0)
+                                pushRaw (b, pos, msg);
                 }
             }
             asProcess (blkBeat0, blkBeat0 + (double) numSamples * blkBps, (double) numSamples / sr);

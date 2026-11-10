@@ -485,8 +485,18 @@ private:
     }
 
     // καλείται από το timer: ολοκλήρωση ή ακύρωση της αλλαγής
+    int stripSeenSeq = 0;
     void pollScene()
     {
+        const int ss = engine.stripSeq.load();
+        if (ss != stripSeenSeq)   // άγγιγμα στο touch strip: αριστερό μισό = σκηνή 1, δεξί μισό = σκηνή 2
+        {
+            stripSeenSeq = ss;
+            const int first = engine.stripFirst.load();
+            flow::flowLog ("strip: touch at " + String (first));
+            s88ScenesOpen = true; s88RingsOpen = false; s88MacrosOpen = false;
+            requestScene (first >= 64 ? 1 : 0);
+        }
         if (sceneTarget < 0) return;
         bool done = engine.sceneDone.load() != sceneSeenDone;
         if (! done && Time::getMillisecondCounter() - sceneReqMs > 20000)
