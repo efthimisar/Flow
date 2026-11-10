@@ -11,7 +11,6 @@
 #include "AudioPanel.h"
 #include "SettingsScreen.h"
 #include "PluginTypes.h"
-#include "RoleCard.h"
 #include <map>
 
 namespace
@@ -94,18 +93,6 @@ public:
         };
         addChildComponent (settingsScreen);
         setupSettingsScreen();
-
-        // Sound Palette: ζάρι (Palette, έρχεται αργότερα) και κάμερα (κράτα τον ήχο του επιλεγμένου block)
-        addAndMakeVisible (paletteTile);
-        addChildComponent (roleCard);
-        paletteTile.diceTip = gr ("Sound Palette: first press fills blocks 1-7 from the sounds you kept; one press = new sound in the selected block; double press = new sounds in all blocks not kept");
-        paletteTile.cameraTip = gr ("Keep sound: saves the sound of the selected block (instrument and MIDI FX, without audio FX) with a label");
-        paletteTile.onDice = [this] { onPaletteDice(); };
-        paletteTile.onCamera = [this] { onPaletteCamera(); };
-        roleCard.onPick = [this] (int role) { roleCard.close(); saveSnapshot (snapshotBlock, role); grabKeyboardFocus(); };
-        roleCard.onCancel = [this] { roleCard.close(); grabKeyboardFocus(); };
-        soundCount = countSounds();
-        paletteTile.setDiceOn (soundCount > 0);
 
         blockTile.onClick = [this] { if (learnClick (flow::ctlSpecial)) return; startZoneFirst(); };   // zones first: το Block ορίζει πάντα πρώτα τη ζώνη, μετά το VST βάζει plugin στη ζώνη
         vstTile.onClick = [this] { onVstClick(); };
@@ -381,7 +368,6 @@ public:
                 hobby::drawTileShadow (g, r);
             }
         }
-        hobby::drawTileShadow (g, paletteTile.getBounds().toFloat());
     }
 
     void resized() override
@@ -661,8 +647,7 @@ private:
         const int leftX = strip.getX() + 14;
         const int midW = 4 * 52 + 3 * 8;
         const int rightX = strip.getRight() - 14 - 52;
-        const int palW = 2 * 52 + 8;   // κουμπί Sound Palette: δύο μισά
-        const int leftEnd = leftX + 5 * 60, rightStart = rightX - 8 - palW;
+        const int leftEnd = leftX + 5 * 60, rightStart = rightX - 8;
         const int midX = leftEnd + jmax (4, (rightStart - leftEnd - midW) / 2);
 
         int x = leftX;
@@ -678,8 +663,6 @@ private:
             x += 60;
         }
         folderTile.setBounds (rightX, ty, 52, 52);
-        paletteTile.setBounds (rightX - 8 - palW, ty, palW, 52);
-        roleCard.setBounds (loopsBezel.reduced (5));
     }
 
     void refreshSize()
@@ -1170,8 +1153,6 @@ private:
                 if (s88MacrosOpen) { s88MacrosOpen = false; s88BlockTouch(); }
                 else if (isActive (selected) && engine.pendingBlock() < 0) { ensureKnobs (selected); syncKnobView(); s88MacrosOpen = true; s88BlockTouch(); }
                 break;
-            case 41: paletteTile.onDice(); break;
-            case 42: paletteTile.onCamera(); break;
             default: break;
         }
     }
@@ -1311,7 +1292,7 @@ private:
 
     void drawS88Strip (Graphics& g, int screen)
     {
-        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "Macros", "Dice", "Keep" };
+        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "Macros", "", "" };
         g.setColour (Colour (0xff1c1a19).withAlpha (0.75f));   // 75% αδιαφάνεια: το σχέδιο φαίνεται αχνά από πίσω
         g.fillRect (0, 0, KeyScreens::width, s88StripH);
         g.setFont (hobby::makeFont (typeface, 22.0f).boldened());
@@ -3477,7 +3458,6 @@ private:
 
     void removeBlock (int block, bool save = true)
     {
-        if (block >= 0 && block < flow::numBlocks) { paletteKept[(size_t) block] = false; paletteFile[(size_t) block] = String(); }
         if (isEmptyZone (block))   // zones first: σβήνει τη ζώνη που δεν έχει plugin
         {
             engine.clearEmptyZone (block);
@@ -4358,7 +4338,6 @@ private:
         for (int b = 0; b < flow::numBlocks; ++b)
             removeBlock (b, false);
         clearFx (-1);
-        paletteOn = false;
         panelMode = panelInstrument;
         panelIndex = 0;
     }
@@ -4634,248 +4613,6 @@ private:
         });
     }
 
-    //==========================================================================
-    // Sound Palette: κάμερα = κράτα τον ήχο του επιλεγμένου block (instrument + MIDI FX + ρυθμίσεις του block, χωρίς audio FX)
-    File soundsDir() const
-    {
-        return File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Sounds");
-    }
-
-    int countSounds() const
-    {
-        return soundsDir().findChildFiles (File::findFiles, false, "*.flowsound").size();
-    }
-
-    // Palette: τα blocks 1-7 παίρνουν ρόλους με τη σειρά BASS, ARP, OTHER, PADS/STRINGS, KEYS, LEAD, FX.
-    // Πρώτο πάτημα: γεμίζει και τα 7. Μετά: ένα πάτημα = νέος ήχος στο επιλεγμένο block, διπλό πάτημα = νέοι ήχοι σε όσα δεν έχουν κρατηθεί.
-    void onPaletteDice()
-    {
-        if (roleCard.isVisible() || settingsScreen.isVisible() || audioPanel.isVisible()) return;
-        soundCount = countSounds();
-        paletteTile.setDiceOn (soundCount > 0);
-        if (soundCount == 0) { setMessage (gr ("No sounds kept yet: use the camera on a block you like")); return; }
-        if (pendingLoads > 0) { setMessage (gr ("Wait until the plugins have loaded")); return; }
-
-        if (! paletteOn) { paletteRun (0); return; }
-
-        if (paletteTimer.isTimerRunning())    // δεύτερο πάτημα μέσα στα 300 ms
-        {
-            paletteTimer.stopTimer();
-            paletteRun (1);
-            return;
-        }
-        paletteTimer.f = [this] { paletteTimer.stopTimer(); paletteRun (2); };
-        paletteTimer.startTimer (300);
-    }
-
-    // mode 0: γέμισμα και των 7, 1: νέοι ήχοι σε όσα δεν είναι κρατημένα, 2: νέος ήχος στο επιλεγμένο block
-    void paletteRun (int mode)
-    {
-        if (pendingLoads > 0) { setMessage (gr ("Wait until the plugins have loaded")); return; }
-
-        std::vector<int> targets;
-        if (mode == 2)
-        {
-            if (selected < 0 || selected >= RoleCard::numRoles) { setMessage (gr ("Select one of the blocks 1-7")); return; }
-            targets.push_back (selected);
-        }
-        else
-            for (int b = 0; b < RoleCard::numRoles; ++b)
-                if (mode == 0 || ! paletteKept[(size_t) b]) targets.push_back (b);
-        if (targets.empty()) { setMessage (gr ("All 7 sounds are kept")); return; }
-
-        // τα αρχεία ανά ρόλο
-        std::array<std::vector<File>, RoleCard::numRoles> byRole;
-        for (auto& f : soundsDir().findChildFiles (File::findFiles, false, "*.flowsound"))
-            if (auto x = XmlDocument::parse (f))
-                if (x->hasTagName ("FlowSound"))
-                    for (int r = 0; r < RoleCard::numRoles; ++r)
-                        if (x->getStringAttribute ("role") == RoleCard::name (r)) byRole[(size_t) r].push_back (f);
-
-        struct Pick { int block; File file; };
-        std::vector<Pick> picks;
-        StringArray missing;
-        for (int b : targets)
-        {
-            std::vector<File> cand;
-            for (auto& f : byRole[(size_t) b])
-                if (f.getFullPathName() != paletteFile[(size_t) b]) cand.push_back (f);
-            if (cand.empty())
-            {
-                if (byRole[(size_t) b].empty() || mode == 2) missing.add (RoleCard::name (b));
-                continue;
-            }
-            picks.push_back ({ b, cand[(size_t) Random::getSystemRandom().nextInt ((int) cand.size())] });
-        }
-
-        if (picks.empty())
-        {
-            setMessage (gr ("No other sound for: ") + missing.joinIntoString (", "));
-            return;
-        }
-
-        if (mode == 0) backupBeforePalette();
-        paletteOn = true;
-        paletteTimer.stopTimer();
-
-        int started = 0;
-        for (auto& p : picks)
-            if (paletteLoad (p.block, p.file)) ++started;
-
-        String msg = gr ("Palette: ") + String (started) + gr (started == 1 ? " sound" : " sounds");
-        if (missing.size() > 0) msg << String::fromUTF8 (" \xc2\xb7 ") << gr ("none for ") << missing.joinIntoString (", ");
-        setMessage (msg);
-    }
-
-    // η Palette αντικαθιστά τα blocks 1-7: πρώτα κρατάμε αντίγραφο του set (τα 5 τελευταία)
-    void backupBeforePalette()
-    {
-        bool any = false;
-        for (int b = 0; b < flow::numBlocks; ++b) if (isActive (b)) any = true;
-        if (! any) return;
-        auto dir = setsDir();
-        if (! dir.createDirectory().wasOk()) return;
-        auto f = dir.getChildFile ("Before Palette " + Time::getCurrentTime().formatted ("%Y-%m-%d %H%M%S")).withFileExtension ("flowset");
-        auto xml = createSetXml (true, true);
-        if (! xml->writeTo (f)) return;
-        flow::flowLog ("palette backup: " + f.getFullPathName());
-        auto olds = dir.findChildFiles (File::findFiles, false, "Before Palette *.flowset");
-        std::sort (olds.begin(), olds.end(), [] (const File& a, const File& b) { return a.getFileName() > b.getFileName(); });
-        for (int i = 5; i < olds.size(); ++i) olds.getReference (i).deleteFile();
-    }
-
-    // φορτώνει ένα snapshot στο block (instrument, MIDI FX, ρυθμίσεις του block). Το loop του block διατηρείται.
-    bool paletteLoad (int b, const File& file)
-    {
-        auto xml = XmlDocument::parse (file);
-        if (xml == nullptr || ! xml->hasTagName ("FlowSound")) return false;
-        auto inst = readPluginEntry (xml->getChildByName ("Instrument"));
-        if (! inst.ok) return false;
-        flow::flowLog ("palette load: " + inst.desc.name + " state " + String ((int) inst.state.getSize()) + " bytes from " + file.getFileName());
-
-        const bool was = isActive (b);
-        flow::LoopSnapshot snap;
-        const bool hadLoop = was && engine.getLoop (b, snap);
-        if (! was)    // προεπιλογή (δική μου υπόθεση): μία οκτάβα ανά block, από C1
-        {
-            const int lo = flow::firstPlayNote + 12 * b;
-            engine.setZone (b, lo, b == RoleCard::numRoles - 1 ? flow::highestNote : lo + 11);
-        }
-        paletteFile[(size_t) b] = file.getFullPathName();
-        paletteKept[(size_t) b] = false;
-
-        auto copy = std::make_shared<XmlElement> (*xml);
-        loadPlugin (b, inst.desc, inst.state, false, false,
-                    [this, b, copy, snap, hadLoop] { paletteApply (b, *copy, snap, hadLoop); });
-        return true;
-    }
-
-    void paletteApply (int b, const XmlElement& e, const flow::LoopSnapshot& snap, bool hadLoop)
-    {
-        if (! isActive (b)) return;
-        engine.smartType[(size_t) b]  = jlimit (0, 8, e.getIntAttribute ("stype", 0));
-        engine.holdMode[(size_t) b]   = jlimit (0, 2, e.getIntAttribute ("hold", 0));
-        engine.curveMode[(size_t) b]  = jlimit (0, flow::numCurves - 1, e.getIntAttribute ("curve", 0));
-        engine.volPos[(size_t) b]     = (float) jlimit (0.0, 1.0, e.getDoubleAttribute ("vol", 1.0));
-        engine.volMap[(size_t) b]     = e.getIntAttribute ("vmap", 0);
-        {
-            const int t = jlimit (-48, 48, e.getIntAttribute ("tr", 0));
-            engine.transpose[(size_t) b] = ((t + (t >= 0 ? 6 : -6)) / 12) * 12;
-        }
-        engine.blockOff[(size_t) b] = 0;
-
-        clearKnobsOf (b);
-        if (auto* ke = e.getChildByName ("Orb")) readKnobs (*ke, blockKnobs[(size_t) b]);
-        ensureKnobs (b);
-
-        if (hadLoop) engine.setLoop (b, snap);
-
-        auto mfx = readPluginEntry (e.getChildByName ("MidiFx"));
-        if (mfx.ok)
-        {
-            loadAux (mfx.desc, mfx.state, "b" + String (b) + "m", [this, b] (PluginPtr p)
-            {
-                if (! isActive (b)) return;
-                closeEditor();
-                auto old = engine.setMidiFx (b, std::move (p));
-                if (old != nullptr) stateCache.erase (old.get());
-                old.reset();
-                updateEditor();
-                refreshAll();
-                saveAfterLoad();
-            });
-        }
-        else if (engine.getMidiFx (b) != nullptr)    // ο νέος ήχος δεν έχει MIDI FX
-        {
-            closeEditor();
-            auto old = engine.setMidiFx (b, nullptr);
-            if (old != nullptr) stateCache.erase (old.get());
-            old.reset();
-        }
-    }
-
-    void onPaletteCamera()
-    {
-        if (roleCard.isVisible() || settingsScreen.isVisible() || audioPanel.isVisible()) return;
-        if (! isActive (selected) || engine.getPlugin (selected) == nullptr) { setMessage (gr ("No sound to keep")); return; }
-        if (pendingLoads > 0) { setMessage (gr ("Wait until the plugins have loaded")); return; }
-        const int type = engine.smartType[(size_t) selected].load();
-        if (type == 6) { setMessage (gr ("Drums are not kept in the Palette")); return; }
-
-        static const char* const typeNames[] { "Smart", "Bass", "Keys", "Pad", "Lead", "Strings", "Drums", "FX", "Arp" };
-        const String dot = String::fromUTF8 (" \xc2\xb7 ");
-        snapshotBlock = selected;
-        roleCard.open (gr ("What is this sound?"),
-                       engine.getPlugin (selected)->getName() + dot + gr ("block ") + String (selected + 1) + dot + gr ("Smart master: ") + typeNames[jlimit (0, 8, type)],
-                       RoleCard::roleFromSmartType (type));
-    }
-
-    bool saveSnapshot (int b, int role)
-    {
-        auto* inst = isActive (b) ? engine.getPlugin (b) : nullptr;
-        if (inst == nullptr) { setMessage (gr ("No sound to keep")); return false; }
-
-        auto xml = std::make_unique<XmlElement> ("FlowSound");
-        xml->setAttribute ("version", 1);
-        xml->setAttribute ("role", String (RoleCard::name (role)));
-        xml->setAttribute ("name", inst->getName());
-        xml->setAttribute ("created", Time::getCurrentTime().toISO8601 (true));
-        xml->setAttribute ("stype", engine.smartType[(size_t) b].load());
-        xml->setAttribute ("hold", engine.holdMode[(size_t) b].load());
-        xml->setAttribute ("curve", engine.curveMode[(size_t) b].load());
-        xml->setAttribute ("vol", (double) engine.volPos[(size_t) b].load());
-        xml->setAttribute ("vmap", engine.volMap[(size_t) b].load());
-        xml->setAttribute ("tr", engine.transpose[(size_t) b].load());
-        writeKnobs (*xml->createNewChildElement ("Orb"), blockKnobs[(size_t) b]);
-        pluginElement (*xml, "Instrument", inst, true);
-        {
-            MemoryBlock probe; inst->getStateInformation (probe);
-            flow::flowLog ("snapshot: " + inst->getName() + " state " + String ((int) probe.getSize()) + " bytes (full plugin state at this moment, not a preset reference)");
-        }
-        if (auto* m = engine.getMidiFx (b)) pluginElement (*xml, "MidiFx", m, true);
-        // τα audio FX δεν μπαίνουν στο snapshot: ο ήχος κρατά τα FX που έχει ήδη το block
-
-        auto dir = soundsDir();
-        if (! dir.createDirectory().wasOk()) { setMessage (gr ("Could not write the file")); return false; }
-        const String base = File::createLegalFileName (inst->getName()) + " " + Time::getCurrentTime().formatted ("%Y-%m-%d %H%M%S");
-        auto f = dir.getChildFile (base).withFileExtension ("flowsound");
-        for (int i = 2; f.exists() && i < 100; ++i)
-            f = dir.getChildFile (base + " " + String (i)).withFileExtension ("flowsound");
-
-        if (xml->writeTo (f))
-        {
-            paletteTile.flashCamera();
-            setMessage (gr ("Sound kept: ") + inst->getName() + String::fromUTF8 (" \xc2\xb7 ") + RoleCard::name (role));
-            flow::flowLog ("snapshot saved: " + f.getFullPathName() + " (" + RoleCard::name (role) + ")");
-            soundCount = countSounds();
-            paletteTile.setDiceOn (soundCount > 0);
-            if (b < RoleCard::numRoles) { paletteKept[(size_t) b] = true; paletteFile[(size_t) b] = f.getFullPathName(); }   // κρατημένο: δεν αλλάζει με το ζάρι
-            return true;
-        }
-        setMessage (gr ("Could not write the file"));
-        return false;
-    }
-
     File setsDir() const
     {
         return File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Flow").getChildFile ("Sets");
@@ -5081,7 +4818,6 @@ private:
         const float blink = (std::fmod (t, 0.8) < 0.4) ? 1.0f : 0.0f;
         blockTile.setIconColour (valid ? tileWhite : dimGrey);   // άσπρο = λειτουργεί, απαλό γκρι = σβηστό
         vstTile.setIconColour (valid ? tileWhite : dimGrey);
-        paletteTile.setCameraOn (valid && engine.getPlugin (sel) != nullptr && engine.smartType[(size_t) sel].load() != 6);
         mfxTile.setIconColour (hasMfx ? tileWhite : dimGrey);
         mfxTile.setDots (hasMfx ? 1 : 0);
         fxTile.setIconColour (nfx > 0 ? tileWhite : dimGrey);
@@ -5391,18 +5127,6 @@ private:
     PanelHeader header;
     AudioMidiPanel audioPanel { deviceManager, typeface };
     SettingsScreen settingsScreen { typeface };
-    RoleCard roleCard { typeface };
-    PaletteTile paletteTile;
-    int snapshotBlock = -1;
-    int soundCount = 0;
-    bool paletteOn = false;                                  // η Palette έχει γεμίσει τα blocks (μόνο για τη συνεδρία)
-    std::array<bool, flow::numBlocks> paletteKept {};        // κρατημένα blocks (αόρατο, μόνο για τη συνεδρία)
-    std::array<String, flow::numBlocks> paletteFile {};
-    struct PaletteTimer : public Timer
-    {
-        std::function<void()> f;
-        void timerCallback() override { if (f) f(); }
-    } paletteTimer;
     bool audioFromSettings = false;
     ValueTile blockTile, vstTile, mfxTile, fxTile, holdTile, chordTile, recTile, undoTile, stopTile, tapeTile, metroTile, folderTile, smartTile, motionTile;
 

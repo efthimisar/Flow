@@ -640,7 +640,6 @@ private:
             g.drawText (it.line, c.getX() + 84, c.getCentreY() + 2, c.getWidth() - 96, 18, Justification::centredLeft, true);
             if (it.enabled) hits.push_back ({ c, it.fn });
         }
-        note (g, "Before a Sound Palette dice, a backup set is saved automatically.", H - 28);
     }
 
     // ---------- save ----------
