@@ -1635,10 +1635,11 @@ private:
             const Colour col = allMuted ? mutedC : blockLight (b);   // χρώμα του block
             const float W = (float) ((x1 - x0) * jmin (1.0, L / 16.0));
             const Rectangle<float> box (x0, y + 3.0f, W, rh - 6.0f);
-            gl.setColour (col); gl.drawRoundedRectangle (box, 6.0f, sel ? 3.0f : 2.0f);
+            gl.setColour (col); gl.fillRoundedRectangle (box, 6.0f);   // γεμάτο σχήμα στο χρώμα του block
+            if (sel) { gl.setColour (white); gl.drawRoundedRectangle (box.expanded (1.5f), 7.0f, 2.0f); }
             if (L / 4.0 <= 8.0)
             {
-                gl.setColour (lineC);
+                gl.setColour (Colours::black.withAlpha (0.28f));
                 for (double t = 4.0; t < L - 0.01; t += 4.0) { const float xx = x0 + W * (float) (t / L); gl.drawVerticalLine (roundToInt (xx), box.getY() + 2.0f, box.getBottom() - 2.0f); }
             }
             const int shown = jmin (nl, 3);
@@ -1649,7 +1650,7 @@ private:
                 std::vector<std::array<double, 3>> nt; sceneNotes (sn.layers[(size_t) l], lb, nt);
                 if (nt.empty()) continue;
                 double lo = 127, hi = 0; for (auto& e : nt) { lo = jmin (lo, e[2]); hi = jmax (hi, e[2]); }
-                gl.setColour (((sn.mute >> l) & 1u) != 0 ? mutedC : blockLight (b));
+                gl.setColour (((sn.mute >> l) & 1u) != 0 ? white.withAlpha (0.35f) : white);   // νότες λευκές
                 for (double t0 = 0.0; t0 < L - 0.001; t0 += lb)
                     for (auto& e : nt)
                     {
@@ -1660,7 +1661,7 @@ private:
                     }
             }
             const float px = x0 + W * (float) s88LoopPhase (b);
-            gl.setColour (yellow); gl.fillRect (px - 1.0f, box.getY() - 1.0f, 2.0f, box.getHeight() + 2.0f);
+            gl.setColour (Colour (0xff1c1a19)); gl.fillRect (px - 1.0f, box.getY() - 1.0f, 2.0f, box.getHeight() + 2.0f);   // σκούρος δείκτης: φαίνεται και πάνω σε κίτρινο
         }
 
         // ---- δεξιά: κουτιά σκηνών και η λούπα του επιλεγμένου block
