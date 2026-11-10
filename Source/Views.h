@@ -1752,6 +1752,14 @@ public:
                 return;
             }
         if (orbMotion && orbBottomRect().contains (e.position)) { if (onOrbClearMotion) onOrbClearMotion(); return; }
+        {   // πάτημα στο κέντρο του orb (κύρια οθόνη): νέα εικόνα, ή επιλογή εικόνας αν δεν υπάρχει καμία
+            const auto gm = orbGeom();
+            if (e.position.getDistanceFrom ({ gm.cx, gm.cy }) <= gm.R)
+            {
+                if (orbImage.isValid()) { if (onOrbImageNew) onOrbImageNew(); }
+                else if (onOrbImage) onOrbImage();
+            }
+        }
     }
 
     String getTooltip() override
