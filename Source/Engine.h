@@ -535,7 +535,7 @@ namespace flow
                     { spBest = sb; spSeq = zoneSeq[(size_t) sb].load(); }
                 if (spBest >= 0) return spBest;
             }
-            if (includeEmpty && ! inSpZone (n))   // στην οθόνη/φωτάκια το AS block φαίνεται με τη ζώνη του (όχι πάνω στη ζώνη SP) (η «λαβή» του), όχι όμως στη δρομολόγηση των νοτών
+            if (includeEmpty)   // στην οθόνη/φωτάκια το AS block φαίνεται με τη ζώνη του (η «λαβή» του), ακόμα και πάνω στη ζώνη SP· με πατημένο πετάλι το SP έχει ήδη επιστραφεί παραπάνω
                 for (int b = 0; b < numBlocks; ++b)
                     if (asMode[b].load() != 0 && active[b].load() != 0 && zoneState[b].load() == 0 && n >= lo[b].load() && n <= hi[b].load())
                         return b;
@@ -2119,7 +2119,7 @@ private:
                     {   // πλήκτρο-λαβή του AS block = η ζώνη που του έδωσες: δεν παίζει, μόνο επιλέγει το block για να το ρυθμίσεις
                         int hb = -1;
                         for (int i = 0; i < numBlocks; ++i)
-                            if (asMode[(size_t) i].load() != 0 && active[(size_t) i].load() != 0 && zoneState[(size_t) i].load() == 0 && n >= lo[(size_t) i].load() && n <= hi[(size_t) i].load() && ! inSpZone (n)) hb = i;
+                            if (asMode[(size_t) i].load() != 0 && active[(size_t) i].load() != 0 && zoneState[(size_t) i].load() == 0 && n >= lo[(size_t) i].load() && n <= hi[(size_t) i].load() && ! (shiftHeld.load() != 0 && inSpZone (n))) hb = i;
                         if (hb >= 0) { asSelectReq = hb; continue; }
                     }
                     const int b = blockForNote (n);
