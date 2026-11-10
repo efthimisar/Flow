@@ -1626,17 +1626,13 @@ private:
             gl.setColour (sel ? blockLight (b) : lineC); gl.fillEllipse (14.0f, y + (rh - d) * 0.5f, d, d);
             gl.setColour (sel ? Colour (0xff1c1a19) : Colour (0xffc8c4be)); gl.setFont (hobby::makeFont (typeface, d * 0.62f).boldened());
             gl.drawText (String (b + 1), Rectangle<float> (14.0f, y + (rh - d) * 0.5f, d, d), Justification::centred, false);
-            if (! s88LoopHas[(size_t) b])
-            {
-                gl.setColour (lineC); gl.fillRect (x0, y + rh * 0.5f - 1.0f, x1 - x0, 2.0f);
-                continue;
-            }
+            if (! s88LoopHas[(size_t) b]) continue;   // block χωρίς λούπα: κενό
             const auto& sn = s88LoopCache[(size_t) b];
             const double L = sn.beats;
             const int nl = (int) sn.layers.size();
             const unsigned allMask = nl >= 31 ? 0x7fffffffu : ((1u << nl) - 1u);
             const bool allMuted = nl > 0 && (sn.mute & allMask) == allMask;
-            const Colour col = allMuted ? mutedC : white;
+            const Colour col = allMuted ? mutedC : blockLight (b);   // χρώμα του block
             const float W = (float) ((x1 - x0) * jmin (1.0, L / 16.0));
             const Rectangle<float> box (x0, y + 3.0f, W, rh - 6.0f);
             gl.setColour (col); gl.drawRoundedRectangle (box, 6.0f, sel ? 3.0f : 2.0f);
@@ -1653,7 +1649,7 @@ private:
                 std::vector<std::array<double, 3>> nt; sceneNotes (sn.layers[(size_t) l], lb, nt);
                 if (nt.empty()) continue;
                 double lo = 127, hi = 0; for (auto& e : nt) { lo = jmin (lo, e[2]); hi = jmax (hi, e[2]); }
-                gl.setColour (((sn.mute >> l) & 1u) != 0 ? mutedC : white);
+                gl.setColour (((sn.mute >> l) & 1u) != 0 ? mutedC : blockLight (b));
                 for (double t0 = 0.0; t0 < L - 0.001; t0 += lb)
                     for (auto& e : nt)
                     {
