@@ -1087,6 +1087,13 @@ private:
     void handleS88Control (int ctl, int v)
     {
         if (ctl >= 35 && ctl <= 42 && v != 0) flow::flowLog ("S88 button " + String (ctl) + " pressed (pending block " + String (engine.pendingBlock()) + ", selected " + String (selected) + ")");
+        if (ctl >= 200 && ctl < 208)   // ποτενσιόμετρο 1–8 του S88 (ατέλειωτος encoder, v = βήματα): στην οθόνη Macros αλλάζει την παράμετρο της θέσης του
+        {
+            if (s88MacrosOpen && isActive (selected))
+                if (auto* prm = knobTarget (ctl - 200))
+                    prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, prm->getValue() + (float) v / 500.0f));   // 500 βήματα = όλο το εύρος· ευαισθησία προς ρύθμιση
+            return;
+        }
         auto& list = loopsView.getList();
         const bool listOpen = list.isVisible();
         if (ctl == 100)   // περιστροφή: + = δεξιά

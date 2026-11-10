@@ -195,6 +195,14 @@ void KeyLights::logInput (const uint8_t* data, int len)
             {
                 const int d = (((int) (data[30] & 0x0f) - (int) (ctlPrev[30] & 0x0f) + 8) & 15) - 8;   // μετρητής 4 bit: + = δεξιά
                 if (d != 0) onControl (100, d);
+                // 8 ποτενσιόμετρα: ατέλειωτοι encoders, 10 bit (0..1023, με περιτύλιγμα), 16 bit LE στα bytes 10..25 (κατά το log: 10,14,16,…,24 με τη σειρά 1→8)
+                for (int k = 0; k < 8; ++k)
+                {
+                    const int cur = ((int) data[10 + 2 * k] | ((int) data[11 + 2 * k] << 8)) & 0x3ff;
+                    const int prev = ((int) ctlPrev[10 + 2 * k] | ((int) ctlPrev[11 + 2 * k] << 8)) & 0x3ff;
+                    const int dk = ((cur - prev + 512) & 1023) - 512;
+                    if (dk != 0) onControl (200 + k, dk);
+                }
             }
         }
         for (int i = 0; i < 31; ++i) ctlPrev[i] = data[i];
