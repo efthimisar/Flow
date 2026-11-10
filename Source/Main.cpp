@@ -2401,6 +2401,22 @@ private:
         if (key.isNotEmpty()) knobLibrary[key] = blockKnobs[(size_t) block];
     }
 
+    // Η θυμισμένη λίστα ενός plugin είναι «άχρηστη» όταν το plugin έχει παραμέτρους «Macro …» αλλά καμία από τις αναθέσεις της δεν δείχνει σε τέτοια
+    // (π.χ. παλιά ανάθεση από πριν υπάρξει η αυτόματη): τότε τρέχει η αυτόματη ανάθεση. Αναθέσεις που περιλαμβάνουν έστω ένα macro μένουν ως έχουν.
+    bool remembersNoMacros (int block, const std::array<KnobAssign, kSlots>& arr)
+    {
+        auto* p = engine.getPlugin (block);
+        if (p == nullptr) return false;
+        auto& params = p->getParameters();
+        bool pluginHasMacros = false;
+        for (int i = 0; i < params.size(); ++i)
+            if (params[i]->getName (64).toLowerCase().contains ("macro")) { pluginHasMacros = true; break; }
+        if (! pluginHasMacros) return false;
+        for (auto& a : arr)
+            if (a.idx >= 0 && a.idx < params.size() && params[a.idx]->getName (64).toLowerCase().contains ("macro")) return false;
+        return true;
+    }
+
     void ensureKnobs (int block)   // νέο block ή set χωρίς αναθέσεις: παίρνει όσα θυμάται το Flow για αυτό το plugin
     {
         bool any = false;
@@ -2408,7 +2424,7 @@ private:
         if (! any)
         {
             auto it = knobLibrary.find (knobKey (block));
-            if (it != knobLibrary.end()) blockKnobs[(size_t) block] = it->second;
+            if (it != knobLibrary.end() && ! remembersNoMacros (block, it->second)) blockKnobs[(size_t) block] = it->second;
             else autoAssignMacros (block);
         }
         validateKnobs (block);
