@@ -2402,7 +2402,7 @@ private:
     }
 
     // Η θυμισμένη λίστα ενός plugin είναι «άχρηστη» όταν το plugin έχει παραμέτρους «Macro …» αλλά καμία από τις αναθέσεις της δεν δείχνει σε τέτοια
-    // (π.χ. παλιά ανάθεση από πριν υπάρξει η αυτόματη): τότε τρέχει η αυτόματη ανάθεση. Αναθέσεις που περιλαμβάνουν έστω ένα macro μένουν ως έχουν.
+    // ή έχει μόνο macros αλλά λιγότερα από όσα χωράνε: τότε τρέχει η αυτόματη ανάθεση. Αναθέσεις με δική του επιλογή (μη-macro) μένουν ως έχουν.
     bool remembersNoMacros (int block, const std::array<KnobAssign, kSlots>& arr)
     {
         auto* p = engine.getPlugin (block);
@@ -2412,9 +2412,16 @@ private:
         for (int i = 0; i < params.size(); ++i)
             if (params[i]->getName (64).toLowerCase().contains ("macro")) { pluginHasMacros = true; break; }
         if (! pluginHasMacros) return false;
+        int macros = 0, assigned = 0;
+        for (int i = 0; i < params.size(); ++i) if (params[i]->getName (64).toLowerCase().contains ("macro")) ++macros;
         for (auto& a : arr)
-            if (a.idx >= 0 && a.idx < params.size() && params[a.idx]->getName (64).toLowerCase().contains ("macro")) return false;
-        return true;
+        {
+            if (a.idx < 0) continue;
+            ++assigned;
+            if (a.idx >= params.size() || ! params[a.idx]->getName (64).toLowerCase().contains ("macro")) return false;   // έχει δική του επιλογή: μένει
+        }
+        return assigned < jmin (8, macros);   // μόνο macros αλλά λιγότερα από όσα χωράνε (π.χ. μόνο το Macro 1): ημιτελής παλιά ανάθεση
+
     }
 
     void ensureKnobs (int block)   // νέο block ή set χωρίς αναθέσεις: παίρνει όσα θυμάται το Flow για αυτό το plugin
