@@ -1778,9 +1778,9 @@ private:
             if (v > 0.002f)
             {
                 Path pie; pie.addPieSegment (cx - r, cy - r, 2.0f * r, 2.0f * r, a, pi, 0.0f);
-                g.setColour (bcol); g.fillPath (pie);
+                g.setColour (bcol.withAlpha (0.18f + 0.82f * v)); g.fillPath (pie);   // αχνό στο 0, γεμάτο χρώμα του block στο 100
             }
-            g.setColour (Colour (0xfffff0e1));
+            g.setColour (Colours::white);
             g.drawLine (cx, cy, cx + r * std::sin (a), cy - r * std::cos (a), 2.0f);
         }
     }
