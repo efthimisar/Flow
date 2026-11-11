@@ -1205,7 +1205,11 @@ private:
                 break;
             case 40:   // Macros: αριστερά η οθόνη του block, δεξιά τα 8 macros του VST (κουμπιά 1–8). Ξανά πάτημα ή Block τα κλείνει
                 if (s88MacrosOpen) { s88MacrosOpen = false; s88BlockTouch(); }
-                else if (isActive (selected) && engine.pendingBlock() < 0) { ensureKnobs (selected); syncKnobView(); s88MacrosOpen = true; s88BlockTouch(); }
+                else if (isActive (selected) && engine.pendingBlock() < 0) {
+                    ensureKnobs (selected); syncKnobView(); s88MacrosOpen = true; s88BlockTouch();
+                    int n = 0; for (int k = 0; k < 8; ++k) if (knobTarget (kMacroBase + k) != nullptr) ++n;
+                    flow::flowLog ("macros screen: block " + String (selected + 1) + (engine.getPlugin (selected) != nullptr ? " " + engine.getPlugin (selected)->getName() : String()) + ", " + String (n) + " of 8 macro positions assigned");
+                }
                 break;
             default: break;
         }
@@ -5718,7 +5722,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.14"; }
+    const String getApplicationVersion() override { return "0.90.15"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
