@@ -238,24 +238,11 @@ public:
             engine.mapCode[(size_t) i] = settings->getIntValue ("ctl" + String (i), 0);
 
         knobBlock.fill (-1); knobParamIdx.fill (-1);
-        if (std::unique_ptr<XmlElement> lib { settings->getXmlValue ("macroLibrary") })
-            for (auto* pe : lib->getChildWithTagNameIterator ("Plugin"))
-                readKnobs (*pe, knobLibrary[pe->getStringAttribute ("key")]);
-        if (std::unique_ptr<XmlElement> lib { settings->getXmlValue ("orbLibrary") })   // παλιά βιβλιοθήκη (έως 0.90.6): τα κουμπιά 1-8 ήταν τα macros
-            for (auto* pe : lib->getChildWithTagNameIterator ("Plugin"))
-            {
-                std::array<KnobAssign, kAll> old;
-                readKnobs (*pe, old);
-                auto& dst = knobLibrary[pe->getStringAttribute ("key")];
-                for (int k = 0; k < 8; ++k)
-                    if (old[(size_t) k].idx >= 0 && dst[(size_t) (kMacroBase + k)].idx < 0) dst[(size_t) (kMacroBase + k)] = old[(size_t) k];
-            }
         for (int k = 0; k < 8; ++k)
         {
             engine.knobCc[(size_t) k] = settings->getIntValue ("knobcc" + String (k), 0);
             engine.knobIn[(size_t) k] = -1.0f;
         }
-        macrosDone = StringArray::fromLines (settings->getValue ("macrosDone"));
         auOn = settings->getBoolValue ("auOn", false);
         pluginOff = StringArray::fromLines (settings->getValue ("pluginOff"));
         for (int i = 0; i < flow::Engine::numPedals; ++i)
@@ -506,7 +493,7 @@ private:
             stripSeenSeq = ss;
             const int first = engine.stripFirst.load();
             flow::flowLog ("strip: touch at " + String (first));
-            s88ScenesOpen = true; s88RingsOpen = false; s88MacrosOpen = false;
+            s88ScenesOpen = true; s88RingsOpen = false;
             requestScene (first >= 64 ? 1 : 0);
         }
         if (sceneTarget < 0) return;
@@ -1099,33 +1086,7 @@ private:
     void handleS88Control (int ctl, int v)
     {
         if (ctl >= 35 && ctl <= 42 && v != 0) flow::flowLog ("S88 button " + String (ctl) + " pressed (pending block " + String (engine.pendingBlock()) + ", selected " + String (selected) + ")");
-        if (ctl >= 300 && ctl < 308)   // άγγιγμα (touch) ποτενσιομέτρου 1–8: v = 1 ακουμπάει, 0 σηκώνεται
-        {
-            const int k = ctl - 300;
-            macroHaveTouch = true;
-            if (v != 0) { if (s88MacrosOpen && isActive (selected)) macroTouch (k); }
-            else if (macroTouching[(size_t) k])
-            {
-                macroTouching[(size_t) k] = false;
-                if (macroTouchBlock[(size_t) k] >= 0 && macroTouchBlock[(size_t) k] < flow::numBlocks)
-                {
-                    auto& l = macroLane[(size_t) macroTouchBlock[(size_t) k]][(size_t) k];
-                    macroEndTake (l);
-                }
-            }
-            return;
-        }
-        if (ctl >= 200 && ctl < 208)   // ποτενσιόμετρο 1–8 του S88 (ατέλειωτος encoder, v = βήματα): στην οθόνη Macros αλλάζει την παράμετρο της θέσης του
-        {
-            if (s88MacrosOpen && isActive (selected))
-                if (auto* prm = knobTarget (kMacroBase + ctl - 200))
-                {
-                    macroTouch (ctl - 200);
-                    if (macroTouching[(size_t) (ctl - 200)] && ! macroMoved[(size_t) (ctl - 200)]) { macroMoved[(size_t) (ctl - 200)] = true; macroBeginTake (macroTouchBlock[(size_t) (ctl - 200)], ctl - 200); }
-                    prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, prm->getValue() - (float) v / 500.0f));   // γύρισμα δεξιά = μεγαλώνει (ο encoder στέλνει ανάποδο πρόσημο)
-                }   // 500 βήματα = όλο το εύρος· ευαισθησία προς ρύθμιση
-            return;
-        }
+        if (ctl >= 200 && ctl < 308) return;   // ποτενσιόμετρα και touch του S88: δεν χρησιμοποιούνται
         auto& list = loopsView.getList();
         const bool listOpen = list.isVisible();
         if (ctl == 100)   // περιστροφή: + = δεξιά
@@ -1133,7 +1094,7 @@ private:
             if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
             else if (s88ScenesOpen) s88SelectAdjacent (v > 0 ? 1 : -1);
             else if (s88RingsOpen) orbShapeStep (s88Ring, v > 0 ? 1 : -1);   // Orb Rings: περιστροφή = σχέδιο του επιλεγμένου ring
-            else if (engine.pendingBlock() < 0 && s88BlockVisible() && ! s88MacrosOpen)
+            else if (engine.pendingBlock() < 0 && s88BlockVisible())
             {
                 if (s88AsEdit) { engine.setAsPct (selected, jlimit (0, 100, engine.asPct[(size_t) selected].load() + (v > 0 ? 5 : -5))); saveNow(); refreshAll(); }
                 else if (s88MenuSel == 12 && v > 0 && s88SelectAdjacent (1)) {}
@@ -1171,7 +1132,7 @@ private:
                 default: break;
             }
         }
-        if (! listOpen && ! s88RingsOpen && ! s88MacrosOpen && ! s88ScenesOpen && engine.pendingBlock() < 0 && isActive (selected))
+        if (! listOpen && ! s88RingsOpen && ! s88ScenesOpen && engine.pendingBlock() < 0 && isActive (selected))
         {
             if (s88BlockVisible())
             {
@@ -1192,7 +1153,6 @@ private:
             s88RingsOpen = false;
             if (knobStage != 0) stopKnobLearn();
         }
-        if (s88MacrosOpen && ctl >= 35 && ctl <= 39) s88MacrosOpen = false;   // άλλο κουμπί (Block, VST, MIDI FX, FX, Orb Rings) κλείνει την οθόνη Macros
         if (s88ScenesOpen && ctl >= 35 && ctl <= 40) s88ScenesOpen = false;  // άλλο κουμπί κλείνει την οθόνη Scene
         switch (ctl)
         {
@@ -1202,16 +1162,8 @@ private:
             case 38: fxTile.triggerClick(); break;
             case 39: if (! s88RingsOpen) { s88RingsOpen = true; s88Ring = 0; s88Slot = 0; } else motionTile.triggerClick(); break;   // 1ο πάτημα: οθόνη Orb Rings· 2ο: Rec motion (η οθόνη μένει)
             case 41:   // Scene: 1ο πάτημα ανοίγει τις οθόνες σκηνών (δείχνουν την τωρινή)· κάθε επόμενο πάτημα ζητά την άλλη σκηνή στο επόμενο μέτρο
-                if (! s88ScenesOpen) { s88ScenesOpen = true; s88RingsOpen = false; s88MacrosOpen = false; }
+                if (! s88ScenesOpen) { s88ScenesOpen = true; s88RingsOpen = false; }
                 else requestScene (1 - (sceneTarget >= 0 ? sceneTarget : currentScene));
-                break;
-            case 40:   // Macros: αριστερά η οθόνη του block, δεξιά τα 8 macros του VST (κουμπιά 1–8). Ξανά πάτημα ή Block τα κλείνει
-                if (s88MacrosOpen) { s88MacrosOpen = false; s88BlockTouch(); }
-                else if (isActive (selected) && engine.pendingBlock() < 0) {
-                    ensureKnobs (selected); syncKnobView(); s88MacrosOpen = true; s88BlockTouch();
-                    int n = 0; for (int k = 0; k < 8; ++k) if (knobTarget (kMacroBase + k) != nullptr) ++n;
-                    flow::flowLog ("macros screen: block " + String (selected + 1) + (engine.getPlugin (selected) != nullptr ? " " + engine.getPlugin (selected)->getName() : String()) + ", " + String (n) + " of 8 macro positions assigned");
-                }
                 break;
             default: break;
         }
@@ -1352,7 +1304,7 @@ private:
 
     void drawS88Strip (Graphics& g, int screen)
     {
-        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "Macros", "Scene", "" };
+        static const char* words[8] = { "Block", "VST", "MIDI FX", "FX", "Orb Rings", "", "Scene", "" };
         g.setColour (Colour (0xff1c1a19).withAlpha (0.75f));   // 75% αδιαφάνεια: το σχέδιο φαίνεται αχνά από πίσω
         g.fillRect (0, 0, KeyScreens::width, s88StripH);
         g.setFont (hobby::makeFont (typeface, 22.0f).boldened());
@@ -1360,7 +1312,7 @@ private:
         {
             g.setColour (screen * 4 + i == 4 && s88Blink ? hobby::kRed : Colour (0xffe8e4e0));   // Rec motion οπλισμένο: η λέξη Orb Rings αναβοσβήνει κόκκινη
             g.drawText (words[screen * 4 + i], Rectangle<int> (i * 120 + s88WordShift, 0, 120, s88StripH), Justification::centred, false);
-            if ((screen * 4 + i == 5 && s88MacrosOpen) || (screen * 4 + i == 6 && s88ScenesOpen))   // οθόνη Macros ή Scene ενεργή: πλαίσιο γύρω από τη λέξη
+            if (screen * 4 + i == 6 && s88ScenesOpen)   // οθόνη Scene ενεργή: πλαίσιο γύρω από τη λέξη
             {
                 g.setColour (Colours::white);
                 g.drawRoundedRectangle ((float) (i * 120 + s88WordShift + 8), 6.0f, 104.0f, (float) s88StripH - 12.0f, 8.0f, 2.0f);
@@ -1469,7 +1421,7 @@ private:
     }
 
     String s88Sig;
-    bool s88RingsOpen = false, s88Blink = false, s88MacrosOpen = false, s88ScenesOpen = false;
+    bool s88RingsOpen = false, s88Blink = false, s88ScenesOpen = false;
     int s88Ring = 0, s88Slot = 0;   // επιλεγμένο ring (0..3) και θέση παραμέτρου (0..3)
     int s88WallTop = 0;   // πρώτη ορατή σειρά του τοίχου
 
@@ -1783,49 +1735,6 @@ private:
         Path tri; tri.addTriangle (px - 6.0f, Y0 - 10.0f, px + 6.0f, Y0 - 10.0f, px, Y0 - 2.0f); gRt.fillPath (tri);
     }
 
-    // 8 macros του VST (θέσεις 1–8 των κουμπιών): δαχτυλίδι με την τιμή, από κάτω το όνομα. Κενή θέση = παύλα
-    String s88MacrosSig()
-    {
-        const int b = selected;
-        String pn; bool hasSnap = false;
-        if (auto* pl = engine.getPlugin (b)) { pn = pl->getName(); hasSnap = thumbFor (pn).isValid(); }
-        String s = "BM" + String (b) + "," + String (engine.lo[(size_t) b].load()) + "," + String (engine.hi[(size_t) b].load()) + ","
-                   + String ((int) (engine.volPos[(size_t) b].load() * 200.0f)) + "," + pn + "," + String ((int) hasSnap) + ",";
-        for (int k = 0; k < 8; ++k)
-        {
-            if (auto* p = knobTarget (kMacroBase + k)) s += p->getName (16) + String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "|";
-            else s += "-|";
-        }
-        return s;
-    }
-
-    // Macros: οκτώ δαχτυλίδια χωρίς κείμενο. Μια λευκή τελεία τρέχει πάνω σε λεπτό δαχτυλίδι (από κάτω προς τα δεξιά, αριστερόστροφα) και αφήνει μικρή, καθαρή ουρά στο χρώμα του block.
-    void drawS88MacroPanel (Graphics& g, int, Colour bcol)
-    {
-        const float r = 32.0f, pi = MathConstants<float>::pi;
-        for (int k = 0; k < 8; ++k)
-        {
-            auto* p = knobTarget (kMacroBase + k);
-            if (p == nullptr) continue;
-            const float cx = 60.0f + (float) (k % 4) * 120.0f, cy = k < 4 ? 106.0f : 206.0f;
-            const float v = jlimit (0.0f, 1.0f, p->getValue());
-            g.setColour (Colour (0xff2c2826)); g.drawEllipse (cx - r, cy - r, 2.0f * r, 2.0f * r, 1.2f);
-            const float tail = jmin (v, 0.28f);
-            const int n = 26;
-            for (int i = 0; i < n && tail > 0.002f; ++i)   // ουρά: από αχνό (μακριά) σε έντονο (δίπλα στην τελεία)
-            {
-                const float f0 = v - tail * (1.0f - (float) i / (float) n), f1 = v - tail * (1.0f - (float) (i + 1) / (float) n);
-                Path seg;
-                seg.addCentredArc (cx, cy, r, r, 0.0f, pi - 2.0f * pi * jmax (0.0f, f1) - 0.01f, pi - 2.0f * pi * jmax (0.0f, f0) + 0.01f, true);
-                g.setColour (bcol.withAlpha ((float) (i + 1) / (float) n));
-                g.strokePath (seg, PathStrokeType (6.0f));
-            }
-            const float a = pi - 2.0f * pi * v;
-            g.setColour (Colours::white);
-            g.fillEllipse (cx + r * std::sin (a) - 5.5f, cy - r * std::cos (a) - 5.5f, 11.0f, 11.0f);
-        }
-    }
-
     void drawS88Block (Graphics& gl, Graphics& gRt)
     {
         drawS88DimArt (gl, gRt);
@@ -1861,7 +1770,6 @@ private:
         gl.setColour (Colour (0xff3a3430)); gl.fillRoundedRectangle (kx0, 252.0f, kw, 6.0f, 3.0f);
         gl.setColour (Colour (0xffe8b94a)); gl.fillRoundedRectangle (kx0, 252.0f, jmax (6.0f, kw * jlimit (0.0f, 1.0f, engine.volPos[(size_t) b].load())), 6.0f, 3.0f);   // γραμμή volume: κινείται με το πετάλι
 
-        if (s88MacrosOpen) { drawS88MacroPanel (gRt, b, bcol); return; }
 
         // ---- δεξιά: 10 κυκλάκια, 5×2 ----
         const float D = 54.0f, gap = 8.0f, gx = 14.0f + (452.0f - (7.0f * D + 6.0f * gap)) * 0.5f;
@@ -2142,12 +2050,6 @@ private:
             if (sig == s88Sig) return;
             s88Sig = sig;
         }
-        else if (s88MacrosOpen && isActive (selected))
-        {
-            const String sig = s88MacrosSig();
-            if (sig == s88Sig) return;
-            s88Sig = sig;
-        }
         else if (s88BlockVisible())
         {
             const String sig = s88BlockSig();
@@ -2366,8 +2268,7 @@ private:
 
     // Orb: 4 γωνίες × 4 αναθέσεις = 16 θέσεις (slot = γωνία * 4 + γραμμή). Κάθε θέση δείχνει σε μία παράμετρο του plugin του επιλεγμένου block.
     static constexpr int kSlots = 16;        // Orb: ring c χρησιμοποιεί τη θέση c*4 (οι άλλες 3 δεν χρησιμοποιούνται πια)
-    static constexpr int kMacroBase = 16;    // Macros: 8 δικές τους θέσεις 16..23, ανεξάρτητες από το Orb
-    static constexpr int kAll = 24;
+    static constexpr int kAll = 16;
     std::array<int, kAll> knobBlock, knobParamIdx;     // block και δείκτης παραμέτρου (-1 = ελεύθερο)
     int knobStage = 0, knobSlot = -1;   // 1 = περιμένει να κουνηθεί παράμετρος σε plugin
     uint32 knobStageStart = 0;
@@ -2420,7 +2321,6 @@ private:
     // Τα CC του hardware (knobCc) είναι ξεχωριστά και μένουν πάντα. Τα knobBlock/knobParamIdx είναι η τρέχουσα όψη για το επιλεγμένο block.
     struct KnobAssign { int idx = -1; String name; };
     std::array<std::array<KnobAssign, kAll>, (size_t) flow::numBlocks> blockKnobs;
-    std::map<String, std::array<KnobAssign, kAll>> knobLibrary;
 
     String knobKey (int block)
     {
@@ -2453,106 +2353,24 @@ private:
             int found = -1;
             for (int i = 0; i < params.size(); ++i)
                 if (params[i]->getName (64) == a.name) { found = i; break; }
-            // Το Current μετονομάζει τα Macro του και αλλάζει τον αριθμό παραμέτρων μετά τη φόρτωση: για τα macros κρατάμε τη θέση όταν το όνομα δεν βρεθεί
-            if (found < 0 && ai >= kMacroBase && a.idx < params.size()) { a.name = params[a.idx]->getName (64); continue; }
             a.idx = found;
         }
     }
 
     void rememberKnobs (int block)
     {
-        // Τα macros θυμούνται ανά plugin (στη βιβλιοθήκη, όπως πριν από το 0.90.7)· το Orb ισχύει μόνο μέσα στο set
-        const auto key = knobKey (block);
-        if (key.isEmpty()) return;
-        auto& dst = knobLibrary[key];
-        for (int k = 0; k < 8; ++k) dst[(size_t) (kMacroBase + k)] = blockKnobs[(size_t) block][(size_t) (kMacroBase + k)];
+        (void) block;   // το Orb ισχύει μόνο μέσα στο set
     }
 
-    // Η θυμισμένη λίστα ενός plugin είναι «άχρηστη» όταν το plugin έχει παραμέτρους «Macro …» αλλά καμία από τις αναθέσεις της δεν δείχνει σε τέτοια
-    // ή έχει μόνο macros αλλά λιγότερα από όσα χωράνε: τότε τρέχει η αυτόματη ανάθεση. Αναθέσεις με δική του επιλογή (μη-macro) μένουν ως έχουν.
-    bool remembersNoMacros (int block, const std::array<KnobAssign, kAll>& arr)
+    void ensureKnobs (int block)   // νέο block ή set: ελέγχει ότι οι αναθέσεις του Orb δείχνουν ακόμα στις σωστές παραμέτρους
     {
-        auto* p = engine.getPlugin (block);
-        if (p == nullptr) return false;
-        auto& params = p->getParameters();
-        bool pluginHasMacros = false;
-        for (int i = 0; i < params.size(); ++i)
-            if (params[i]->getName (64).toLowerCase().contains ("macro")) { pluginHasMacros = true; break; }
-        if (! pluginHasMacros) return false;
-        int macros = 0, assigned = 0;
-        for (int i = 0; i < params.size(); ++i) if (params[i]->getName (64).toLowerCase().contains ("macro")) ++macros;
-        for (auto& a : arr)
-        {
-            if (a.idx < 0) continue;
-            ++assigned;
-            if (a.idx >= params.size() || ! params[a.idx]->getName (64).toLowerCase().contains ("macro")) return false;   // έχει δική του επιλογή: μένει
-        }
-        return assigned < jmin (8, macros);   // μόνο macros αλλά λιγότερα από όσα χωράνε (π.χ. μόνο το Macro 1): ημιτελής παλιά ανάθεση
-
-    }
-
-    void ensureKnobs (int block)   // νέο block ή set χωρίς macros: τα «Macro …» του plugin μπαίνουν στις 8 θέσεις των macros. Το Orb ξεκινά πάντα άδειο.
-    {
-        auto& arr = blockKnobs[(size_t) block];
-        bool empty = true;
-        for (int k = 0; k < 8; ++k) if (arr[(size_t) (kMacroBase + k)].idx >= 0) empty = false;
-        if (empty)
-        {
-            auto it = knobLibrary.find (knobKey (block));
-            if (it != knobLibrary.end())
-                for (int k = 0; k < 8; ++k) arr[(size_t) (kMacroBase + k)] = it->second[(size_t) (kMacroBase + k)];
-        }
         validateKnobs (block);
-        fillMacros (block);
-    }
-
-    // Τα macros έχουν δικές τους 8 θέσεις (16..23), ανεξάρτητες από τα rings του Orb. Όσο είναι όλες άδειες, γεμίζουν με τα «Macro …»
-    // που δηλώνει το plugin, με τη σειρά που τα δηλώνει.
-    void fillMacros (int block)
-    {
-        auto* p = engine.getPlugin (block);
-        if (p == nullptr) return;
-        auto& arr = blockKnobs[(size_t) block];
-        for (int k = 0; k < 8; ++k) if (arr[(size_t) (kMacroBase + k)].idx >= 0) return;
-        auto& params = p->getParameters();
-        std::vector<int> macros;
-        for (int i = 0; i < params.size(); ++i)
-            if (params[i]->getName (64).toLowerCase().contains ("macro")) macros.push_back (i);
-        flow::flowLog ("macros: " + p->getName() + ": " + String ((int) macros.size()) + " parameters named Macro");
-        for (size_t k = 0; k < macros.size() && k < 8; ++k)
-            arr[(size_t) kMacroBase + k] = { macros[k], params[(int) macros[k]]->getName (64) };
-        if (! macros.empty()) flow::flowLog ("macros: block " + String (block + 1) + " " + p->getName() + ": " + String ((int) jmin ((size_t) 8, macros.size())) + " assigned");
-    }
-    StringArray macrosDone;   // δεν χρησιμοποιείται πια (παλιό)
-
-    // Plugin χωρίς αναθέσεις που δεν έχει ξαναδεί το Flow: οι παράμετροι που λέγονται «Macro …» πάνε στα πρώτα κουμπιά με τη σειρά του αριθμού τους (έως 8).
-    // Δουλεύει μόνο όσο το plugin τις δηλώνει με τέτοιο όνομα· αλλιώς δεν αναθέτει τίποτα (το log δείχνει τη λίστα των παραμέτρων κάθε plugin).
-    void autoAssignMacros (int block)
-    {
-        auto* p = engine.getPlugin (block);
-        if (p == nullptr) return;
-        std::vector<std::pair<int, int>> found;   // (σειρά, δείκτης παραμέτρου)
-        auto& params = p->getParameters();
-        for (int i = 0; i < params.size(); ++i)
-        {
-            const auto nm = params[i]->getName (64);
-            const int at = nm.toLowerCase().indexOf ("macro");
-            if (at < 0) continue;
-            found.push_back ({ i, i });   // με τη σειρά που τα δηλώνει το plugin (το Massive X έχει ονόματα σαν «Macro A1», οπότε ο αριθμός μόνος του δεν αρκεί)
-        }
-        if (found.empty()) return;
-        std::sort (found.begin(), found.end());
-        for (size_t k = 0; k < found.size() && k < 8; ++k)
-            blockKnobs[(size_t) block][k] = { found[k].second, params[found[k].second]->getName (64) };
-        rememberKnobs (block);
-        flow::flowLog ("macros: block " + String (block + 1) + " " + p->getName() + ": " + String ((int) juce::jmin ((size_t) 8, found.size())) + " assigned automatically");
     }
 
     void clearKnobsOf (int block)
     {
         for (auto& a : blockKnobs[(size_t) block]) a = KnobAssign();
         for (auto& l : orbLane[(size_t) block]) l = OrbLane();
-        for (auto& l : macroLane[(size_t) block]) l = MacroLane();
     }
 
     static void writeKnobs (XmlElement& parent, const std::array<KnobAssign, kAll>& arr)
@@ -2863,60 +2681,6 @@ private:
     std::array<std::array<bool, 4>, (size_t) flow::numBlocks> orbSettle {};
     bool orbRecArmed = false;
 
-    // Macros: Rec motion και στα 8 κουμπιά (τα κουμπιά του S88 είναι ατέλειωτοι encoder· «αγγίζω» = γυρίζω, και ως άγγιγμα μετράει μέχρι να περάσουν ~0,45 δλ χωρίς κίνηση).
-    // Ίδια λογική με τα δαχτυλίδια: με οπλισμένο Rec motion γράφει όσο κρατάς το κουμπί (overdub), αλλιώς η γραμμένη κίνηση παίζει στα 16 μέτρα.
-    // s/ok = η γραμμένη κίνηση που παίζει· rs/rok = η νέα λήψη που γράφεται (αντικαθιστά την παλιά στο τέλος των 16 μέτρων, ώστε η παλιά να παίζει ως τότε)
-    struct MacroLane { std::vector<float> s, rs; std::vector<char> ok, rok; bool has = false, recording = false, pending = false; };
-    int macroPrevIdx = 0;
-    std::array<std::array<MacroLane, 8>, (size_t) flow::numBlocks> macroLane;
-    std::array<bool, 8> macroTouching {};
-    std::array<int, 8> macroTouchBlock {};
-    std::array<uint32, 8> macroLastMove {};
-    std::array<bool, 8> macroMoved {};   // γράφει μόνο αφού κουνηθεί το κουμπί μέσα στο άγγιγμα (ένα απλό άγγιγμα δεν σβήνει υπάρχουσα κίνηση)
-    static constexpr uint32 macroReleaseMs = 450;
-    bool macroHaveTouch = false;   // το S88 έστειλε πραγματικό άγγιγμα (43T–50T)· τότε το άγγιγμα τελειώνει μόνο με το σήκωμα του δαχτύλου
-
-    void macroBeginTake (int block, int k)   // πρώτο γύρισμα μέσα στο άγγιγμα: νέα λήψη, χωρίς να πειράζει την παλιά
-    {
-        if (block < 0 || block >= flow::numBlocks) return;
-        auto& l = macroLane[(size_t) block][(size_t) k];
-        l.rs.assign ((size_t) orbN, 0.0f); l.rok.assign ((size_t) orbN, 0);
-        l.recording = true; l.pending = false;
-    }
-
-    void macroEndTake (MacroLane& l)   // σήκωμα δαχτύλου: η λήψη κλείνει· αν υπήρχε κίνηση, την αντικαθιστά στο τέλος του κύκλου (αλλιώς αμέσως)
-    {
-        if (! l.recording) return;
-        l.recording = false;
-        int first = -1;
-        for (int i = 0; i < orbN; ++i) if (l.rok[(size_t) i]) { first = i; break; }
-        if (first < 0) { l.rs.clear(); l.rok.clear(); return; }
-        float last = l.rs[(size_t) first];
-        for (int n = 0; n < orbN; ++n)
-        {
-            const int i = (first + n) % orbN;
-            if (l.rok[(size_t) i]) last = l.rs[(size_t) i]; else l.rs[(size_t) i] = last;
-        }
-        if (! l.has) { l.s = std::move (l.rs); l.ok = std::move (l.rok); l.rs.clear(); l.rok.clear(); l.has = true; }
-        else l.pending = true;
-    }
-
-    void macroCommitPending()   // τέλος των 16 μέτρων: οι νέες λήψεις παίρνουν τη θέση των παλιών
-    {
-        for (auto& bl : macroLane)
-            for (auto& l : bl)
-                if (l.pending) { l.s = std::move (l.rs); l.ok = std::move (l.rok); l.rs.clear(); l.rok.clear(); l.has = true; l.pending = false; }
-    }
-
-    void macroTouch (int k)   // μία κίνηση του κουμπιού k: αρχή ή συνέχεια του «αγγίγματος»
-    {
-        macroLastMove[(size_t) k] = Time::getMillisecondCounter();
-        if (macroTouching[(size_t) k] || ! isActive (selected)) return;
-        macroTouching[(size_t) k] = true;
-        macroTouchBlock[(size_t) k] = selected;
-        macroMoved[(size_t) k] = false;   // η εγγραφή (16 μέτρα) ξεκινά αυτόματα με το πρώτο γύρισμα μέσα στο άγγιγμα, χωρίς οπλισμό
-    }
-
     // σχέδια κίνησης (OrbShapes.h): ένα ring = μία ανάθεση. -1 = κανένα, 0..15 = αυτόματα, 16 = U (η κίνηση που έγραψε ο χρήστης)
     std::array<std::array<int, 4>, (size_t) flow::numBlocks> orbAutoPat;          // [block][ring]
     std::array<std::array<int, 4>, (size_t) flow::numBlocks> orbAutoSpd {};       // 0..4 (16/8/4/2/1 δλ ανά κύκλο)
@@ -3109,7 +2873,6 @@ private:
     void orbClearMotion()
     {
         if (! isActive (selected)) return;
-        for (auto& l : macroLane[(size_t) selected]) l = MacroLane();
         for (size_t c = 0; c < 4; ++c) { orbLane[(size_t) selected][c] = OrbLane(); if (orbAutoPat[(size_t) selected][c] == orbshapes::userShape) orbAutoPat[(size_t) selected][c] = -1; }
         syncOrbAuto();
         setMessage (gr ("Motion cleared"));
@@ -3120,8 +2883,6 @@ private:
         orbRecArmed = ! orbRecArmed;
         if (! orbRecArmed)
             for (auto& bl : orbLane) for (auto& l : bl) if (l.recording) orbFinishLane (l);
-        if (! orbRecArmed)
-            for (auto& bl : macroLane) for (auto& l : bl) macroEndTake (l);
         setMessage (orbRecArmed ? gr ("Rec motion (16 bars): drag a circle in the orb") : gr ("Rec motion off"));
     }
 
@@ -3131,8 +2892,6 @@ private:
         const int i = jlimit (0, orbN - 1, (int) ph);
         const int i2 = (i + 1) % orbN;
         const float fr = (float) (ph - std::floor (ph));
-        if (i < macroPrevIdx - orbN / 2) macroCommitPending();   // ο κύκλος των 16 μέτρων ξεκίνησε από την αρχή
-        macroPrevIdx = i;
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             if (! isActive (b)) continue;
@@ -3151,27 +2910,6 @@ private:
                     orbApply (b, c, p);
                 }
             }
-            for (int k = 0; k < 8; ++k)   // Macros
-            {
-                auto& l = macroLane[(size_t) b][(size_t) k];
-                auto* prm = orbTarget (b, kMacroBase + k);
-                if (prm == nullptr) continue;
-                bool touching = macroTouching[(size_t) k] && macroTouchBlock[(size_t) k] == b;
-                if (touching && ! macroHaveTouch && Time::getMillisecondCounter() - macroLastMove[(size_t) k] > macroReleaseMs)
-                {
-                    macroTouching[(size_t) k] = false; touching = false;
-                    macroEndTake (l);
-                }
-                if (touching)
-                {
-                    if (l.recording && macroMoved[(size_t) k]) { l.rs[(size_t) i] = prm->getValue(); l.rok[(size_t) i] = 1; }
-                }
-                else if (l.has)
-                {
-                    const float v = l.s[(size_t) i] + (l.s[(size_t) i2] - l.s[(size_t) i]) * fr;
-                    if (std::abs (prm->getValue() - v) > 0.002f) prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, v));
-                }
-            }
         }
     }
 
@@ -3179,7 +2917,6 @@ private:
     {
         if (! isActive (selected)) return false;
         for (auto& l : orbLane[(size_t) selected]) if (l.has) return true;
-        for (auto& l : macroLane[(size_t) selected]) if (l.has) return true;
         return false;
     }
 
@@ -4625,17 +4362,6 @@ private:
                     me->setAttribute ("c", c);
                     me->addTextElement (Base64::toBase64 (mb.getData(), mb.getSize()));
                 }
-                for (int k = 0; k < 8; ++k)   // Rec motion των macros: 1024 τιμές int16 (0..1 → 0..32767)
-                {
-                    const auto& l = macroLane[(size_t) b][(size_t) k];
-                    if (! l.has || l.recording || (int) l.s.size() != orbN) continue;
-                    MemoryBlock mb ((size_t) orbN * 2);
-                    auto* q = static_cast<int16*> (mb.getData());
-                    for (int i = 0; i < orbN; ++i) q[i] = (int16) std::lround (jlimit (0.0f, 1.0f, l.s[(size_t) i]) * 32767.0f);
-                    auto* me = oe->createNewChildElement ("MacroMotion");
-                    me->setAttribute ("k", k);
-                    me->addTextElement (Base64::toBase64 (mb.getData(), mb.getSize()));
-                }
             }
             e->setAttribute ("slot", b);
             e->setAttribute ("lo", engine.lo[(size_t) b].load());
@@ -4783,7 +4509,6 @@ private:
             blockKnobs[(size_t) b].fill (KnobAssign());
             for (int c = 0; c < 4; ++c) { orbAutoPat[(size_t) b][(size_t) c] = -1; orbAutoSpd[(size_t) b][(size_t) c] = orbshapes::defaultSpeed; orbSettle[(size_t) b][(size_t) c] = false; orbPos[(size_t) b][(size_t) c] = orbDefault (c); }
             for (auto& l : orbLane[(size_t) b]) l = OrbLane();
-            for (auto& l : macroLane[(size_t) b]) l = MacroLane();
         }
         syncKnobView(); syncOrbAuto();
         setOrbImage ({}, false); autoOrbImage();
@@ -4932,13 +4657,6 @@ private:
             if (auto* ke = e->getChildByName ("Orb"))
             {
                 readKnobs (*ke, blockKnobs[(size_t) slot]);
-                if (ke->getIntAttribute ("v", 1) < 2)   // παλιά sets: τα 8 κουμπιά ήταν τα macros· περνούν στις νέες θέσεις των macros (όποιο όνομα κι αν έχουν)
-                    for (int k = 0; k < 8; ++k)
-                    {
-                        auto& src = blockKnobs[(size_t) slot][(size_t) k];
-                        auto& dst = blockKnobs[(size_t) slot][(size_t) (kMacroBase + k)];
-                        if (src.idx >= 0 && dst.idx < 0) dst = src;
-                    }
                 for (int k = 0; k < kSlots; ++k)   // Orb: μία ανάθεση ανά ring· στα παλιά sets τα macros δεν ανήκουν πια στο Orb
                 {
                     auto& a = blockKnobs[(size_t) slot][(size_t) k];
@@ -4958,19 +4676,6 @@ private:
                     for (int i = 0; i < orbN; ++i) l.s[(size_t) i] = { (float) q[2 * i] / 32767.0f, (float) q[2 * i + 1] / 32767.0f };
                     l.has = true; l.recording = false;
                     orbAutoPat[(size_t) slot][(size_t) c] = orbshapes::userShape;
-                }
-                for (auto& ml : macroLane[(size_t) slot]) ml = MacroLane();
-                for (auto* me : ke->getChildWithTagNameIterator ("MacroMotion"))
-                {
-                    const int k = me->getIntAttribute ("k", -1);
-                    if (k < 0 || k > 7) continue;
-                    MemoryOutputStream mo;
-                    if (! Base64::convertFromBase64 (mo, me->getAllSubText().trim()) || mo.getDataSize() != (size_t) orbN * 2) continue;
-                    const auto* q = static_cast<const int16*> (mo.getData());
-                    auto& l = macroLane[(size_t) slot][(size_t) k];
-                    l.s.assign ((size_t) orbN, 0.0f); l.ok.assign ((size_t) orbN, 1);
-                    for (int i = 0; i < orbN; ++i) l.s[(size_t) i] = (float) q[i] / 32767.0f;
-                    l.has = true; l.recording = false;
                 }
                 for (auto* se : ke->getChildWithTagNameIterator ("Shape"))
                 {
@@ -5250,25 +4955,11 @@ private:
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
         for (int k = 0; k < 8; ++k)
             settings->setValue ("knobcc" + String (k), engine.knobCc[(size_t) k].load());
-        settings->setValue ("macrosDone", macrosDone.joinIntoString ("\n"));
         settings->setValue ("auOn", auOn);
         settings->setValue ("pluginOff", pluginOff.joinIntoString ("\n"));
         for (int i = 0; i < flow::Engine::numPedals; ++i)
             settings->setValue ("pedalcc" + String (i), engine.pedalCc[(size_t) i].load());
-        {
-            XmlElement lib ("MacroLib");
-            for (auto& kv : knobLibrary)
-            {
-                bool any = false;
-                for (int k = 0; k < 8; ++k) if (kv.second[(size_t) (kMacroBase + k)].idx >= 0) any = true;
-                if (! any) continue;
-                auto* pe = lib.createNewChildElement ("Plugin");
-                pe->setAttribute ("key", kv.first);
-                writeKnobs (*pe, kv.second);
-            }
-            settings->setValue ("macroLibrary", &lib);
-            settings->removeValue ("orbLibrary");   // μεταφέρθηκε στη macroLibrary
-        }
+        settings->removeValue ("macroLibrary"); settings->removeValue ("orbLibrary"); settings->removeValue ("macrosDone");   // δεν χρησιμοποιούνται πια
         settings->removeValue ("session");      // το session ζει πια σε δικό του αρχείο (Flow-session.xml), γραμμένο σε background thread
         settings->removeValue ("sessionBackup");
 
@@ -5727,7 +5418,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.17"; }
+    const String getApplicationVersion() override { return "0.90.18"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
