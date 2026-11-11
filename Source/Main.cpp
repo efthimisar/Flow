@@ -1090,6 +1090,22 @@ private:
     void handleS88Control (int ctl, int v)
     {
         if (ctl >= 35 && ctl <= 42 && v != 0) flow::flowLog ("S88 button " + String (ctl) + " pressed (pending block " + String (engine.pendingBlock()) + ", selected " + String (selected) + ")");
+        if (ctl >= 300 && ctl < 308)   // άγγιγμα (touch) ποτενσιομέτρου 1–8: v = 1 ακουμπάει, 0 σηκώνεται
+        {
+            const int k = ctl - 300;
+            macroHaveTouch = true;
+            if (v != 0) { if (s88MacrosOpen && isActive (selected)) macroTouch (k); }
+            else if (macroTouching[(size_t) k])
+            {
+                macroTouching[(size_t) k] = false;
+                if (macroTouchBlock[(size_t) k] >= 0 && macroTouchBlock[(size_t) k] < flow::numBlocks)
+                {
+                    auto& l = macroLane[(size_t) macroTouchBlock[(size_t) k]][(size_t) k];
+                    if (l.recording) macroFinish (l);
+                }
+            }
+            return;
+        }
         if (ctl >= 200 && ctl < 208)   // ποτενσιόμετρο 1–8 του S88 (ατέλειωτος encoder, v = βήματα): στην οθόνη Macros αλλάζει την παράμετρο της θέσης του
         {
             if (s88MacrosOpen && isActive (selected))
@@ -2828,6 +2844,7 @@ private:
     std::array<int, 8> macroTouchBlock {};
     std::array<uint32, 8> macroLastMove {};
     static constexpr uint32 macroReleaseMs = 450;
+    bool macroHaveTouch = false;   // το S88 έστειλε πραγματικό άγγιγμα (43T–50T)· τότε το άγγιγμα τελειώνει μόνο με το σήκωμα του δαχτύλου
 
     void macroFinish (MacroLane& l)
     {
@@ -3096,7 +3113,7 @@ private:
                 auto* prm = orbTarget (b, kMacroBase + k);
                 if (prm == nullptr) continue;
                 bool touching = macroTouching[(size_t) k] && macroTouchBlock[(size_t) k] == b;
-                if (touching && Time::getMillisecondCounter() - macroLastMove[(size_t) k] > macroReleaseMs)
+                if (touching && ! macroHaveTouch && Time::getMillisecondCounter() - macroLastMove[(size_t) k] > macroReleaseMs)
                 {
                     macroTouching[(size_t) k] = false; touching = false;
                     if (l.recording) macroFinish (l);
@@ -5587,7 +5604,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.8"; }
+    const String getApplicationVersion() override { return "0.90.9"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override

@@ -191,6 +191,13 @@ void KeyLights::logInput (const uint8_t* data, int len)
                 const bool was = ctlHave && (ctlPrev[m.byteIx] & m.mask) != 0, now = (data[m.byteIx] & m.mask) != 0;
                 if (was != now) onControl (m.ctl, now ? 1 : 0);
             }
+            // άγγιγμα των 8 ποτενσιομέτρων (43T–50T): byte 7, ένα bit ανά κουμπί (0x80 = κουμπί 1 … 0x01 = κουμπί 8), βάσει του log του χρήστη
+            for (int kb = 0; kb < 8; ++kb)
+            {
+                const uint8_t mask = (uint8_t) (0x80 >> kb);
+                const bool was = ctlHave && (ctlPrev[7] & mask) != 0, now = (data[7] & mask) != 0;
+                if (was != now) onControl (300 + kb, now ? 1 : 0);
+            }
             if (ctlHave)
             {
                 const int d = (((int) (data[30] & 0x0f) - (int) (ctlPrev[30] & 0x0f) + 8) & 15) - 8;   // μετρητής 4 bit: + = δεξιά
