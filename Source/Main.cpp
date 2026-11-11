@@ -2440,8 +2440,9 @@ private:
     void validateKnobs (int block)   // μετά από αλλαγή έκδοσης plugin ο δείκτης μπορεί να άλλαξε: ψάχνει την παράμετρο με το ίδιο όνομα
     {
         auto* p = engine.getPlugin (block);
-        for (auto& a : blockKnobs[(size_t) block])
+        for (int ai = 0; ai < kAll; ++ai)
         {
+            auto& a = blockKnobs[(size_t) block][(size_t) ai];
             if (a.idx < 0) continue;
             if (p == nullptr) { a.idx = -1; continue; }
             auto& params = p->getParameters();
@@ -2450,6 +2451,8 @@ private:
             int found = -1;
             for (int i = 0; i < params.size(); ++i)
                 if (params[i]->getName (64) == a.name) { found = i; break; }
+            // Το Current μετονομάζει τα Macro του και αλλάζει τον αριθμό παραμέτρων μετά τη φόρτωση: για τα macros κρατάμε τη θέση όταν το όνομα δεν βρεθεί
+            if (found < 0 && ai >= kMacroBase && a.idx < params.size()) { a.name = params[a.idx]->getName (64); continue; }
             a.idx = found;
         }
     }
@@ -5722,7 +5725,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.15"; }
+    const String getApplicationVersion() override { return "0.90.16"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
