@@ -1134,7 +1134,13 @@ public:
     Rectangle<float> orbBottomRect() const   // "✕ motion"
     {
         const auto gm = orbGeom();
-        if (orbWo == 0) return Rectangle<float> (gm.cx - 60.0f, gm.cy + gm.R + 8.0f + 58.0f * homeGeom().s, 120.0f, 16.0f);
+        if (orbWo == 0)
+        {   // κάτω από ό,τι στοιβάζεται κάτω από τον orb (μπάρα Rec motion, ρολόι Rec Audio, «Rec motion»): ποτέ πάνω τους
+            const float sc = homeGeom().s;
+            const bool tape = engine.recorder.getState() == RecorderEngine::State::Recording || engine.recorder.isZipping() || engine.recorder.getState() == RecorderEngine::State::Error;
+            const float stack = (orbRec ? 28.0f + 18.0f : 0.0f) + (tape ? 18.0f : 0.0f);
+            return Rectangle<float> (gm.cx - 60.0f, gm.cy + gm.R + 8.0f + jmax (58.0f, stack + 6.0f) * sc, 120.0f, 16.0f);
+        }
         return Rectangle<float> (gm.cx + 60.0f, gm.cy + gm.R + 24.0f, 90.0f, 16.0f);
     }
     Rectangle<float> orbImageClearRect() const
