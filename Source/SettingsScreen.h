@@ -516,7 +516,7 @@ private:
             g.setColour (txt()); g.setFont (font (14.0f, true)); g.drawText ("Ring " + String (cc + 1), cr.getX() + 38, cr.getY() + 11, 120, 20, Justification::centredLeft, false);
             const int rowH = jlimit (22, 30, (ch - 46 - 8) / 4);
             int y = cr.getY() + 40;
-            for (int r = 0; r < 4; ++r)
+            for (int r = 0; r < 1; ++r)
             {
                 const int slot = cc * 4 + r;
                 const Rectangle<int> row (cr.getX() + 14, y, cr.getWidth() - 28, rowH - 4);
@@ -576,11 +576,11 @@ private:
         const int colW = (getWidth() - 80) / 2, rowH = 24;
         for (int c = 0; c < 4; ++c)
         {
-            const int bx = 40 + (c % 2) * colW, by = 76 + (c / 2) * (4 * rowH + 34);
+            const int bx = 40 + (c % 2) * colW, by = 76 + (c / 2) * (rowH + 60);
             g.setColour (ringC[c]); g.drawEllipse ((float) bx, (float) by + 4.0f, 14.0f, 14.0f, 2.4f);
             g.setColour (dim()); g.setFont (font (12.0f, true));
             g.drawText ("Ring " + String (c + 1), bx + 22, by, 120, 22, Justification::centredLeft, false);
-            for (int r = 0; r < 4; ++r)
+            for (int r = 0; r < 1; ++r)
             {
                 const int slot = c * 4 + r;
                 const Rectangle<int> row (bx, by + 26 + r * rowH, colW - 24, rowH - 2);

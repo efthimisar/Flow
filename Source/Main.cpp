@@ -1093,7 +1093,7 @@ private:
         if (ctl >= 200 && ctl < 208)   // ποτενσιόμετρο 1–8 του S88 (ατέλειωτος encoder, v = βήματα): στην οθόνη Macros αλλάζει την παράμετρο της θέσης του
         {
             if (s88MacrosOpen && isActive (selected))
-                if (auto* prm = knobTarget (ctl - 200))
+                if (auto* prm = knobTarget (kMacroBase + ctl - 200))
                     prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, prm->getValue() + (float) v / 500.0f));   // 500 βήματα = όλο το εύρος· ευαισθησία προς ρύθμιση
             return;
         }
@@ -1103,7 +1103,7 @@ private:
         {
             if (listOpen) list.encoderStep (v > 0 ? 1 : -1);
             else if (s88ScenesOpen) s88SelectAdjacent (v > 0 ? 1 : -1);
-            else if (s88RingsOpen) { s88Ring = jlimit (0, 3, s88Ring + (v > 0 ? 1 : -1)); s88Slot = 0; }
+            else if (s88RingsOpen) orbShapeStep (s88Ring, v > 0 ? 1 : -1);   // Orb Rings: περιστροφή = σχέδιο του επιλεγμένου ring
             else if (engine.pendingBlock() < 0 && s88BlockVisible() && ! s88MacrosOpen)
             {
                 if (s88AsEdit) { engine.setAsPct (selected, jlimit (0, 100, engine.asPct[(size_t) selected].load() + (v > 0 ? 5 : -5))); saveNow(); refreshAll(); }
@@ -1132,9 +1132,11 @@ private:
         {
             switch (ctl)
             {
-                case 1: { const int k = s88Ring * 4 + s88Slot; if (knobTarget (k) != nullptr) clearKnobSlot (k); else startKnobLearn (k); return; }   // πάτημα: learn σε άδεια θέση, σβήσιμο σε κατειλημμένη
-                case 2: s88Slot = jmax (0, s88Slot - 1); return;
-                case 3: s88Slot = jmin (3, s88Slot + 1); return;
+                case 1: s88Ring = (s88Ring + 1) % 4; orbSelRing = s88Ring; return;   // πάτημα encoder: επόμενο ring
+                case 2: orbSpeedStep (s88Ring, 1); return;    // κλίση πάνω = ταχύτερο
+                case 3: orbSpeedStep (s88Ring, -1); return;   // κλίση κάτω = πιο αργό
+                case 4: s88Ring = (s88Ring + 3) % 4; orbSelRing = s88Ring; return;
+                case 5: s88Ring = (s88Ring + 1) % 4; orbSelRing = s88Ring; return;
                 default: break;
             }
         }
@@ -1756,7 +1758,7 @@ private:
                    + String ((int) (engine.volPos[(size_t) b].load() * 200.0f)) + "," + pn + "," + String ((int) hasSnap) + ",";
         for (int k = 0; k < 8; ++k)
         {
-            if (auto* p = knobTarget (k)) s += p->getName (16) + String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "|";
+            if (auto* p = knobTarget (kMacroBase + k)) s += p->getName (16) + String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "|";
             else s += "-|";
         }
         return s;
@@ -1770,7 +1772,7 @@ private:
             const float cx = 60.0f + (float) (k % 4) * 120.0f, cy = k < 4 ? 94.0f : 196.0f, r = 27.0f;
             Path tr; tr.addCentredArc (cx, cy, r, r, 0.0f, -2.356f, 2.356f, true);
             g.setColour (track); g.strokePath (tr, PathStrokeType (6.0f, PathStrokeType::curved, PathStrokeType::rounded));
-            if (auto* p = knobTarget (k))
+            if (auto* p = knobTarget (kMacroBase + k))
             {
                 const float v = jlimit (0.0f, 1.0f, p->getValue());
                 if (v > 0.004f)
@@ -1979,62 +1981,84 @@ private:
         }
     }
 
-    // Orb Rings: υπογραφή περιεχομένου (επιλογή, learn, ονόματα/τιμές, θέση στα 16 μέτρα): ξαναστέλνεται μόνο αν άλλαξε κάτι
+    // Orb Rings: υπογραφή περιεχομένου (επιλογή, σχέδιο, ταχύτητα, τιμή, θέση της τελείας, θέση στα 16 μέτρα): ξαναστέλνεται μόνο αν άλλαξε κάτι
     String s88RingsSig()
     {
-        String s = "O" + String (s88Ring) + "," + String (s88Slot) + "," + String (knobStage != 0 ? knobSlot : -1) + "," + String (selected) + "," + String ((int) orbRecArmed) + String ((int) s88Blink) + ",";
-        for (int k = 0; k < kSlots; ++k)
+        String s = "O" + String (s88Ring) + "," + String (knobStage != 0 ? knobSlot : -1) + "," + String (selected) + "," + String ((int) orbRecArmed) + String ((int) s88Blink) + ",";
+        const bool ok = selected >= 0 && selected < flow::numBlocks;
+        for (int r = 0; r < 4; ++r)
         {
-            if (auto* p = knobTarget (k)) s += p->getName (24) + String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "|";
+            if (auto* p = knobTarget (r * 4)) s += p->getName (24) + String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "|";
             else s += "-|";
+            if (ok) s += String (orbAutoPat[(size_t) selected][(size_t) r]) + "/" + String (orbAutoSpd[(size_t) selected][(size_t) r]) + "/" + String (roundToInt (orbPos[(size_t) selected][(size_t) r].x * 24.0f)) + "/" + String (roundToInt (orbPos[(size_t) selected][(size_t) r].y * 24.0f)) + ";";
         }
         s += String ((int) (std::fmod (jmax (0.0, engine.beatPosOut.load()), 64.0) / 64.0 * 240.0));
         return s;
     }
 
-    // Orb Rings: 2 ring ανά οθόνη, 4 θέσεις παραμέτρων το καθένα. Λευκό περίγραμμα στην επιλεγμένη θέση, κάτω γραμμή = τα 16 μέτρα (κόκκινη όσο γράφει το Rec motion).
+    // Orb Rings: 2 ring ανά οθόνη, ένας μεγάλος κύκλος ανά ring (σύμβολο σχεδίου + τελεία), από κάτω η ανάθεση και η τιμή, δεξιά 5 τελείες ταχύτητας.
+    // Λευκό περίγραμμα στο επιλεγμένο ring. Κάτω γραμμή = τα 16 μέτρα (κόκκινη όσο γράφει το Rec motion).
     void drawS88OrbRings (Graphics& gl, Graphics& gRt)
     {
         drawS88Art (gl, gRt);
         static const Colour rc[4] { Colour (0xffd96b4a), Colour (0xffe8b94a), Colour (0xff4a9ab8), Colour (0xffa86a9a) };
-        const Colour white (0xffffffff), dim (0xffb0aaa2), none (0xff6a645e), warm (0xffe8b94a);
+        const Colour white (0xffffffff), dim (0xffb0aaa2), none (0xff6a645e);
         const float ph = (float) (std::fmod (jmax (0.0, engine.beatPosOut.load()), 64.0) / 64.0);
+        const bool ok = selected >= 0 && selected < flow::numBlocks;
         Graphics* gs[2] = { &gl, &gRt };
         for (int sc = 0; sc < 2; ++sc)
         {
             auto& g = *gs[sc];
             g.setColour (Colour (0xff1c1a19).withAlpha (0.8f));
             g.fillRoundedRectangle (14.0f, 50.0f, 452.0f, 208.0f, 14.0f);
+            g.setColour (Colour (0xff3a3430)); g.fillRect (240.0f, 66.0f, 1.0f, 176.0f);
             for (int i = 0; i < 2; ++i)
             {
                 const int r = sc * 2 + i;
                 const float x0 = i == 0 ? 26.0f : 246.0f;
-                g.setColour (rc[r]); g.fillEllipse (x0, 62.0f, 22.0f, 22.0f);
-                g.setColour (white); g.setFont (hobby::makeFont (typeface, 20.0f).boldened());
-                g.drawText ("Ring " + String (r + 1), Rectangle<float> (x0 + 32.0f, 59.0f, 150.0f, 26.0f), Justification::centredLeft, false);
-                for (int k = 0; k < 4; ++k)
+                const float cx = x0 + 88.0f, cy = 146.0f, cr = 40.0f;
+                g.setColour (rc[r]); g.fillEllipse (x0, 60.0f, 20.0f, 20.0f);
+                g.setColour (white); g.setFont (hobby::makeFont (typeface, 19.0f).boldened());
+                g.drawText ("Ring " + String (r + 1), Rectangle<float> (x0 + 28.0f, 57.0f, 150.0f, 26.0f), Justification::centredLeft, false);
+                auto* p = knobTarget (r * 4);
+                const int sh = ok ? orbAutoPat[(size_t) selected][(size_t) r] : -1;
+                const int sp = ok ? orbAutoSpd[(size_t) selected][(size_t) r] : orbshapes::defaultSpeed;
+                g.setColour (Colour (0xff2e2a27)); g.fillEllipse (cx - cr, cy - cr, 2.0f * cr, 2.0f * cr);
+                g.setColour (s88Ring == r ? white : Colour (0xff4a443f));
+                g.drawEllipse (cx - cr, cy - cr, 2.0f * cr, 2.0f * cr, s88Ring == r ? 3.0f : 2.0f);
+                if (p == nullptr)
                 {
-                    const int slot = r * 4 + k;
-                    const float y = 98.0f + (float) k * 40.0f;
-                    if (s88Ring == r && s88Slot == k) { g.setColour (white); g.drawRoundedRectangle (x0, y, 208.0f, 34.0f, 10.0f, 2.0f); }
-                    const Rectangle<float> tr (x0 + 10.0f, y + 4.0f, 150.0f, 26.0f), pr (x0 + 148.0f, y + 4.0f, 50.0f, 26.0f);
-                    if (auto* p = knobTarget (slot))
-                    {
-                        g.setFont (hobby::makeFont (typeface, 16.0f)); g.setColour (white);
-                        g.drawText (p->getName (24), Rectangle<float> (x0 + 10.0f, y + 4.0f, 136.0f, 26.0f), Justification::centredLeft, true);
-                        g.setFont (hobby::makeFont (typeface, 16.0f).boldened()); g.setColour (dim);
-                        g.drawText (String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "%", pr, Justification::centredRight, false);
-                    }
-                    else if (knobStage != 0 && knobSlot == slot)
-                    {
-                        g.setFont (hobby::makeFont (typeface, 15.0f)); g.setColour (warm);
-                        g.drawText (String (String::fromUTF8 ("touch a parameter\xe2\x80\xa6")), tr, Justification::centredLeft, false);
-                    }
-                    else
-                    {
-                        g.setFont (hobby::makeFont (typeface, 16.0f)); g.setColour (none);
-                        g.drawText (String::fromUTF8 ("\xe2\x80\x94"), tr, Justification::centredLeft, false);
-                    }
+                    g.setColour (none); g.setFont (hobby::makeFont (typeface, 34.0f));
+                    g.drawText ("+", Rectangle<float> (cx - cr, cy - cr, 2.0f * cr, 2.0f * cr), Justification::centred, false);
+                }
+                else if (sh >= 0)
+                {
+                    orbshapes::drawSymbol (g, sh, { cx, cy }, cr * 0.62f, Colour (0xfff2eee8), hobby::makeFont (typeface, 20.0f));
+                    const auto dp = orbPos[(size_t) selected][(size_t) r];
+                    g.setColour (rc[r]); g.fillEllipse (cx + dp.x * cr * 0.62f - 5.0f, cy + dp.y * cr * 0.62f - 5.0f, 10.0f, 10.0f);
+                }
+                for (int d = 0; d < orbshapes::speedSteps; ++d)   // πάνω = ταχύτερο
+                {
+                    const int lvl = orbshapes::speedSteps - 1 - d;
+                    const float dy = cy - 32.0f + (float) d * 16.0f;
+                    const bool cur = lvl == sp && sh >= 0 && sh != orbshapes::userShape;
+                    g.setColour (cur ? white : Colour (0xff5a544e));
+                    const float dr = cur ? 4.5f : 3.0f;
+                    g.fillEllipse (x0 + 158.0f - dr, dy - dr, 2.0f * dr, 2.0f * dr);
+                }
+                if (p != nullptr)
+                {
+                    g.setFont (hobby::makeFont (typeface, 17.0f)); g.setColour (white);
+                    g.drawText (p->getName (24), Rectangle<float> (x0, cy + cr + 8.0f, 190.0f, 22.0f), Justification::centred, true);
+                    g.setFont (hobby::makeFont (typeface, 15.0f).boldened()); g.setColour (dim);
+                    g.drawText (String (roundToInt (jlimit (0.0f, 1.0f, p->getValue()) * 100.0f)) + "%", Rectangle<float> (x0, cy + cr + 30.0f, 190.0f, 20.0f), Justification::centred, false);
+                }
+                else
+                {
+                    g.setFont (hobby::makeFont (typeface, 16.0f)); g.setColour (none);
+                    g.drawText (knobStage != 0 && knobSlot == r * 4 ? String::fromUTF8 ("touch a parameter\xe2\x80\xa6") : String ("not assigned"), Rectangle<float> (x0, cy + cr + 8.0f, 190.0f, 22.0f), Justification::centred, false);
+                    g.setFont (hobby::makeFont (typeface, 12.0f));
+                    g.drawText ("assign in Flow", Rectangle<float> (x0, cy + cr + 30.0f, 190.0f, 18.0f), Justification::centred, false);
                 }
             }
             g.setColour (Colour (0xff3a3430)); g.fillRect (0, 266, KeyScreens::width, 6);
@@ -2316,8 +2340,10 @@ private:
     int learnMode = 0;
 
     // Orb: 4 γωνίες × 4 αναθέσεις = 16 θέσεις (slot = γωνία * 4 + γραμμή). Κάθε θέση δείχνει σε μία παράμετρο του plugin του επιλεγμένου block.
-    static constexpr int kSlots = 16;
-    std::array<int, kSlots> knobBlock, knobParamIdx;     // block και δείκτης παραμέτρου (-1 = ελεύθερο)
+    static constexpr int kSlots = 16;        // Orb: ring c χρησιμοποιεί τη θέση c*4 (οι άλλες 3 δεν χρησιμοποιούνται πια)
+    static constexpr int kMacroBase = 16;    // Macros: 8 δικές τους θέσεις 16..23, ανεξάρτητες από το Orb
+    static constexpr int kAll = 24;
+    std::array<int, kAll> knobBlock, knobParamIdx;     // block και δείκτης παραμέτρου (-1 = ελεύθερο)
     int knobStage = 0, knobSlot = -1;   // 1 = περιμένει να κουνηθεί παράμετρος σε plugin
     uint32 knobStageStart = 0;
     std::atomic<int> knobTouched { -1 };   // (block << 20) | δείκτης
@@ -2368,8 +2394,8 @@ private:
     // Οι αναθέσεις ανήκουν στο plugin κάθε block (σώζονται μέσα στο set) και θυμούνται και σε μια βιβλιοθήκη ανά plugin για νέα blocks.
     // Τα CC του hardware (knobCc) είναι ξεχωριστά και μένουν πάντα. Τα knobBlock/knobParamIdx είναι η τρέχουσα όψη για το επιλεγμένο block.
     struct KnobAssign { int idx = -1; String name; };
-    std::array<std::array<KnobAssign, kSlots>, (size_t) flow::numBlocks> blockKnobs;
-    std::map<String, std::array<KnobAssign, kSlots>> knobLibrary;
+    std::array<std::array<KnobAssign, kAll>, (size_t) flow::numBlocks> blockKnobs;
+    std::map<String, std::array<KnobAssign, kAll>> knobLibrary;
 
     String knobKey (int block)
     {
@@ -2380,7 +2406,7 @@ private:
     void syncKnobView()
     {
         const int sel = isActive (selected) ? selected : -1;
-        for (int k = 0; k < kSlots; ++k)
+        for (int k = 0; k < kAll; ++k)
         {
             const int idx = sel >= 0 ? blockKnobs[(size_t) sel][(size_t) k].idx : -1;
             knobBlock[(size_t) k] = idx >= 0 ? sel : -1;
@@ -2407,13 +2433,12 @@ private:
 
     void rememberKnobs (int block)
     {
-        const auto key = knobKey (block);
-        if (key.isNotEmpty()) knobLibrary[key] = blockKnobs[(size_t) block];
+        (void) block;   // το Orb δεν θυμάται πια αναθέσεις ανά plugin: ισχύουν μόνο μέσα στο set
     }
 
     // Η θυμισμένη λίστα ενός plugin είναι «άχρηστη» όταν το plugin έχει παραμέτρους «Macro …» αλλά καμία από τις αναθέσεις της δεν δείχνει σε τέτοια
     // ή έχει μόνο macros αλλά λιγότερα από όσα χωράνε: τότε τρέχει η αυτόματη ανάθεση. Αναθέσεις με δική του επιλογή (μη-macro) μένουν ως έχουν.
-    bool remembersNoMacros (int block, const std::array<KnobAssign, kSlots>& arr)
+    bool remembersNoMacros (int block, const std::array<KnobAssign, kAll>& arr)
     {
         auto* p = engine.getPlugin (block);
         if (p == nullptr) return false;
@@ -2434,52 +2459,30 @@ private:
 
     }
 
-    void ensureKnobs (int block)   // νέο block ή set χωρίς αναθέσεις: παίρνει όσα θυμάται το Flow για αυτό το plugin
+    void ensureKnobs (int block)   // νέο block ή set χωρίς macros: τα «Macro …» του plugin μπαίνουν στις 8 θέσεις των macros. Το Orb ξεκινά πάντα άδειο.
     {
-        bool any = false;
-        for (auto& a : blockKnobs[(size_t) block]) if (a.idx >= 0) any = true;
-        if (! any)
-        {
-            auto it = knobLibrary.find (knobKey (block));
-            if (it != knobLibrary.end() && ! remembersNoMacros (block, it->second)) blockKnobs[(size_t) block] = it->second;
-            else autoAssignMacros (block);
-        }
         validateKnobs (block);
         fillMacros (block);
     }
 
-    // Μία φορά ανά plugin: τα «Macro …» που δεν είναι ήδη ανατεθειμένα μπαίνουν στις ΕΛΕΥΘΕΡΕΣ θέσεις 1–8 με τη σειρά που τα δηλώνει το plugin.
-    // Δεν πειράζει υπάρχουσες αναθέσεις (π.χ. από το Orb learn), οπότε μια ανάθεση σε μία θέση τα αφήνει να μπουν στις υπόλοιπες. Η θέση 1–8 είναι κοινή με τα δαχτυλίδια 1–2 του Orb.
+    // Τα macros έχουν δικές τους 8 θέσεις (16..23), ανεξάρτητες από τα rings του Orb. Όσο είναι όλες άδειες, γεμίζουν με τα «Macro …»
+    // που δηλώνει το plugin, με τη σειρά που τα δηλώνει.
     void fillMacros (int block)
     {
         auto* p = engine.getPlugin (block);
-        const auto key = knobKey (block);
-        if (p == nullptr || key.isEmpty() || macrosDone.contains (key)) return;
+        if (p == nullptr) return;
+        auto& arr = blockKnobs[(size_t) block];
+        for (int k = 0; k < 8; ++k) if (arr[(size_t) (kMacroBase + k)].idx >= 0) return;
         auto& params = p->getParameters();
         std::vector<int> macros;
         for (int i = 0; i < params.size(); ++i)
             if (params[i]->getName (64).toLowerCase().contains ("macro")) macros.push_back (i);
         flow::flowLog ("macros: " + p->getName() + ": " + String ((int) macros.size()) + " parameters named Macro");
-        if (macros.empty()) return;   // δεν σημειώνεται ως «έγινε»: αν αλλάξει η έκδοση του plugin, ξαναδοκιμάζει
-        auto& arr = blockKnobs[(size_t) block];
-        size_t next = 0; int added = 0;
-        for (int k = 0; k < 8 && next < macros.size(); ++k)
-        {
-            if (arr[(size_t) k].idx >= 0) continue;
-            while (next < macros.size())
-            {
-                const int idx = macros[next++];
-                bool used = false;
-                for (auto& a : arr) if (a.idx == idx) used = true;
-                if (used) continue;
-                arr[(size_t) k] = { idx, params[idx]->getName (64) }; ++added;
-                break;
-            }
-        }
-        macrosDone.addIfNotAlreadyThere (key);
-        if (added > 0) { rememberKnobs (block); flow::flowLog ("macros: block " + String (block + 1) + " " + p->getName() + ": " + String (added) + " filled into free positions"); }
+        for (size_t k = 0; k < macros.size() && k < 8; ++k)
+            arr[(size_t) kMacroBase + k] = { macros[k], params[(int) macros[k]]->getName (64) };
+        if (! macros.empty()) flow::flowLog ("macros: block " + String (block + 1) + " " + p->getName() + ": " + String ((int) jmin ((size_t) 8, macros.size())) + " assigned");
     }
-    StringArray macrosDone;
+    StringArray macrosDone;   // δεν χρησιμοποιείται πια (παλιό)
 
     // Plugin χωρίς αναθέσεις που δεν έχει ξαναδεί το Flow: οι παράμετροι που λέγονται «Macro …» πάνε στα πρώτα κουμπιά με τη σειρά του αριθμού τους (έως 8).
     // Δουλεύει μόνο όσο το plugin τις δηλώνει με τέτοιο όνομα· αλλιώς δεν αναθέτει τίποτα (το log δείχνει τη λίστα των παραμέτρων κάθε plugin).
@@ -2510,9 +2513,9 @@ private:
         for (auto& l : orbLane[(size_t) block]) l = OrbLane();
     }
 
-    static void writeKnobs (XmlElement& parent, const std::array<KnobAssign, kSlots>& arr)
+    static void writeKnobs (XmlElement& parent, const std::array<KnobAssign, kAll>& arr)
     {
-        for (int k = 0; k < kSlots; ++k)
+        for (int k = 0; k < kAll; ++k)
             if (arr[(size_t) k].idx >= 0)
             {
                 auto* ki = parent.createNewChildElement ("K");
@@ -2522,13 +2525,13 @@ private:
             }
     }
 
-    static void readKnobs (const XmlElement& parent, std::array<KnobAssign, kSlots>& arr)
+    static void readKnobs (const XmlElement& parent, std::array<KnobAssign, kAll>& arr)
     {
         for (auto& a : arr) a = KnobAssign();
         for (auto* ki : parent.getChildWithTagNameIterator ("K"))
         {
             const int k = ki->getIntAttribute ("i", -1), idx = ki->getIntAttribute ("p", -1);
-            if (k >= 0 && k < kSlots && idx >= 0) arr[(size_t) k] = { idx, ki->getStringAttribute ("n") };
+            if (k >= 0 && k < kAll && idx >= 0) arr[(size_t) k] = { idx, ki->getStringAttribute ("n") };
         }
     }
 
@@ -2558,7 +2561,7 @@ private:
         auto* p = isActive (selected) ? engine.getPlugin (selected) : nullptr;
         if (p == nullptr || p->getParameters().isEmpty()) { setMessage (gr ("The selected block has no parameters")); return; }
         std::vector<char> skip ((size_t) p->getParameters().size(), 0);
-        for (int j = 0; j < kSlots; ++j)
+        for (int j = 0; j < kAll; ++j)
         {
             const int ai = blockKnobs[(size_t) selected][(size_t) j].idx;
             if (j != k && ai >= 0 && (size_t) ai < skip.size()) skip[(size_t) ai] = 1;
@@ -4477,6 +4480,7 @@ private:
             auto* e = root->createNewChildElement ("Block");
             {
                 auto* oe = e->createNewChildElement ("Orb");
+                oe->setAttribute ("v", 2);
                 writeKnobs (*oe, blockKnobs[(size_t) b]);
                 for (int c = 0; c < 4; ++c)   // σχέδιο και ταχύτητα ανά ring
                 {
@@ -4796,6 +4800,11 @@ private:
             if (auto* ke = e->getChildByName ("Orb"))
             {
                 readKnobs (*ke, blockKnobs[(size_t) slot]);
+                for (int k = 0; k < kSlots; ++k)   // Orb: μία ανάθεση ανά ring· στα παλιά sets τα macros δεν ανήκουν πια στο Orb
+                {
+                    auto& a = blockKnobs[(size_t) slot][(size_t) k];
+                    if (a.idx >= 0 && (k % 4 != 0 || (ke->getIntAttribute ("v", 1) < 2 && a.name.toLowerCase().contains ("macro")))) a = KnobAssign();
+                }
                 for (size_t oc = 0; oc < 4; ++oc) { orbAutoPat[(size_t) slot][oc] = -1; orbAutoSpd[(size_t) slot][oc] = orbshapes::defaultSpeed; }
                 for (auto* me : ke->getChildWithTagNameIterator ("Motion"))
                 {
@@ -5491,7 +5500,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.6"; }
+    const String getApplicationVersion() override { return "0.90.7"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
