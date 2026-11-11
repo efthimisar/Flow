@@ -1634,8 +1634,11 @@ private:
             const Colour col = allMuted ? mutedC : blockLight (b);   // χρώμα του block
             const float W = (float) ((x1 - x0) * jmin (1.0, L / 16.0));
             const Rectangle<float> box (x0, y + 3.0f, W, rh - 6.0f);
-            gl.setColour (col); gl.fillRoundedRectangle (box, 6.0f);   // γεμάτο σχήμα στο χρώμα του block
-            if (sel) { gl.setColour (white); gl.drawRoundedRectangle (box.expanded (1.5f), 7.0f, 2.0f); }
+            const float px = x0 + W * (float) s88LoopPhase (b);
+            gl.setColour (Colours::black.interpolatedWith (col, 0.30f)); gl.fillRoundedRectangle (box, 8.0f);   // αχνή λούπα
+            gl.saveState(); gl.reduceClipRegion (Rectangle<int> ((int) x0, (int) box.getY() - 2, jmax (0, roundToInt (px - x0)), (int) box.getHeight() + 4));
+            gl.setColour (col); gl.fillRoundedRectangle (box, 8.0f);   // το κομμάτι που έχει παιχτεί γεμίζει έντονα στο χρώμα του block
+            gl.restoreState();
             if (L / 4.0 <= 8.0)
             {
                 gl.setColour (Colours::black.withAlpha (0.28f));
@@ -1649,38 +1652,36 @@ private:
                 std::vector<std::array<double, 3>> nt; sceneNotes (sn.layers[(size_t) l], lb, nt);
                 if (nt.empty()) continue;
                 double lo = 127, hi = 0; for (auto& e : nt) { lo = jmin (lo, e[2]); hi = jmax (hi, e[2]); }
-                gl.setColour (((sn.mute >> l) & 1u) != 0 ? white.withAlpha (0.35f) : white);   // νότες λευκές
+                const float lm = ((sn.mute >> l) & 1u) != 0 ? 0.35f : 1.0f;   // νότες λευκές· όσες δεν έχουν παιχτεί ακόμη λίγο πιο αχνές
                 for (double t0 = 0.0; t0 < L - 0.001; t0 += lb)
                     for (auto& e : nt)
                     {
                         const double st = t0 + e[0]; if (st >= L) continue;
                         const float xx = x0 + W * (float) (st / L), ww = jmax (2.0f, W * (float) (jmin (e[1], L - st) / L));
                         const float yy = box.getY() + 4.0f + (float) l * laneH + (1.0f - (float) ((e[2] - lo) / jmax (1.0, hi - lo))) * jmax (0.0f, laneH - 3.0f);
-                        gl.fillRect (xx, yy, ww, 2.0f);
+                        gl.setColour (white.withAlpha (lm * (xx < px ? 1.0f : 0.65f)));
+                        gl.fillRoundedRectangle (xx, yy, ww, 3.0f, 1.0f);
                     }
             }
-            const float px = x0 + W * (float) s88LoopPhase (b);
-            gl.setColour (Colour (0xff1c1a19)); gl.fillRect (px - 1.0f, box.getY() - 1.0f, 2.0f, box.getHeight() + 2.0f);   // σκούρος δείκτης: φαίνεται και πάνω σε κίτρινο
         }
 
         // ---- δεξιά: κουτιά σκηνών και η λούπα του επιλεγμένου block
         const bool blink = ((Time::getMillisecondCounter() / 400) & 1) != 0;
         for (int sc = 0; sc < 2; ++sc)
         {
-            const float cy = sc == 0 ? 100.0f : 196.0f;
-            const Rectangle<float> bx (12.0f, cy - 36.0f, 44.0f, 72.0f);
+            const float cy = sc == 0 ? 106.0f : 200.0f;
+            const Rectangle<float> bx (14.0f, cy - 30.0f, 60.0f, 60.0f);
             const bool on = sc == currentScene;
-            if (on) { gRt.setColour (Colour (0xff5a5450)); gRt.fillRoundedRectangle (bx, 12.0f); }
-            else if (sc == sceneTarget && blink) { gRt.setColour (Colour (0xff96928c)); gRt.drawRoundedRectangle (bx, 12.0f, 2.0f); }
-            gRt.setColour (on ? white : Colour (0xff827e78)); gRt.setFont (hobby::makeFont (typeface, 40.0f).boldened());
+            if (on) { gRt.setColour (white); gRt.fillEllipse (bx); }
+            else { gRt.setColour (sc == sceneTarget && blink ? Colour (0xffc8c4be) : Colour (0xff5a5450)); gRt.drawEllipse (bx.reduced (1.0f), 2.0f); }   // επόμενη σκηνή: ο κύκλος αναβοσβήνει
+            gRt.setColour (on ? Colour (0xff1c1a19) : Colour (0xff827e78)); gRt.setFont (hobby::makeFont (typeface, 34.0f).boldened());
             gRt.drawText (String (sc + 1), bx, Justification::centred, false);
         }
-        gRt.setColour (lineC); gRt.drawVerticalLine (62, 50.0f, 260.0f);
         if (! isActive (selected)) return;
         const int b = selected;
-        gRt.setColour (blockLight (b)); gRt.fillEllipse (70.0f, 52.0f, 30.0f, 30.0f);
+        gRt.setColour (blockLight (b)); gRt.fillEllipse (84.0f, 52.0f, 26.0f, 26.0f);
         gRt.setColour (Colour (0xff1c1a19)); gRt.setFont (hobby::makeFont (typeface, 18.0f).boldened());
-        gRt.drawText (String (b + 1), Rectangle<float> (70.0f, 52.0f, 30.0f, 30.0f), Justification::centred, false);
+        gRt.drawText (String (b + 1), Rectangle<float> (84.0f, 52.0f, 26.0f, 26.0f), Justification::centred, false);
         if (! s88LoopHas[(size_t) b])
         {
             gRt.setColour (Colour (0xff787470)); gRt.setFont (hobby::makeFont (typeface, 24.0f).boldened());
@@ -1692,7 +1693,7 @@ private:
         const double bars = L / 4.0;
         gRt.setColour (white); gRt.setFont (hobby::makeFont (typeface, 20.0f).boldened());
         gRt.drawText (String (bars, std::abs (bars - std::floor (bars)) < 0.01 ? 0 : 1) + " bars  " + String::fromUTF8 ("\xc2\xb7") + "  " + String (nl) + (nl == 1 ? " layer" : " layers"),
-                      Rectangle<float> (112.0f, 54.0f, 350.0f, 28.0f), Justification::centredLeft, false);
+                      Rectangle<float> (120.0f, 52.0f, 342.0f, 28.0f), Justification::centredLeft, false);
         const float X0 = 112.0f, X1 = 462.0f, Y0 = 92.0f, lh = jmin (70.0f, 150.0f / (float) jmax (1, nl)), H = lh * (float) nl, sw = X1 - X0;
         gRt.setColour (Colour (0x6e000000)); gRt.fillRoundedRectangle (X0, Y0, sw, H, 10.0f);
         if (L <= 64.0)
@@ -1713,7 +1714,7 @@ private:
             const double lb = (size_t) l < sn.layerBeats.size() && sn.layerBeats[(size_t) l] > 0.0 ? sn.layerBeats[(size_t) l] : L;
             std::vector<std::array<double, 3>> nt; sceneNotes (sn.layers[(size_t) l], lb, nt);
             double lo = 127, hi = 0; for (auto& e : nt) { lo = jmin (lo, e[2]); hi = jmax (hi, e[2]); }
-            gRt.setColour (((sn.mute >> l) & 1u) != 0 ? mutedC : white);
+            gRt.setColour (((sn.mute >> l) & 1u) != 0 ? mutedC : blockLight (b));
             const float nh = jmax (2.0f, jmin (8.0f, lh * 0.12f));
             for (double t0 = 0.0; t0 < L - 0.001; t0 += lb)
                 for (auto& e : nt)
@@ -1731,8 +1732,9 @@ private:
             }
         }
         const float px = X0 + sw * (float) s88LoopPhase (b);
-        gRt.setColour (yellow); gRt.fillRect (px - 1.5f, Y0 - 4.0f, 3.0f, H + 8.0f);
-        Path tri; tri.addTriangle (px - 6.0f, Y0 - 10.0f, px + 6.0f, Y0 - 10.0f, px, Y0 - 2.0f); gRt.fillPath (tri);
+        gRt.setColour (white.withAlpha (0.09f)); gRt.fillRect (px - 4.0f, Y0 - 2.0f, 8.0f, H + 4.0f);   // απαλή λάμψη
+        gRt.setColour (white.withAlpha (0.20f)); gRt.fillRect (px - 2.5f, Y0 - 2.0f, 5.0f, H + 4.0f);
+        gRt.setColour (white); gRt.fillRect (px - 1.0f, Y0 - 2.0f, 2.0f, H + 4.0f);
     }
 
     void drawS88Block (Graphics& gl, Graphics& gRt)
@@ -5418,7 +5420,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.18"; }
+    const String getApplicationVersion() override { return "0.90.19"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
