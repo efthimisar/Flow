@@ -4901,6 +4901,13 @@ private:
             if (auto* ke = e->getChildByName ("Orb"))
             {
                 readKnobs (*ke, blockKnobs[(size_t) slot]);
+                if (ke->getIntAttribute ("v", 1) < 2)   // παλιά sets: τα 8 κουμπιά ήταν τα macros· περνούν στις νέες θέσεις των macros (όποιο όνομα κι αν έχουν)
+                    for (int k = 0; k < 8; ++k)
+                    {
+                        auto& src = blockKnobs[(size_t) slot][(size_t) k];
+                        auto& dst = blockKnobs[(size_t) slot][(size_t) (kMacroBase + k)];
+                        if (src.idx >= 0 && dst.idx < 0) dst = src;
+                    }
                 for (int k = 0; k < kSlots; ++k)   // Orb: μία ανάθεση ανά ring· στα παλιά sets τα macros δεν ανήκουν πια στο Orb
                 {
                     auto& a = blockKnobs[(size_t) slot][(size_t) k];
@@ -5676,7 +5683,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.12"; }
+    const String getApplicationVersion() override { return "0.90.13"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
