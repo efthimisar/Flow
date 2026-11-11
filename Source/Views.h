@@ -1,5 +1,6 @@
 #pragma once
 // Οθόνες του Flow: loops, πληκτρολόγιο, κεφαλίδα πάνελ plugin, tempo και tap.
+#include "OrbShapes.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "Engine.h"
 #include "HobbyStyle.h"
@@ -512,8 +513,16 @@ public:
     Image orbImage;
     std::function<void (int)> onOrbAssign, onOrbClear;      // θέση 0..15
     std::function<void (int)> onOrbRing;                    // πάτημα δαχτυλιδιού: τυχαία κίνηση της τελείας
-    std::array<bool, 4> orbAutoOn { { false, false, false, false } };
-    void setOrbAuto (const std::array<bool, 4>& a) { if (a != orbAutoOn) { orbAutoOn = a; repaint (orbRect()); } }
+    std::array<int, 4> orbShape { { -1, -1, -1, -1 } }, orbSpeed { { 1, 1, 1, 1 } };   // σχέδιο (-1 κανένα, 16 = U) και ταχύτητα ανά ring
+    int orbSel = 0;
+    std::function<void (int, int)> onOrbShape, onOrbSpeed;   // ring, ±1
+    void setOrbShapes (const std::array<int, 4>& sh, const std::array<int, 4>& sp, int sel)
+    { if (sh != orbShape || sp != orbSpeed || sel != orbSel) { orbShape = sh; orbSpeed = sp; orbSel = sel; repaint (orbRect()); } }
+    int orbRingAt (Point<float> p) const
+    {
+        for (int c = 0; c < 4; ++c) if (orbRingCentre (c).getDistanceFrom (p) <= 20.0f * homeGeom().s + 8.0f) return c;
+        return -1;
+    }
     std::function<void (int, Point<float>)> onOrbMove;      // γωνία, θέση (-1..1) μέσα στον orb
     std::function<void (int, bool)> onOrbTouch;
     std::function<void()> onOrbClearMotion, onOrbImage, onOrbImageClear;
@@ -568,8 +577,19 @@ public:
     bool menuOpen = false;
     struct SetItem { String name, date; Image thumb; bool current = false; std::function<void()> fn; };
     void setSetItems (std::vector<SetItem> s) { setItems = std::move (s); if (menuOpen) repaint(); }
-    void mouseWheelMove (const MouseEvent&, const MouseWheelDetails& wd) override
+    void mouseWheelMove (const MouseEvent& e, const MouseWheelDetails& wd) override
     {
+        if (! menuOpen && ! orbMode && ! list.isVisible() && std::abs (wd.deltaY) > 0.0f)
+        {
+            const int c = orbRingAt (e.position);
+            if (c >= 0)
+            {
+                const int d = wd.deltaY > 0 ? 1 : -1;
+                if (e.mods.isShiftDown()) { if (onOrbSpeed) onOrbSpeed (c, d); }
+                else if (onOrbShape) onOrbShape (c, d);
+                return;
+            }
+        }
         if (! menuOpen || ! setsOpen) return;
         setsScroll = jmax (0, setsScroll + (wd.deltaY > 0 ? -1 : 1));
         repaint();
@@ -1201,7 +1221,7 @@ public:
     {
         const auto gm = orbGeom();
         const float k = gm.R * 0.91f;
-        static const float sx[4] { -1.0f, 1.0f, 1.0f, -1.0f }, sy[4] { -1.0f, -1.0f, 1.0f, 1.0f };
+        static const float sx[4] { -1.0f, 1.0f, -1.0f, 1.0f }, sy[4] { -1.0f, -1.0f, 1.0f, 1.0f };   // 1 πάνω αριστερά, 2 πάνω δεξιά, 3 κάτω αριστερά, 4 κάτω δεξιά
         return { gm.cx + sx[c & 3] * k, gm.cy + sy[c & 3] * k };
     }
 
@@ -1357,18 +1377,35 @@ public:
             orbSpinV += ((taping ? 0.25f : 0.0f) - orbSpinV) * jmin (1.0f, dt * 1.5f);   // περίπου μία στροφή ανά 25 δλ, ομαλή επιτάχυνση και επιβράδυνση
             orbSpin = std::fmod (orbSpin + orbSpinV * dt, MathConstants<float>::twoPi);
             paintOrb (g);
-            const float rr = 14.0f * s;
+            const float rr = 20.0f * s;
             for (int c = 0; c < 4; ++c)
             {
-                bool any = false;
-                for (int r = 0; r < 4; ++r) any = any || knobs[(size_t) (c * 4 + r)].bound;
+                const bool any = knobs[(size_t) (c * 4)].bound;
                 const auto pc = orbRingCentre (c);
                 const bool learningHere = orbLearning >= c * 4 && orbLearning < c * 4 + 4;
+                const bool sel = c == orbSel;
                 Path ring; ring.addEllipse (pc.x - rr, pc.y - rr, 2.0f * rr, 2.0f * rr);
-                Colour rc = any ? Colour (0xff48443f) : Colour (0xff35312e);
+                Colour rc = any ? Colour (0xff6a645c) : Colour (0xff35312e);
+                if (sel) rc = Colour (0xffc9c3ba);
                 if (c == orbDrag) rc = Colour (0xff9a948b);
                 if (learningHere) rc = hobby::kOn.withAlpha (0.35f + 0.65f * (float) hobby::pulse (tn * 0.001 * 2.0));
-                g.setColour (rc); g.strokePath (ring, PathStrokeType (jmax (2.5f, 4.0f * s)));   // ο δακτύλιος μένει ίδιος όταν τρέχει κίνηση
+                g.setColour (rc); g.strokePath (ring, PathStrokeType (jmax (2.0f, 3.0f * s)));
+                const int sh = orbShape[(size_t) c];
+                if (sh >= 0) orbshapes::drawSymbol (g, sh, pc, rr * 0.62f, Colour (0xfff2eee8), hobby::makeFont (typeface, 12.0f));
+                if (sh >= 0)   // τελεία στην τρέχουσα θέση, με το χρώμα της
+                {
+                    const auto dp = orbPos[(size_t) c];
+                    g.setColour (orbColour (c)); g.fillEllipse (pc.x + dp.x * rr * 0.62f - 3.0f * s, pc.y + dp.y * rr * 0.62f - 3.0f * s, 6.0f * s, 6.0f * s);
+                }
+                g.setFont (hobby::makeFont (typeface, 10.0f * s + 2.0f));
+                g.setColour (Colour (0xff9a8f84));
+                g.drawText (String (c + 1), Rectangle<float> (pc.x - 12.0f, pc.y - rr - 16.0f * s - 2.0f, 24.0f, 14.0f * s + 2.0f), Justification::centred, false);
+                const String nm = any ? knobs[(size_t) (c * 4)].name : gr ("Ring ") + String (c + 1) + gr (": not assigned");
+                g.setColour (any ? Colour (0xffb7b1a8) : Colour (0xff6a645c));
+                g.setFont (hobby::makeFont (typeface, 11.0f * s + 2.0f));
+                const bool left = c % 2 == 0;
+                const auto tr = Rectangle<float> (left ? pc.x - rr - 8.0f - 190.0f : pc.x + rr + 8.0f, pc.y - 9.0f, 190.0f, 18.0f);
+                g.drawText (nm, tr, left ? Justification::centredRight : Justification::centredLeft, true);
             }
             // ενδείξεις κάτω από τον orb: Rec Audio και Rec motion
             float ty = gmBottom();
@@ -1742,13 +1779,8 @@ public:
         }
         for (auto& h : hot)
             if (h.first.contains (e.position)) { auto fn = h.second; fn(); repaint(); return; }
-        // δαχτυλίδια γύρω από τον orb: πάτημα = τυχαία κίνηση της τελείας (η ανάθεση γίνεται από τις ρυθμίσεις)
-        for (int c = 0; c < 4; ++c)
-            if (orbRingCentre (c).getDistanceFrom (e.position) <= 14.0f * homeGeom().s + 8.0f)
-            {
-                if (onOrbRing) onOrbRing (c);
-                return;
-            }
+        // δαχτυλίδια γύρω από τον orb: πάτημα = επιλογή ring (σχέδιο με scroll, ταχύτητα με Shift+scroll)
+        { const int rc = orbRingAt (e.position); if (rc >= 0) { if (onOrbRing) onOrbRing (rc); repaint (orbRect()); return; } }
         for (int c = 0; c < 4; ++c)
             if (orbDotPoint (c).getDistanceFrom (e.position) <= 27.0f)
             {
