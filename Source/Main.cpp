@@ -1101,7 +1101,7 @@ private:
                 if (macroTouchBlock[(size_t) k] >= 0 && macroTouchBlock[(size_t) k] < flow::numBlocks)
                 {
                     auto& l = macroLane[(size_t) macroTouchBlock[(size_t) k]][(size_t) k];
-                    if (l.recording) macroFinish (l);
+                    macroEndTake (l);
                 }
             }
             return;
@@ -1112,7 +1112,7 @@ private:
                 if (auto* prm = knobTarget (kMacroBase + ctl - 200))
                 {
                     macroTouch (ctl - 200);
-                    macroMoved[(size_t) (ctl - 200)] = true;
+                    if (macroTouching[(size_t) (ctl - 200)] && ! macroMoved[(size_t) (ctl - 200)]) { macroMoved[(size_t) (ctl - 200)] = true; macroBeginTake (macroTouchBlock[(size_t) (ctl - 200)], ctl - 200); }
                     prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, prm->getValue() + (float) v / 500.0f));
                 }   // 500 βήματα = όλο το εύρος· ευαισθησία προς ρύθμιση
             return;
@@ -2839,7 +2839,9 @@ private:
 
     // Macros: Rec motion και στα 8 κουμπιά (τα κουμπιά του S88 είναι ατέλειωτοι encoder· «αγγίζω» = γυρίζω, και ως άγγιγμα μετράει μέχρι να περάσουν ~0,45 δλ χωρίς κίνηση).
     // Ίδια λογική με τα δαχτυλίδια: με οπλισμένο Rec motion γράφει όσο κρατάς το κουμπί (overdub), αλλιώς η γραμμένη κίνηση παίζει στα 16 μέτρα.
-    struct MacroLane { std::vector<float> s; std::vector<char> ok; bool has = false, recording = false; };
+    // s/ok = η γραμμένη κίνηση που παίζει· rs/rok = η νέα λήψη που γράφεται (αντικαθιστά την παλιά στο τέλος των 16 μέτρων, ώστε η παλιά να παίζει ως τότε)
+    struct MacroLane { std::vector<float> s, rs; std::vector<char> ok, rok; bool has = false, recording = false, pending = false; };
+    int macroPrevIdx = 0;
     std::array<std::array<MacroLane, 8>, (size_t) flow::numBlocks> macroLane;
     std::array<bool, 8> macroTouching {};
     std::array<int, 8> macroTouchBlock {};
@@ -2848,19 +2850,36 @@ private:
     static constexpr uint32 macroReleaseMs = 450;
     bool macroHaveTouch = false;   // το S88 έστειλε πραγματικό άγγιγμα (43T–50T)· τότε το άγγιγμα τελειώνει μόνο με το σήκωμα του δαχτύλου
 
-    void macroFinish (MacroLane& l)
+    void macroBeginTake (int block, int k)   // πρώτο γύρισμα μέσα στο άγγιγμα: νέα λήψη, χωρίς να πειράζει την παλιά
     {
+        if (block < 0 || block >= flow::numBlocks) return;
+        auto& l = macroLane[(size_t) block][(size_t) k];
+        l.rs.assign ((size_t) orbN, 0.0f); l.rok.assign ((size_t) orbN, 0);
+        l.recording = true; l.pending = false;
+    }
+
+    void macroEndTake (MacroLane& l)   // σήκωμα δαχτύλου: η λήψη κλείνει· αν υπήρχε κίνηση, την αντικαθιστά στο τέλος του κύκλου (αλλιώς αμέσως)
+    {
+        if (! l.recording) return;
         l.recording = false;
         int first = -1;
-        for (int i = 0; i < orbN; ++i) if (l.ok[(size_t) i]) { first = i; break; }
-        if (first < 0) { l.has = false; l.s.clear(); l.ok.clear(); return; }
-        float last = l.s[(size_t) first];
+        for (int i = 0; i < orbN; ++i) if (l.rok[(size_t) i]) { first = i; break; }
+        if (first < 0) { l.rs.clear(); l.rok.clear(); return; }
+        float last = l.rs[(size_t) first];
         for (int n = 0; n < orbN; ++n)
         {
             const int i = (first + n) % orbN;
-            if (l.ok[(size_t) i]) last = l.s[(size_t) i]; else l.s[(size_t) i] = last;
+            if (l.rok[(size_t) i]) last = l.rs[(size_t) i]; else l.rs[(size_t) i] = last;
         }
-        l.has = true;
+        if (! l.has) { l.s = std::move (l.rs); l.ok = std::move (l.rok); l.rs.clear(); l.rok.clear(); l.has = true; }
+        else l.pending = true;
+    }
+
+    void macroCommitPending()   // τέλος των 16 μέτρων: οι νέες λήψεις παίρνουν τη θέση των παλιών
+    {
+        for (auto& bl : macroLane)
+            for (auto& l : bl)
+                if (l.pending) { l.s = std::move (l.rs); l.ok = std::move (l.rok); l.rs.clear(); l.rok.clear(); l.has = true; l.pending = false; }
     }
 
     void macroTouch (int k)   // μία κίνηση του κουμπιού k: αρχή ή συνέχεια του «αγγίγματος»
@@ -2869,10 +2888,7 @@ private:
         if (macroTouching[(size_t) k] || ! isActive (selected)) return;
         macroTouching[(size_t) k] = true;
         macroTouchBlock[(size_t) k] = selected;
-        macroMoved[(size_t) k] = false;
-        auto& l = macroLane[(size_t) selected][(size_t) k];
-        if (l.s.empty()) { l.s.assign ((size_t) orbN, 0.0f); l.ok.assign ((size_t) orbN, 0); }
-        l.recording = true;   // το άγγιγμα ξεκινά αυτόματα το Rec motion (16 μέτρα), χωρίς οπλισμό
+        macroMoved[(size_t) k] = false;   // η εγγραφή (16 μέτρα) ξεκινά αυτόματα με το πρώτο γύρισμα μέσα στο άγγιγμα, χωρίς οπλισμό
     }
 
     // σχέδια κίνησης (OrbShapes.h): ένα ring = μία ανάθεση. -1 = κανένα, 0..15 = αυτόματα, 16 = U (η κίνηση που έγραψε ο χρήστης)
@@ -3079,7 +3095,7 @@ private:
         if (! orbRecArmed)
             for (auto& bl : orbLane) for (auto& l : bl) if (l.recording) orbFinishLane (l);
         if (! orbRecArmed)
-            for (auto& bl : macroLane) for (auto& l : bl) if (l.recording) macroFinish (l);
+            for (auto& bl : macroLane) for (auto& l : bl) macroEndTake (l);
         setMessage (orbRecArmed ? gr ("Rec motion (16 bars): drag a circle in the orb") : gr ("Rec motion off"));
     }
 
@@ -3089,6 +3105,8 @@ private:
         const int i = jlimit (0, orbN - 1, (int) ph);
         const int i2 = (i + 1) % orbN;
         const float fr = (float) (ph - std::floor (ph));
+        if (i < macroPrevIdx - orbN / 2) macroCommitPending();   // ο κύκλος των 16 μέτρων ξεκίνησε από την αρχή
+        macroPrevIdx = i;
         for (int b = 0; b < flow::numBlocks; ++b)
         {
             if (! isActive (b)) continue;
@@ -3116,11 +3134,11 @@ private:
                 if (touching && ! macroHaveTouch && Time::getMillisecondCounter() - macroLastMove[(size_t) k] > macroReleaseMs)
                 {
                     macroTouching[(size_t) k] = false; touching = false;
-                    if (l.recording) macroFinish (l);
+                    macroEndTake (l);
                 }
                 if (touching)
                 {
-                    if (l.recording && macroMoved[(size_t) k]) { l.s[(size_t) i] = prm->getValue(); l.ok[(size_t) i] = 1; }
+                    if (l.recording && macroMoved[(size_t) k]) { l.rs[(size_t) i] = prm->getValue(); l.rok[(size_t) i] = 1; }
                 }
                 else if (l.has)
                 {
