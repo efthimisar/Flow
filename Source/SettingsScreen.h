@@ -44,6 +44,7 @@ public:
         std::function<juce::Image()> orbImage;
         std::function<juce::String()> sessionInfo;   // κενό = δεν υπάρχει
         std::function<void()> restoreSession;
+        std::function<void()> newSet;   // καθαρίζει τα πάντα και ξεκινά άδειο set
         std::function<juce::File()> recFolder;
         std::function<void (const juce::File&)> setRecFolder;
         std::function<void()> chooseRecFolder;
@@ -305,6 +306,11 @@ private:
                 break;
             case 12: g.setFont (font (24.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x86\x92"), Rectangle<float> (c.x - 20.0f, c.y - 16.0f, 40.0f, 32.0f), Justification::centred, false); break;   // Follow
             case 13: g.setFont (font (22.0f, true)); g.drawText ("iPad", Rectangle<float> (c.x - 26.0f, c.y - 14.0f, 52.0f, 28.0f), Justification::centred, false); break;
+            case 30: // new: κενή σελίδα με +
+                p.addRoundedRectangle (c.x - 9.0f, c.y - 12.0f, 18.0f, 24.0f, 3.0f);
+                p.startNewSubPath (c.x - 4.0f, c.y); p.lineTo (c.x + 4.0f, c.y);
+                p.startNewSubPath (c.x, c.y - 4.0f); p.lineTo (c.x, c.y + 4.0f);
+                g.strokePath (p, st); break;
             case 16: g.setFont (font (28.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x86\xbb"), Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
             case 14: g.setFont (font (24.0f, true)); g.drawText (juce::String::fromUTF8 ("\xe2\x87\x84"), Rectangle<float> (c.x - 22.0f, c.y - 16.0f, 44.0f, 32.0f), Justification::centred, false); break;
             case 17: g.setFont (font (26.0f, true)); g.drawText ("?", Rectangle<float> (c.x - 20.0f, c.y - 18.0f, 40.0f, 36.0f), Justification::centred, false); break;
@@ -622,22 +628,26 @@ private:
             { 1, "Save", "Save as a new set", true, [this] { showPage (Save); } },
             { 2, "Load", "Open a saved set", true, [this] { showPage (Load); } },
             { 3, "Restore", "Back to the last session", info.isNotEmpty(), [this] { showPage (Restore); } },
+            { 30, "New", "Start an empty set", true, [this] {
+                  if (newArmed && Time::getMillisecondCounter() < newArmedAt) { newArmed = false; if (host.newSet) host.newSet(); close(); }
+                  else { newArmed = true; newArmedAt = Time::getMillisecondCounter() + 3000; repaint(); } } },
         };
-        const int ch = jlimit (80, 120, (H - 66 - 40 - 14 - 50) / 2);
-        for (int i = 0; i < 4; ++i)
+        const int ch = jlimit (70, 120, (H - 66 - 40 - 14 - 50) / 3);
+        for (int i = 0; i < 5; ++i)
         {
             const auto& it = items[i];
             const Rectangle<int> c (x0 + (i % 2) * (cw + 14), 120 + (i / 2) * (ch + 14), cw, ch);
             const bool h = it.enabled && hov (c);
-            g.setColour (h ? Colour (0xff36322f) : card()); g.fillRoundedRectangle (c.toFloat(), 16.0f);
-            g.setColour (lineC()); g.drawRoundedRectangle (c.toFloat().reduced (0.5f), 16.0f, 1.0f);
-            const Colour ink = it.enabled ? txt() : dim().withAlpha (0.5f);
+            const bool armedNew = i == 4 && newArmed && Time::getMillisecondCounter() < newArmedAt;
+            g.setColour (armedNew ? Colour (0xff6a2f2f) : h ? Colour (0xff36322f) : card()); g.fillRoundedRectangle (c.toFloat(), 16.0f);
+            g.setColour (armedNew ? hobby::kRed : lineC()); g.drawRoundedRectangle (c.toFloat().reduced (0.5f), 16.0f, 1.0f);
+            const Colour ink = armedNew ? hobby::kRed : it.enabled ? txt() : dim().withAlpha (0.5f);
             g.setColour (Colour (0xff3a3633)); g.fillEllipse ((float) c.getX() + 18.0f, (float) c.getCentreY() - 26.0f, 52.0f, 52.0f);
             drawIcon (g, it.icon, { (float) c.getX() + 44.0f, (float) c.getCentreY() }, ink);
             g.setColour (ink); g.setFont (font (16.0f, true));
             g.drawText (it.title, c.getX() + 84, c.getCentreY() - 22, c.getWidth() - 96, 20, Justification::centredLeft, false);
             g.setColour (dim()); g.setFont (font (12.0f));
-            g.drawText (it.line, c.getX() + 84, c.getCentreY() + 2, c.getWidth() - 96, 18, Justification::centredLeft, true);
+            g.drawText (armedNew ? "press again to clear everything" : it.line, c.getX() + 84, c.getCentreY() + 2, c.getWidth() - 96, 18, Justification::centredLeft, true);
             if (it.enabled) hits.push_back ({ c, it.fn });
         }
     }
@@ -1189,6 +1199,7 @@ private:
     Page page = Home;
     int loadScroll = 0, loadMaxScroll = 0;
     int selTile = -1;   // -1: sto anoigma fainontai mono ta tiles
+    bool newArmed = false; juce::uint32 newArmedAt = 0;   // «New»: οπλισμένο για 3 δλ
     juce::String delArmed; juce::uint32 delArmedAt = 0;   // ✕ διαγραφής set: οπλισμένο για 3 δλ
     bool saved = false, waitPanic = false;
     juce::String ccAtAssign;

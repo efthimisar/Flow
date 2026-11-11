@@ -4152,6 +4152,7 @@ private:
         };
         h.saveElsewhere = [this] { saveSetToFile(); };
         h.loadElsewhere = [this] { loadSetFromFile(); };
+        h.newSet = [this] { newEmptySet(); };
         h.loadSet = [this] (const File& f) { loadSetFile (f); saveNow(); };
         h.deleteSet = [this] (const File& f)
         {
@@ -4617,6 +4618,26 @@ private:
         clearFx (-1);
         panelMode = panelInstrument;
         panelIndex = 0;
+    }
+
+    // Νέο, άδειο set χωρίς επανεκκίνηση: ό,τι καθαρίζει και το φόρτωμα set, και μετά ξεκινά η πρώτη ρύθμιση όπως στην πρώτη εκκίνηση
+    void newEmptySet()
+    {
+        flow::flowLog ("new set requested");
+        clearEverything();
+        currentSetName = {};
+        for (int b = 0; b < flow::numBlocks; ++b)
+        {
+            blockKnobs[(size_t) b].fill (KnobAssign());
+            for (int c = 0; c < 4; ++c) { orbAutoPat[(size_t) b][(size_t) c] = -1; orbSettle[(size_t) b][(size_t) c] = false; orbPos[(size_t) b][(size_t) c] = orbDefault (c); }
+            for (auto& l : orbLane[(size_t) b]) l = OrbLane();
+        }
+        syncKnobView(); syncOrbAuto();
+        setOrbImage ({}, false); autoOrbImage();
+        selected = 0;
+        refreshAll();
+        saveNow();
+        setMessage (gr ("New empty set"));
     }
 
     int setMoved = 0, setDropped = 0, setNewer = 0;   // αποτέλεσμα του τελευταίου applySet
