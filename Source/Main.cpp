@@ -4277,11 +4277,8 @@ private:
         h.orbImage = [this] { return orbImage; };
         h.sessionInfo = [this]() -> String
         {
-            std::unique_ptr<XmlElement> xml (properties.getUserSettings()->getXmlValue ("sessionBackup"));
-            if (xml == nullptr || ! xml->hasTagName ("FlowSet") || xml->getChildByName ("Block") == nullptr) return {};
-            int n = 0;
-            for (auto* b : xml->getChildWithTagNameIterator ("Block")) { (void) b; ++n; }
-            return String (n) + (n == 1 ? " block" : " blocks") + "  " + String ((int) std::lround (xml->getDoubleAttribute ("tempo", 110.0))) + " BPM";
+            if (backupBlocks <= 0) return {};
+            return String (backupBlocks) + (backupBlocks == 1 ? " block" : " blocks") + "  " + String (backupTempo) + " BPM";
         };
         h.restoreSession = [this] { restoreLastSession(); };
         h.recFolder = [this] { return engine.recorder.getFolder(); };
@@ -5132,6 +5129,69 @@ private:
     // αυτόματη αποθήκευση της τελευταίας κατάστασης
     void saveNow (bool withStates = false) { saveSettings (withStates); }
 
+    // Το session (τελευταία κατάσταση) και το αντίγραφό του είναι ξεχωριστά αρχεία δίπλα στις ρυθμίσεις: το γράψιμο γίνεται σε background thread,
+    // ώστε το κύριο νήμα (και ο ήχος) να μη μπλοκάρονται για μισό δευτερόλεπτο σε κάθε αποθήκευση.
+    File sessionFile() { return properties.getUserSettings()->getFile().getSiblingFile ("Flow-session.xml"); }
+    File sessionBackupFile() { return properties.getUserSettings()->getFile().getSiblingFile ("Flow-session-backup.xml"); }
+    ThreadPool sessionWriter { 1 };
+    CriticalSection sessionLock;
+    std::shared_ptr<XmlElement> latestSession;   // το πιο πρόσφατο set που περιμένει εγγραφή (οι ενδιάμεσες εγγραφές παραλείπονται, η τελευταία γράφεται πάντα)
+    File latestSessionTarget;
+    bool sessionJobQueued = false;
+
+    static bool writeXmlFile (const File& target, const XmlElement& xml)
+    {
+        TemporaryFile tmp (target);
+        bool ok = false;
+        {
+            FileOutputStream out (tmp.getFile());
+            if (out.openedOk()) { xml.writeTo (out, XmlElement::TextFormat().singleLine()); out.flush(); ok = out.getStatus().wasOk(); }
+        }
+        return ok && tmp.overwriteTargetFileWithTemporary();
+    }
+
+    void writeSessionAsync (File target, std::shared_ptr<XmlElement> xml)
+    {
+        {
+            const ScopedLock sl (sessionLock);
+            latestSession = std::move (xml); latestSessionTarget = target;
+            if (sessionJobQueued) return;
+            sessionJobQueued = true;
+        }
+        sessionWriter.addJob ([this]
+        {
+            for (;;)
+            {
+                std::shared_ptr<XmlElement> x; File t;
+                {
+                    const ScopedLock sl (sessionLock);
+                    if (latestSession == nullptr) { sessionJobQueued = false; return; }
+                    x = std::move (latestSession); latestSession = nullptr; t = latestSessionTarget;
+                }
+                const auto t0 = Time::getMillisecondCounter();
+                const bool ok = writeXmlFile (t, *x);
+                const auto ms = (int) (Time::getMillisecondCounter() - t0);
+                if (! ok || ms >= 200) flow::flowLog ("session write: " + String (ok ? "ok" : "FAILED") + ", " + String (ms) + " ms (background), " + String ((int) (t.getSize() / 1024)) + " KB");
+            }
+        });
+    }
+
+    std::unique_ptr<XmlElement> readSessionXml (const File& f, const char* legacyKey)   // αρχείο, αλλιώς το παλιό κλειδί μέσα στις ρυθμίσεις
+    {
+        if (f.existsAsFile()) { if (auto x = parseXML (f)) return x; }
+        return std::unique_ptr<XmlElement> (properties.getUserSettings()->getXmlValue (legacyKey));
+    }
+
+    int backupBlocks = 0, backupTempo = 110;   // πληροφορίες του αντιγράφου, υπολογισμένες μία φορά (το Sets τις ζητά σε κάθε ζωγράφισμα)
+    void cacheBackupInfo()
+    {
+        backupBlocks = 0;
+        std::unique_ptr<XmlElement> xml (readSessionXml (sessionBackupFile(), "sessionBackup"));
+        if (xml == nullptr || ! xml->hasTagName ("FlowSet")) return;
+        for (auto* b : xml->getChildWithTagNameIterator ("Block")) { (void) b; ++backupBlocks; }
+        backupTempo = (int) std::lround (xml->getDoubleAttribute ("tempo", 110.0));
+    }
+
     void saveSettings (bool withStates)
     {
         const auto saveT0 = Time::getMillisecondCounter();
@@ -5162,29 +5222,25 @@ private:
         settings->setValue ("pluginOff", pluginOff.joinIntoString ("\n"));
         for (int i = 0; i < flow::Engine::numPedals; ++i)
             settings->setValue ("pedalcc" + String (i), engine.pedalCc[(size_t) i].load());
-        {
-            XmlElement lib ("OrbLib");
-            for (auto& kv : knobLibrary)
-            {
-                auto* pe = lib.createNewChildElement ("Plugin");
-                pe->setAttribute ("key", kv.first);
-                writeKnobs (*pe, kv.second);
-            }
-            settings->setValue ("orbLibrary", &lib);
-        }
+        settings->removeValue ("orbLibrary");   // δεν χρησιμοποιείται πια (το Orb δεν θυμάται αναθέσεις ανά plugin)
+        settings->removeValue ("session");      // το session ζει πια σε δικό του αρχείο (Flow-session.xml), γραμμένο σε background thread
+        settings->removeValue ("sessionBackup");
 
+        int xmlMs = 0;
         if (pendingLoads == 0)    // όσο φορτώνονται plugins δεν αντικαθιστούμε το session (θα χανόταν ό,τι δεν έχει φορτώσει ακόμη)
         {
-            auto xml = createSetXml (withStates, false);
-            settings->setValue ("session", xml.get());
+            const auto xmlT0 = Time::getMillisecondCounter();
+            std::shared_ptr<XmlElement> xml (createSetXml (withStates, false).release());
+            xmlMs = (int) (Time::getMillisecondCounter() - xmlT0);
+            writeSessionAsync (sessionFile(), xml);
         }
 
         properties.saveIfNeeded();
         dirty = false;
         lastSaveMs = Time::getMillisecondCounter();
         const auto saveMs = (int) (lastSaveMs - saveT0);
-        if (saveMs >= 25)   // μέτρηση: πόσο κοστίζει μία αποθήκευση και πόσο μεγάλο είναι το αρχείο ρυθμίσεων
-            flow::flowLog ("saveSettings: " + String (saveMs) + " ms (states " + String (withStates ? 1 : 0) + ", file " + String ((int) (settings->getFile().getSize() / 1024)) + " KB)");
+        if (saveMs >= 25)   // μέτρηση: πόσο κοστίζει μία αποθήκευση στο κύριο νήμα (xml = δημιουργία του set) και πόσο μεγάλο είναι το αρχείο ρυθμίσεων
+            flow::flowLog ("saveSettings: " + String (saveMs) + " ms (set xml " + String (xmlMs) + " ms, states " + String (withStates ? 1 : 0) + ", settings file " + String ((int) (settings->getFile().getSize() / 1024)) + " KB)");
     }
 
     void restoreSession()
@@ -5203,22 +5259,25 @@ private:
         startupCrashed = crashed;
 
         // Το app ανοίγει πάντα άδειο. Η τελευταία συνεδρία (αν είχε blocks) φυλάγεται ως αντίγραφο και ξαναφορτώνεται μόνο από το "π / -".
-        std::unique_ptr<XmlElement> xml (settings->getXmlValue ("session"));
-        if (xml == nullptr || ! xml->hasTagName ("FlowSet") || xml->getChildByName ("Block") == nullptr) return;
+        if (! sessionBackupFile().existsAsFile())   // μεταφορά του παλιού αντιγράφου από τις ρυθμίσεις στο νέο αρχείο
+            if (std::unique_ptr<XmlElement> legacy { settings->getXmlValue ("sessionBackup") }) writeXmlFile (sessionBackupFile(), *legacy);
+        std::unique_ptr<XmlElement> xml (readSessionXml (sessionFile(), "session"));
+        if (xml == nullptr || ! xml->hasTagName ("FlowSet") || xml->getChildByName ("Block") == nullptr) { cacheBackupInfo(); return; }
 
-        settings->setValue ("sessionBackup", xml.get());
+        writeXmlFile (sessionBackupFile(), *xml);
+        settings->removeValue ("session"); settings->removeValue ("sessionBackup");
         properties.saveIfNeeded();
+        cacheBackupInfo();
     }
 
     bool hasSessionBackup()
     {
-        std::unique_ptr<XmlElement> xml (properties.getUserSettings()->getXmlValue ("sessionBackup"));
-        return xml != nullptr && xml->hasTagName ("FlowSet") && xml->getChildByName ("Block") != nullptr;
+        return backupBlocks > 0;
     }
 
     void restoreLastSession()
     {
-        std::unique_ptr<XmlElement> xml (properties.getUserSettings()->getXmlValue ("sessionBackup"));
+        std::unique_ptr<XmlElement> xml (readSessionXml (sessionBackupFile(), "sessionBackup"));
         if (xml == nullptr || ! xml->hasTagName ("FlowSet")) return;
         applySet (*xml, startupCrashed);
         engine.tempo = jlimit (40.0, 240.0, xml->getDoubleAttribute ("tempo", 110.0));
@@ -5394,7 +5453,7 @@ private:
             for (int b = 0; b < flow::numBlocks; ++b)
             {
                 const float t = engine.statBlockMax[(size_t) b].exchange (0.0f);
-                if (t > 0.0f) perBlock << " b" << String (b + 1) << "=" << String (t * 1000.0f, 2) << "ms";
+                if (t > 0.0f) { perBlock << " b" << String (b + 1); if (auto* pl = engine.getPlugin (b)) perBlock << "[" << pl->getName() << "]"; perBlock << "=" << String (t * 1000.0f, 2) << "ms"; }
             }
             if (calls > 0 && (notable || statWindows % 6 == 0))
                 flow::flowLog (String::formatted ("audio: buffer %d, callbacks %d, max %.2f ms of %.2f ms, >80%%: %d, >100%%: %d, max lock wait %.2f ms, xruns +%d",
