@@ -1094,7 +1094,10 @@ private:
         {
             if (s88MacrosOpen && isActive (selected))
                 if (auto* prm = knobTarget (kMacroBase + ctl - 200))
-                    prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, prm->getValue() + (float) v / 500.0f));   // 500 βήματα = όλο το εύρος· ευαισθησία προς ρύθμιση
+                {
+                    macroTouch (ctl - 200);
+                    prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, prm->getValue() + (float) v / 500.0f));
+                }   // 500 βήματα = όλο το εύρος· ευαισθησία προς ρύθμιση
             return;
         }
         auto& list = loopsView.getList();
@@ -1764,24 +1767,30 @@ private:
         return s;
     }
 
-    // Macros: οκτώ «πίτες» χωρίς κείμενο. Η τιμή γεμίζει από το κάτω σημείο προς τα δεξιά (αριστερόστροφα) μέχρι τον πλήρη κύκλο, με λεπτή φωτεινή γραμμή στο μπροστινό άκρο.
+    // Macros: οκτώ δαχτυλίδια χωρίς κείμενο. Μια λευκή τελεία τρέχει πάνω σε λεπτό δαχτυλίδι (από κάτω προς τα δεξιά, αριστερόστροφα) και αφήνει μικρή, καθαρή ουρά στο χρώμα του block.
     void drawS88MacroPanel (Graphics& g, int, Colour bcol)
     {
-        const float r = 36.0f, pi = MathConstants<float>::pi;
+        const float r = 32.0f, pi = MathConstants<float>::pi;
         for (int k = 0; k < 8; ++k)
         {
             auto* p = knobTarget (kMacroBase + k);
             if (p == nullptr) continue;
             const float cx = 60.0f + (float) (k % 4) * 120.0f, cy = k < 4 ? 106.0f : 206.0f;
             const float v = jlimit (0.0f, 1.0f, p->getValue());
-            const float a = pi - 2.0f * pi * v;   // μπροστινό άκρο (ακτίνες από τις 12, δεξιόστροφα)
-            if (v > 0.002f)
+            g.setColour (Colour (0xff2c2826)); g.drawEllipse (cx - r, cy - r, 2.0f * r, 2.0f * r, 1.2f);
+            const float tail = jmin (v, 0.28f);
+            const int n = 26;
+            for (int i = 0; i < n && tail > 0.002f; ++i)   // ουρά: από αχνό (μακριά) σε έντονο (δίπλα στην τελεία)
             {
-                Path pie; pie.addPieSegment (cx - r, cy - r, 2.0f * r, 2.0f * r, a, pi, 0.0f);
-                g.setColour (bcol.withAlpha (0.18f + 0.82f * v)); g.fillPath (pie);   // αχνό στο 0, γεμάτο χρώμα του block στο 100
+                const float f0 = v - tail * (1.0f - (float) i / (float) n), f1 = v - tail * (1.0f - (float) (i + 1) / (float) n);
+                Path seg;
+                seg.addCentredArc (cx, cy, r, r, 0.0f, pi - 2.0f * pi * jmax (0.0f, f1) - 0.01f, pi - 2.0f * pi * jmax (0.0f, f0) + 0.01f, true);
+                g.setColour (bcol.withAlpha ((float) (i + 1) / (float) n));
+                g.strokePath (seg, PathStrokeType (6.0f));
             }
+            const float a = pi - 2.0f * pi * v;
             g.setColour (Colours::white);
-            g.drawLine (cx, cy, cx + r * std::sin (a), cy - r * std::cos (a), 2.0f);
+            g.fillEllipse (cx + r * std::sin (a) - 5.5f, cy - r * std::cos (a) - 5.5f, 11.0f, 11.0f);
         }
     }
 
@@ -2500,6 +2509,7 @@ private:
     {
         for (auto& a : blockKnobs[(size_t) block]) a = KnobAssign();
         for (auto& l : orbLane[(size_t) block]) l = OrbLane();
+        for (auto& l : macroLane[(size_t) block]) l = MacroLane();
     }
 
     static void writeKnobs (XmlElement& parent, const std::array<KnobAssign, kAll>& arr)
@@ -2810,6 +2820,44 @@ private:
     std::array<std::array<bool, 4>, (size_t) flow::numBlocks> orbSettle {};
     bool orbRecArmed = false;
 
+    // Macros: Rec motion και στα 8 κουμπιά (τα κουμπιά του S88 είναι ατέλειωτοι encoder· «αγγίζω» = γυρίζω, και ως άγγιγμα μετράει μέχρι να περάσουν ~0,45 δλ χωρίς κίνηση).
+    // Ίδια λογική με τα δαχτυλίδια: με οπλισμένο Rec motion γράφει όσο κρατάς το κουμπί (overdub), αλλιώς η γραμμένη κίνηση παίζει στα 16 μέτρα.
+    struct MacroLane { std::vector<float> s; std::vector<char> ok; bool has = false, recording = false; };
+    std::array<std::array<MacroLane, 8>, (size_t) flow::numBlocks> macroLane;
+    std::array<bool, 8> macroTouching {};
+    std::array<int, 8> macroTouchBlock {};
+    std::array<uint32, 8> macroLastMove {};
+    static constexpr uint32 macroReleaseMs = 450;
+
+    void macroFinish (MacroLane& l)
+    {
+        l.recording = false;
+        int first = -1;
+        for (int i = 0; i < orbN; ++i) if (l.ok[(size_t) i]) { first = i; break; }
+        if (first < 0) { l.has = false; l.s.clear(); l.ok.clear(); return; }
+        float last = l.s[(size_t) first];
+        for (int n = 0; n < orbN; ++n)
+        {
+            const int i = (first + n) % orbN;
+            if (l.ok[(size_t) i]) last = l.s[(size_t) i]; else l.s[(size_t) i] = last;
+        }
+        l.has = true;
+    }
+
+    void macroTouch (int k)   // μία κίνηση του κουμπιού k: αρχή ή συνέχεια του «αγγίγματος»
+    {
+        macroLastMove[(size_t) k] = Time::getMillisecondCounter();
+        if (macroTouching[(size_t) k] || ! isActive (selected)) return;
+        macroTouching[(size_t) k] = true;
+        macroTouchBlock[(size_t) k] = selected;
+        auto& l = macroLane[(size_t) selected][(size_t) k];
+        if (orbRecArmed)
+        {
+            if (l.s.empty()) { l.s.assign ((size_t) orbN, 0.0f); l.ok.assign ((size_t) orbN, 0); }
+            l.recording = true;
+        }
+    }
+
     // σχέδια κίνησης (OrbShapes.h): ένα ring = μία ανάθεση. -1 = κανένα, 0..15 = αυτόματα, 16 = U (η κίνηση που έγραψε ο χρήστης)
     std::array<std::array<int, 4>, (size_t) flow::numBlocks> orbAutoPat;          // [block][ring]
     std::array<std::array<int, 4>, (size_t) flow::numBlocks> orbAutoSpd {};       // 0..4 (16/8/4/2/1 δλ ανά κύκλο)
@@ -3002,6 +3050,7 @@ private:
     void orbClearMotion()
     {
         if (! isActive (selected)) return;
+        for (auto& l : macroLane[(size_t) selected]) l = MacroLane();
         for (size_t c = 0; c < 4; ++c) { orbLane[(size_t) selected][c] = OrbLane(); if (orbAutoPat[(size_t) selected][c] == orbshapes::userShape) orbAutoPat[(size_t) selected][c] = -1; }
         syncOrbAuto();
         setMessage (gr ("Motion cleared"));
@@ -3012,6 +3061,8 @@ private:
         orbRecArmed = ! orbRecArmed;
         if (! orbRecArmed)
             for (auto& bl : orbLane) for (auto& l : bl) if (l.recording) orbFinishLane (l);
+        if (! orbRecArmed)
+            for (auto& bl : macroLane) for (auto& l : bl) if (l.recording) macroFinish (l);
         setMessage (orbRecArmed ? gr ("Rec motion (16 bars): drag a circle in the orb") : gr ("Rec motion off"));
     }
 
@@ -3039,6 +3090,27 @@ private:
                     orbApply (b, c, p);
                 }
             }
+            for (int k = 0; k < 8; ++k)   // Macros
+            {
+                auto& l = macroLane[(size_t) b][(size_t) k];
+                auto* prm = orbTarget (b, kMacroBase + k);
+                if (prm == nullptr) continue;
+                bool touching = macroTouching[(size_t) k] && macroTouchBlock[(size_t) k] == b;
+                if (touching && Time::getMillisecondCounter() - macroLastMove[(size_t) k] > macroReleaseMs)
+                {
+                    macroTouching[(size_t) k] = false; touching = false;
+                    if (l.recording) macroFinish (l);
+                }
+                if (touching)
+                {
+                    if (l.recording) { l.s[(size_t) i] = prm->getValue(); l.ok[(size_t) i] = 1; }
+                }
+                else if (l.has)
+                {
+                    const float v = l.s[(size_t) i] + (l.s[(size_t) i2] - l.s[(size_t) i]) * fr;
+                    if (std::abs (prm->getValue() - v) > 0.002f) prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, v));
+                }
+            }
         }
     }
 
@@ -3046,6 +3118,7 @@ private:
     {
         if (! isActive (selected)) return false;
         for (auto& l : orbLane[(size_t) selected]) if (l.has) return true;
+        for (auto& l : macroLane[(size_t) selected]) if (l.has) return true;
         return false;
     }
 
@@ -4494,6 +4567,17 @@ private:
                     me->setAttribute ("c", c);
                     me->addTextElement (Base64::toBase64 (mb.getData(), mb.getSize()));
                 }
+                for (int k = 0; k < 8; ++k)   // Rec motion των macros: 1024 τιμές int16 (0..1 → 0..32767)
+                {
+                    const auto& l = macroLane[(size_t) b][(size_t) k];
+                    if (! l.has || l.recording || (int) l.s.size() != orbN) continue;
+                    MemoryBlock mb ((size_t) orbN * 2);
+                    auto* q = static_cast<int16*> (mb.getData());
+                    for (int i = 0; i < orbN; ++i) q[i] = (int16) std::lround (jlimit (0.0f, 1.0f, l.s[(size_t) i]) * 32767.0f);
+                    auto* me = oe->createNewChildElement ("MacroMotion");
+                    me->setAttribute ("k", k);
+                    me->addTextElement (Base64::toBase64 (mb.getData(), mb.getSize()));
+                }
             }
             e->setAttribute ("slot", b);
             e->setAttribute ("lo", engine.lo[(size_t) b].load());
@@ -4641,6 +4725,7 @@ private:
             blockKnobs[(size_t) b].fill (KnobAssign());
             for (int c = 0; c < 4; ++c) { orbAutoPat[(size_t) b][(size_t) c] = -1; orbAutoSpd[(size_t) b][(size_t) c] = orbshapes::defaultSpeed; orbSettle[(size_t) b][(size_t) c] = false; orbPos[(size_t) b][(size_t) c] = orbDefault (c); }
             for (auto& l : orbLane[(size_t) b]) l = OrbLane();
+            for (auto& l : macroLane[(size_t) b]) l = MacroLane();
         }
         syncKnobView(); syncOrbAuto();
         setOrbImage ({}, false); autoOrbImage();
@@ -4808,6 +4893,19 @@ private:
                     for (int i = 0; i < orbN; ++i) l.s[(size_t) i] = { (float) q[2 * i] / 32767.0f, (float) q[2 * i + 1] / 32767.0f };
                     l.has = true; l.recording = false;
                     orbAutoPat[(size_t) slot][(size_t) c] = orbshapes::userShape;
+                }
+                for (auto& ml : macroLane[(size_t) slot]) ml = MacroLane();
+                for (auto* me : ke->getChildWithTagNameIterator ("MacroMotion"))
+                {
+                    const int k = me->getIntAttribute ("k", -1);
+                    if (k < 0 || k > 7) continue;
+                    MemoryOutputStream mo;
+                    if (! Base64::convertFromBase64 (mo, me->getAllSubText().trim()) || mo.getDataSize() != (size_t) orbN * 2) continue;
+                    const auto* q = static_cast<const int16*> (mo.getData());
+                    auto& l = macroLane[(size_t) slot][(size_t) k];
+                    l.s.assign ((size_t) orbN, 0.0f); l.ok.assign ((size_t) orbN, 1);
+                    for (int i = 0; i < orbN; ++i) l.s[(size_t) i] = (float) q[i] / 32767.0f;
+                    l.has = true; l.recording = false;
                 }
                 for (auto* se : ke->getChildWithTagNameIterator ("Shape"))
                 {
@@ -5489,7 +5587,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.7"; }
+    const String getApplicationVersion() override { return "0.90.8"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
