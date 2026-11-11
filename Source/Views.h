@@ -1076,7 +1076,7 @@ public:
             {
                 g.setFont (hobby::makeFont (typeface, 13.0f));
                 g.setColour (hobby::kIconGrey);
-                g.drawText (notice, w / 5, getHeight() - 28, w * 3 / 5, 18, Justification::centred, true);
+                g.drawFittedText (notice, w / 10, getHeight() - 42, w * 4 / 5, 32, Justification::centred, 2, 0.85f);   // έως 2 γραμμές, ελαφρά στένεμα: χωρίς κόψιμο με «…»
             }
             g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
             g.fillEllipse ((float) w - 24.0f, sy + sh * 0.5f - 3.5f, 7.0f, 7.0f);
@@ -1243,7 +1243,7 @@ public:
         if (notice.isNotEmpty())
         {
             g.setFont (hobby::makeFont (typeface, 13.0f * s)); g.setColour (hobby::kIconGrey);
-            g.drawText (notice, Rectangle<float> (w * 0.2f, h - 28.0f * s, w * 0.6f, 20.0f * s), Justification::centred, true);
+            g.drawFittedText (notice, Rectangle<int> (roundToInt (w * 0.1f), roundToInt (h - 42.0f * s), roundToInt (w * 0.8f), roundToInt (32.0f * s)), Justification::centred, 2, 0.85f);   // έως 2 γραμμές, χωρίς κόψιμο με «…»
         }
         g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
         g.fillEllipse (w - 14.0f * s - 7.0f, h - 14.0f * s - 7.0f, 7.0f, 7.0f);
