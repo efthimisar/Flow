@@ -1112,6 +1112,7 @@ private:
                 if (auto* prm = knobTarget (kMacroBase + ctl - 200))
                 {
                     macroTouch (ctl - 200);
+                    macroMoved[(size_t) (ctl - 200)] = true;
                     prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, prm->getValue() + (float) v / 500.0f));
                 }   // 500 βήματα = όλο το εύρος· ευαισθησία προς ρύθμιση
             return;
@@ -2843,6 +2844,7 @@ private:
     std::array<bool, 8> macroTouching {};
     std::array<int, 8> macroTouchBlock {};
     std::array<uint32, 8> macroLastMove {};
+    std::array<bool, 8> macroMoved {};   // γράφει μόνο αφού κουνηθεί το κουμπί μέσα στο άγγιγμα (ένα απλό άγγιγμα δεν σβήνει υπάρχουσα κίνηση)
     static constexpr uint32 macroReleaseMs = 450;
     bool macroHaveTouch = false;   // το S88 έστειλε πραγματικό άγγιγμα (43T–50T)· τότε το άγγιγμα τελειώνει μόνο με το σήκωμα του δαχτύλου
 
@@ -2867,12 +2869,10 @@ private:
         if (macroTouching[(size_t) k] || ! isActive (selected)) return;
         macroTouching[(size_t) k] = true;
         macroTouchBlock[(size_t) k] = selected;
+        macroMoved[(size_t) k] = false;
         auto& l = macroLane[(size_t) selected][(size_t) k];
-        if (orbRecArmed)
-        {
-            if (l.s.empty()) { l.s.assign ((size_t) orbN, 0.0f); l.ok.assign ((size_t) orbN, 0); }
-            l.recording = true;
-        }
+        if (l.s.empty()) { l.s.assign ((size_t) orbN, 0.0f); l.ok.assign ((size_t) orbN, 0); }
+        l.recording = true;   // το άγγιγμα ξεκινά αυτόματα το Rec motion (16 μέτρα), χωρίς οπλισμό
     }
 
     // σχέδια κίνησης (OrbShapes.h): ένα ring = μία ανάθεση. -1 = κανένα, 0..15 = αυτόματα, 16 = U (η κίνηση που έγραψε ο χρήστης)
@@ -3120,7 +3120,7 @@ private:
                 }
                 if (touching)
                 {
-                    if (l.recording) { l.s[(size_t) i] = prm->getValue(); l.ok[(size_t) i] = 1; }
+                    if (l.recording && macroMoved[(size_t) k]) { l.s[(size_t) i] = prm->getValue(); l.ok[(size_t) i] = 1; }
                 }
                 else if (l.has)
                 {
