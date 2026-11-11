@@ -238,9 +238,18 @@ public:
             engine.mapCode[(size_t) i] = settings->getIntValue ("ctl" + String (i), 0);
 
         knobBlock.fill (-1); knobParamIdx.fill (-1);
-        if (std::unique_ptr<XmlElement> lib { settings->getXmlValue ("orbLibrary") })
+        if (std::unique_ptr<XmlElement> lib { settings->getXmlValue ("macroLibrary") })
             for (auto* pe : lib->getChildWithTagNameIterator ("Plugin"))
                 readKnobs (*pe, knobLibrary[pe->getStringAttribute ("key")]);
+        if (std::unique_ptr<XmlElement> lib { settings->getXmlValue ("orbLibrary") })   // παλιά βιβλιοθήκη (έως 0.90.6): τα κουμπιά 1-8 ήταν τα macros
+            for (auto* pe : lib->getChildWithTagNameIterator ("Plugin"))
+            {
+                std::array<KnobAssign, kAll> old;
+                readKnobs (*pe, old);
+                auto& dst = knobLibrary[pe->getStringAttribute ("key")];
+                for (int k = 0; k < 8; ++k)
+                    if (old[(size_t) k].idx >= 0 && dst[(size_t) (kMacroBase + k)].idx < 0) dst[(size_t) (kMacroBase + k)] = old[(size_t) k];
+            }
         for (int k = 0; k < 8; ++k)
         {
             engine.knobCc[(size_t) k] = settings->getIntValue ("knobcc" + String (k), 0);
@@ -2443,7 +2452,11 @@ private:
 
     void rememberKnobs (int block)
     {
-        (void) block;   // το Orb δεν θυμάται πια αναθέσεις ανά plugin: ισχύουν μόνο μέσα στο set
+        // Τα macros θυμούνται ανά plugin (στη βιβλιοθήκη, όπως πριν από το 0.90.7)· το Orb ισχύει μόνο μέσα στο set
+        const auto key = knobKey (block);
+        if (key.isEmpty()) return;
+        auto& dst = knobLibrary[key];
+        for (int k = 0; k < 8; ++k) dst[(size_t) (kMacroBase + k)] = blockKnobs[(size_t) block][(size_t) (kMacroBase + k)];
     }
 
     // Η θυμισμένη λίστα ενός plugin είναι «άχρηστη» όταν το plugin έχει παραμέτρους «Macro …» αλλά καμία από τις αναθέσεις της δεν δείχνει σε τέτοια
@@ -2471,6 +2484,15 @@ private:
 
     void ensureKnobs (int block)   // νέο block ή set χωρίς macros: τα «Macro …» του plugin μπαίνουν στις 8 θέσεις των macros. Το Orb ξεκινά πάντα άδειο.
     {
+        auto& arr = blockKnobs[(size_t) block];
+        bool empty = true;
+        for (int k = 0; k < 8; ++k) if (arr[(size_t) (kMacroBase + k)].idx >= 0) empty = false;
+        if (empty)
+        {
+            auto it = knobLibrary.find (knobKey (block));
+            if (it != knobLibrary.end())
+                for (int k = 0; k < 8; ++k) arr[(size_t) (kMacroBase + k)] = it->second[(size_t) (kMacroBase + k)];
+        }
         validateKnobs (block);
         fillMacros (block);
     }
@@ -5224,7 +5246,20 @@ private:
         settings->setValue ("pluginOff", pluginOff.joinIntoString ("\n"));
         for (int i = 0; i < flow::Engine::numPedals; ++i)
             settings->setValue ("pedalcc" + String (i), engine.pedalCc[(size_t) i].load());
-        settings->removeValue ("orbLibrary");   // δεν χρησιμοποιείται πια (το Orb δεν θυμάται αναθέσεις ανά plugin)
+        {
+            XmlElement lib ("MacroLib");
+            for (auto& kv : knobLibrary)
+            {
+                bool any = false;
+                for (int k = 0; k < 8; ++k) if (kv.second[(size_t) (kMacroBase + k)].idx >= 0) any = true;
+                if (! any) continue;
+                auto* pe = lib.createNewChildElement ("Plugin");
+                pe->setAttribute ("key", kv.first);
+                writeKnobs (*pe, kv.second);
+            }
+            settings->setValue ("macroLibrary", &lib);
+            settings->removeValue ("orbLibrary");   // μεταφέρθηκε στη macroLibrary
+        }
         settings->removeValue ("session");      // το session ζει πια σε δικό του αρχείο (Flow-session.xml), γραμμένο σε background thread
         settings->removeValue ("sessionBackup");
 
@@ -5683,7 +5718,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.13"; }
+    const String getApplicationVersion() override { return "0.90.14"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
