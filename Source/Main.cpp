@@ -1764,36 +1764,25 @@ private:
         return s;
     }
 
-    void drawS88MacroPanel (Graphics& g, int b, Colour bcol)
+    // Macros: οκτώ «πίτες» χωρίς κείμενο. Η τιμή γεμίζει από το κάτω σημείο προς τα δεξιά (αριστερόστροφα) μέχρι τον πλήρη κύκλο, με λεπτή φωτεινή γραμμή στο μπροστινό άκρο.
+    void drawS88MacroPanel (Graphics& g, int, Colour bcol)
     {
-        const Colour white (0xffffffff), track (0xff3a3430), none (0xff6a645e), grey (0xffb7bbc6);
+        const float r = 36.0f, pi = MathConstants<float>::pi;
         for (int k = 0; k < 8; ++k)
         {
-            const float cx = 60.0f + (float) (k % 4) * 120.0f, cy = k < 4 ? 94.0f : 196.0f, r = 27.0f;
-            Path tr; tr.addCentredArc (cx, cy, r, r, 0.0f, -2.356f, 2.356f, true);
-            g.setColour (track); g.strokePath (tr, PathStrokeType (6.0f, PathStrokeType::curved, PathStrokeType::rounded));
-            if (auto* p = knobTarget (kMacroBase + k))
+            auto* p = knobTarget (kMacroBase + k);
+            if (p == nullptr) continue;
+            const float cx = 60.0f + (float) (k % 4) * 120.0f, cy = k < 4 ? 106.0f : 206.0f;
+            const float v = jlimit (0.0f, 1.0f, p->getValue());
+            const float a = pi - 2.0f * pi * v;   // μπροστινό άκρο (ακτίνες από τις 12, δεξιόστροφα)
+            if (v > 0.002f)
             {
-                const float v = jlimit (0.0f, 1.0f, p->getValue());
-                if (v > 0.004f)
-                {
-                    Path a; a.addCentredArc (cx, cy, r, r, 0.0f, -2.356f, -2.356f + 4.712f * v, true);
-                    g.setColour (bcol); g.strokePath (a, PathStrokeType (6.0f, PathStrokeType::curved, PathStrokeType::rounded));
-                }
-                g.setColour (white); g.setFont (hobby::makeFont (typeface, 19.0f).boldened());
-                g.drawText (String (roundToInt (v * 100.0f)), Rectangle<float> (cx - r, cy - 12.0f, 2.0f * r, 24.0f), Justification::centred, false);
-                g.setFont (hobby::makeFont (typeface, 15.0f).boldened());
-                g.drawText (p->getName (14), Rectangle<float> (cx - 56.0f, cy + r + 4.0f, 112.0f, 20.0f), Justification::centred, true);
+                Path pie; pie.addPieSegment (cx - r, cy - r, 2.0f * r, 2.0f * r, a, pi, 0.0f);
+                g.setColour (bcol); g.fillPath (pie);
             }
-            else
-            {
-                g.setColour (none); g.setFont (hobby::makeFont (typeface, 19.0f));
-                g.drawText (String::fromUTF8 ("\xe2\x80\x94"), Rectangle<float> (cx - r, cy - 12.0f, 2.0f * r, 24.0f), Justification::centred, false);
-            }
+            g.setColour (Colour (0xfffff0e1));
+            g.drawLine (cx, cy, cx + r * std::sin (a), cy - r * std::cos (a), 2.0f);
         }
-        g.setColour (grey); g.setFont (hobby::makeFont (typeface, 14.0f));
-        String pn; if (auto* pl = engine.getPlugin (b)) pn = pl->getName();
-        g.drawText ("Macros " + String::fromUTF8 ("\xc2\xb7 ") + pn + "  (knobs 1" + String::fromUTF8 ("\xe2\x80\x93") + "8)", Rectangle<float> (14.0f, 246.0f, 452.0f, 18.0f), Justification::centred, false);
     }
 
     void drawS88Block (Graphics& gl, Graphics& gRt)
