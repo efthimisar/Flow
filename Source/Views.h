@@ -1075,7 +1075,7 @@ public:
             if (notice.isNotEmpty())   // μηνύματα: γκρι γράμματα κάτω αριστερά στην οθόνη της λούπας, χωρίς φόντο
             {
                 g.setFont (hobby::makeFont (typeface, 13.0f));
-                g.setColour (hobby::kIconGrey);
+                g.setColour (Colour (0xff968e86));   // το ίδιο ζεστό γκρι με τα υπόλοιπα γράμματα της οθόνης
                 g.drawFittedText (notice, w / 10, getHeight() - 42, w * 4 / 5, 32, Justification::centred, 2, 0.85f);   // έως 2 γραμμές, ελαφρά στένεμα: χωρίς κόψιμο με «…»
             }
             g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
@@ -1248,7 +1248,7 @@ public:
         }
         if (notice.isNotEmpty())
         {
-            g.setFont (hobby::makeFont (typeface, 13.0f * s)); g.setColour (hobby::kIconGrey);
+            g.setFont (hobby::makeFont (typeface, 13.0f * s)); g.setColour (Colour (0xff968e86));   // το ίδιο ζεστό γκρι με τα υπόλοιπα γράμματα της οθόνης
             g.drawFittedText (notice, Rectangle<int> (roundToInt (w * 0.1f), roundToInt (h - 42.0f * s), roundToInt (w * 0.8f), roundToInt (32.0f * s)), Justification::centred, 2, 0.85f);   // έως 2 γραμμές, χωρίς κόψιμο με «…»
         }
         g.setColour (midiActive ? hobby::kOn : Colour (0xff4a433d));
