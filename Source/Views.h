@@ -1397,15 +1397,6 @@ public:
                     const auto dp = orbPos[(size_t) c];
                     g.setColour (orbColour (c)); g.fillEllipse (pc.x + dp.x * rr * 0.62f - 3.0f * s, pc.y + dp.y * rr * 0.62f - 3.0f * s, 6.0f * s, 6.0f * s);
                 }
-                g.setFont (hobby::makeFont (typeface, 10.0f * s + 2.0f));
-                g.setColour (Colour (0xff9a8f84));
-                g.drawText (String (c + 1), Rectangle<float> (pc.x - 12.0f, pc.y - rr - 16.0f * s - 2.0f, 24.0f, 14.0f * s + 2.0f), Justification::centred, false);
-                const String nm = any ? knobs[(size_t) (c * 4)].name : gr ("Ring ") + String (c + 1) + gr (": not assigned");
-                g.setColour (any ? Colour (0xffb7b1a8) : Colour (0xff6a645c));
-                g.setFont (hobby::makeFont (typeface, 11.0f * s + 2.0f));
-                const bool left = c % 2 == 0;
-                const auto tr = Rectangle<float> (left ? pc.x - rr - 8.0f - 190.0f : pc.x + rr + 8.0f, pc.y - 9.0f, 190.0f, 18.0f);
-                g.drawText (nm, tr, left ? Justification::centredRight : Justification::centredLeft, true);
             }
             // ενδείξεις κάτω από τον orb: Rec Audio και Rec motion
             float ty = gmBottom();

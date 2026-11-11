@@ -1113,7 +1113,7 @@ private:
                 {
                     macroTouch (ctl - 200);
                     if (macroTouching[(size_t) (ctl - 200)] && ! macroMoved[(size_t) (ctl - 200)]) { macroMoved[(size_t) (ctl - 200)] = true; macroBeginTake (macroTouchBlock[(size_t) (ctl - 200)], ctl - 200); }
-                    prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, prm->getValue() + (float) v / 500.0f));
+                    prm->setValueNotifyingHost (jlimit (0.0f, 1.0f, prm->getValue() - (float) v / 500.0f));   // γύρισμα δεξιά = μεγαλώνει (ο encoder στέλνει ανάποδο πρόσημο)
                 }   // 500 βήματα = όλο το εύρος· ευαισθησία προς ρύθμιση
             return;
         }
@@ -2041,12 +2041,7 @@ private:
                 g.setColour (Colour (0xff2e2a27)); g.fillEllipse (cx - cr, cy - cr, 2.0f * cr, 2.0f * cr);
                 g.setColour (s88Ring == r ? white : Colour (0xff4a443f));
                 g.drawEllipse (cx - cr, cy - cr, 2.0f * cr, 2.0f * cr, s88Ring == r ? 3.0f : 2.0f);
-                if (p == nullptr)
-                {
-                    g.setColour (none); g.setFont (hobby::makeFont (typeface, 34.0f));
-                    g.drawText ("+", Rectangle<float> (cx - cr, cy - cr, 2.0f * cr, 2.0f * cr), Justification::centred, false);
-                }
-                else if (sh >= 0)
+                if (p != nullptr && sh >= 0)
                 {
                     orbshapes::drawSymbol (g, sh, { cx, cy }, cr * 0.62f, Colour (0xfff2eee8), hobby::makeFont (typeface, 20.0f));
                     const auto dp = orbPos[(size_t) selected][(size_t) r];
