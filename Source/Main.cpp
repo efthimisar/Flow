@@ -246,6 +246,7 @@ public:
             engine.knobCc[(size_t) k] = settings->getIntValue ("knobcc" + String (k), 0);
             engine.knobIn[(size_t) k] = -1.0f;
         }
+        macrosDone = StringArray::fromLines (settings->getValue ("macrosDone"));
         auOn = settings->getBoolValue ("auOn", false);
         pluginOff = StringArray::fromLines (settings->getValue ("pluginOff"));
         for (int i = 0; i < flow::Engine::numPedals; ++i)
@@ -2442,7 +2443,41 @@ private:
             else autoAssignMacros (block);
         }
         validateKnobs (block);
+        fillMacros (block);
     }
+
+    // Μία φορά ανά plugin: τα «Macro …» που δεν είναι ήδη ανατεθειμένα μπαίνουν στις ΕΛΕΥΘΕΡΕΣ θέσεις 1–8 με τη σειρά που τα δηλώνει το plugin.
+    // Δεν πειράζει υπάρχουσες αναθέσεις (π.χ. από το Orb learn), οπότε μια ανάθεση σε μία θέση τα αφήνει να μπουν στις υπόλοιπες. Η θέση 1–8 είναι κοινή με τα δαχτυλίδια 1–2 του Orb.
+    void fillMacros (int block)
+    {
+        auto* p = engine.getPlugin (block);
+        const auto key = knobKey (block);
+        if (p == nullptr || key.isEmpty() || macrosDone.contains (key)) return;
+        auto& params = p->getParameters();
+        std::vector<int> macros;
+        for (int i = 0; i < params.size(); ++i)
+            if (params[i]->getName (64).toLowerCase().contains ("macro")) macros.push_back (i);
+        flow::flowLog ("macros: " + p->getName() + ": " + String ((int) macros.size()) + " parameters named Macro");
+        if (macros.empty()) return;   // δεν σημειώνεται ως «έγινε»: αν αλλάξει η έκδοση του plugin, ξαναδοκιμάζει
+        auto& arr = blockKnobs[(size_t) block];
+        size_t next = 0; int added = 0;
+        for (int k = 0; k < 8 && next < macros.size(); ++k)
+        {
+            if (arr[(size_t) k].idx >= 0) continue;
+            while (next < macros.size())
+            {
+                const int idx = macros[next++];
+                bool used = false;
+                for (auto& a : arr) if (a.idx == idx) used = true;
+                if (used) continue;
+                arr[(size_t) k] = { idx, params[idx]->getName (64) }; ++added;
+                break;
+            }
+        }
+        macrosDone.addIfNotAlreadyThere (key);
+        if (added > 0) { rememberKnobs (block); flow::flowLog ("macros: block " + String (block + 1) + " " + p->getName() + ": " + String (added) + " filled into free positions"); }
+    }
+    StringArray macrosDone;
 
     // Plugin χωρίς αναθέσεις που δεν έχει ξαναδεί το Flow: οι παράμετροι που λέγονται «Macro …» πάνε στα πρώτα κουμπιά με τη σειρά του αριθμού τους (έως 8).
     // Δουλεύει μόνο όσο το plugin τις δηλώνει με τέτοιο όνομα· αλλιώς δεν αναθέτει τίποτα (το log δείχνει τη λίστα των παραμέτρων κάθε plugin).
@@ -4942,6 +4977,7 @@ private:
             settings->setValue ("ctl" + String (i), engine.mapCode[(size_t) i].load());
         for (int k = 0; k < 8; ++k)
             settings->setValue ("knobcc" + String (k), engine.knobCc[(size_t) k].load());
+        settings->setValue ("macrosDone", macrosDone.joinIntoString ("\n"));
         settings->setValue ("auOn", auOn);
         settings->setValue ("pluginOff", pluginOff.joinIntoString ("\n"));
         for (int i = 0; i < flow::Engine::numPedals; ++i)
