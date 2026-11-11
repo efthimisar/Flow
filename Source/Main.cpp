@@ -1161,7 +1161,9 @@ private:
         {
             switch (ctl)
             {
-                case 1: s88Ring = (s88Ring + 1) % 4; orbSelRing = s88Ring; return;   // πάτημα encoder: επόμενο ring
+                case 1:   // πάτημα encoder: ring χωρίς ανάθεση → μαθαίνει παράμετρο (άγγιξέ την στο plugin)· με ανάθεση δεν κάνει τίποτα (το ring αλλάζει με κλίση αριστερά/δεξιά)
+                    if (isActive (selected) && orbTarget (selected, s88Ring * 4) == nullptr) startKnobLearn (s88Ring * 4);
+                    return;
                 case 2: orbSpeedStep (s88Ring, 1); return;    // κλίση πάνω = ταχύτερο
                 case 3: orbSpeedStep (s88Ring, -1); return;   // κλίση κάτω = πιο αργό
                 case 4: s88Ring = (s88Ring + 3) % 4; orbSelRing = s88Ring; return;
@@ -2081,7 +2083,7 @@ private:
                     g.setFont (hobby::makeFont (typeface, 16.0f)); g.setColour (none);
                     g.drawText (knobStage != 0 && knobSlot == r * 4 ? String::fromUTF8 ("touch a parameter\xe2\x80\xa6") : String ("not assigned"), Rectangle<float> (x0, cy + cr + 8.0f, 190.0f, 22.0f), Justification::centred, false);
                     g.setFont (hobby::makeFont (typeface, 12.0f));
-                    g.drawText ("assign in Flow", Rectangle<float> (x0, cy + cr + 30.0f, 190.0f, 18.0f), Justification::centred, false);
+                    g.drawText ("push to assign", Rectangle<float> (x0, cy + cr + 30.0f, 190.0f, 18.0f), Justification::centred, false);
                 }
             }
             g.setColour (Colour (0xff3a3430)); g.fillRect (0, 266, KeyScreens::width, 6);
@@ -5725,7 +5727,7 @@ class FlowApplication : public JUCEApplication
 {
 public:
     const String getApplicationName() override    { return "Flow"; }
-    const String getApplicationVersion() override { return "0.90.16"; }
+    const String getApplicationVersion() override { return "0.90.17"; }
     bool moreThanOneInstanceAllowed() override    { return false; }
 
     void initialise (const String&) override
